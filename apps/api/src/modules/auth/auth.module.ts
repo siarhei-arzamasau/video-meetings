@@ -4,7 +4,7 @@ import { CqrsModule } from '@nestjs/cqrs';
 import { JwtModule } from '@nestjs/jwt';
 
 import { AuthController } from './auth.controller';
-import { AuthService } from './auth.service';
+import { LoginHandler } from './commands/handlers/login.handler';
 import { RegisterHandler } from './commands/handlers/register.handler';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { PasswordService } from './services/password.service';
@@ -12,6 +12,8 @@ import { TokenService } from './services/token.service';
 
 @Module({
   imports: [
+    // Imported here rather than registered globally: no other module uses commands, and a
+    // global registration would advertise a house style the rest of the app does not follow.
     CqrsModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
@@ -28,6 +30,6 @@ import { TokenService } from './services/token.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, RegisterHandler, PasswordService, TokenService, JwtAuthGuard],
+  providers: [RegisterHandler, LoginHandler, PasswordService, TokenService, JwtAuthGuard],
 })
 export class AuthModule {}

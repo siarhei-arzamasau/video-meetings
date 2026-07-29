@@ -2,7 +2,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Post, UseGuards } from '@n
 import { CommandBus } from '@nestjs/cqrs';
 import type { AuthResponse, User } from '@repo/shared';
 
-import { AuthService } from './auth.service';
+import { LoginCommand } from './commands/login.command';
 import { RegisterCommand } from './commands/register.command';
 import { CurrentUser } from './current-user.decorator';
 import { LoginDto } from './dto/login.dto';
@@ -11,10 +11,7 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 
 @Controller('auth')
 export class AuthController {
-  constructor(
-    private readonly auth: AuthService,
-    private readonly commandBus: CommandBus,
-  ) {}
+  constructor(private readonly commandBus: CommandBus) {}
 
   @Post('register')
   register(@Body() { email, password }: RegisterDto): Promise<AuthResponse> {
@@ -26,10 +23,11 @@ export class AuthController {
   /** 200, not the 201 Nest gives a POST by default: logging in creates nothing. */
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  login(@Body() credentials: LoginDto): Promise<AuthResponse> {
-    return this.auth.login(credentials);
+  login(@Body() { email, password }: LoginDto): Promise<AuthResponse> {
+    return this.commandBus.execute<LoginCommand, AuthResponse>(new LoginCommand(email, password));
   }
 
+  /** Served entirely by the guard: it loads the user, this returns it. No bus involved. */
   @Get('me')
   @UseGuards(JwtAuthGuard)
   me(@CurrentUser() user: User): User {
