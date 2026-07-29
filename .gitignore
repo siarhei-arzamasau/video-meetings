@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# builds
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# turbo
+.turbo/
+
+# env
+.env
+.env.*
+!.env.example
+
+# prisma generated client
+generated/
+
+# tests & coverage
+coverage/
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editors & os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# agent tooling state
+.omc/
