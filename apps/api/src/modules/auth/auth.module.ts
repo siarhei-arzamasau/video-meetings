@@ -1,15 +1,18 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { CqrsModule } from '@nestjs/cqrs';
 import { JwtModule } from '@nestjs/jwt';
 
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { RegisterHandler } from './commands/handlers/register.handler';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { PasswordService } from './services/password.service';
 import { TokenService } from './services/token.service';
 
 @Module({
   imports: [
+    CqrsModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
@@ -25,6 +28,6 @@ import { TokenService } from './services/token.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, PasswordService, TokenService, JwtAuthGuard],
+  providers: [AuthService, RegisterHandler, PasswordService, TokenService, JwtAuthGuard],
 })
 export class AuthModule {}
