@@ -1,0 +1,151 @@
+# Repository guide — video-meetings
+
+Guidance for coding agents working in this repository.
+
+> **`CLAUDE.md` and `AGENTS.md` in the repository root are byte-identical mirrors.**
+> Every edit to one must be applied to the other in the same commit. Verify with
+> `diff CLAUDE.md AGENTS.md` — it must print nothing. Below, **"the root guide"** means
+> both files together; there is no such thing as changing one of them.
+
+## Output language
+
+**Everything you produce is in English, whatever language the request arrives in.** Plans, code, comments, commit messages, documentation, PR descriptions, and chat replies — all English, including when the prompt, an issue, or a pasted spec in other languages. Translate rather than mirror the input language.
+
+## What this is
+
+`video-meetings` — a pnpm + Turborepo monorepo for a video meetings platform.
+
+| Package          | Path                | Stack                                                       |
+| ---------------- | ------------------- | ----------------------------------------------------------- |
+| `@repo/web`      | `apps/web`          | Next.js 16 (App Router), React 19, HeroUI 3, Tailwind CSS 4 |
+| `@repo/api`      | `apps/api`          | Nest.js 11, Prisma 7, PostgreSQL                            |
+| `@repo/shared`   | `packages/shared`   | Cross-app types and API contracts                           |
+| `@repo/tsconfig` | `packages/tsconfig` | Shared TypeScript base configs                              |
+
+The repo currently holds **structure only** — no product features. `apps/web` and
+`apps/api` each have their own `CLAUDE.md` with app-specific detail. Those are single
+files, not mirrored — only the root guide is duplicated.
+
+The design this implements:
+[`docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md).
+
+## Commands
+
+Run from the repository root; Turborepo fans them out.
+
+| Command                             | Does                                           |
+| ----------------------------------- | ---------------------------------------------- |
+| `pnpm dev`                          | Every app in watch mode (web :3000, api :3001) |
+| `pnpm build`                        | `@repo/shared` first, then both apps           |
+| `pnpm typecheck`                    | `tsc --noEmit` across every package            |
+| `pnpm test`                         | Vitest (web) and Jest (api)                    |
+| `pnpm lint` / `pnpm lint:fix`       | Oxlint across the workspace                    |
+| `pnpm format` / `pnpm format:check` | Oxfmt across the workspace                     |
+| `pnpm clean`                        | Removes build output and caches                |
+
+Scope to one package with a filter: `pnpm build --filter=@repo/api`.
+
+**Ordering matters: `build` must run before `typecheck`.** `@repo/shared` has to emit its
+`.d.ts` files, and Next.js generates `next-env.d.ts` and `.next/types` during its build.
+CI (`.github/workflows/ci.yml`) runs format:check → lint → build → typecheck → test; match
+that order when verifying work locally.
+
+## Setup
+
+Node 24 (`.nvmrc`), pnpm 11 (`corepack enable`), Docker for PostgreSQL.
+
+```bash
+pnpm install
+cp .env.example .env
+cp apps/api/.env.example apps/api/.env
+cp apps/web/.env.example apps/web/.env.local
+docker compose up -d postgres
+pnpm dev
+```
+
+`GET http://localhost:3001/api/health` should return `{"status":"ok",...}`.
+
+## Conventions
+
+- **Tooling is Oxlint + Oxfmt**, not ESLint/Prettier. One `.oxlintrc.json` and
+  `.oxfmtrc.json` at the root cover the whole tree, with per-app overrides inside
+  `.oxlintrc.json`. Do not add per-package lint or format configs.
+- **Types shared between web and api live in `packages/shared`.** If both apps need to
+  agree on a shape, it belongs there and is imported as `@repo/shared` — never duplicated.
+  `packages/shared` exports types through `src/index.ts`; add new modules there.
+- **TypeScript is strict**, including `noUncheckedIndexedAccess`, `noUnusedLocals`, and
+  `noUnusedParameters` (`packages/tsconfig/base.json`). `typescript/no-explicit-any` is an
+  error. App tsconfigs extend `@repo/tsconfig/nextjs.json` or `@repo/tsconfig/nestjs.json`.
+- **Conventional Commits**, enforced by commitlint via Husky. `lint-staged` runs oxfmt and
+  `oxlint --fix` on commit.
+- **New dependencies with install scripts** must be listed under `allowBuilds` in
+  `pnpm-workspace.yaml`; pnpm 11 blocks lifecycle scripts otherwise.
+- **Env files are gitignored** except `*.env.example`. When adding a variable, update the
+  matching `.env.example` and, for the API, `apps/api/src/config/env.validation.ts`.
+
+## Adding a package
+
+1. Create it under `apps/` or `packages/` (both are workspace globs).
+2. Name it `@repo/<name>`, `private: true`, version `0.0.0`.
+3. Extend a config from `@repo/tsconfig`.
+4. Give it `build`, `typecheck`, `test`, and `clean` scripts so Turborepo's task graph
+   picks it up. Declare any new build output in `turbo.json`'s `outputs`.
+
+## Keeping documentation current
+
+Documentation is part of the change, not a follow-up. A structural change that lands
+without its doc update is incomplete — treat it the way you would a failing test.
+
+**Update in the same commit as the code.** Reviewers should see the description and the
+change together, and a doc that lags by even one commit starts teaching the wrong thing.
+
+### The root guide is two files
+
+`CLAUDE.md` and `AGENTS.md` hold the same content for different agent tooling. They are
+kept byte-identical so neither can quietly become the stale one.
+
+- **Editing:** make the change in one file, then copy it over the other —
+  `cp CLAUDE.md AGENTS.md` — rather than hand-applying the same edit twice. Retyping is
+  how whitespace and wording drift creeps in.
+- **Verifying:** `diff CLAUDE.md AGENTS.md` must print nothing. Run it before committing
+  any change to either file.
+- **Never** add a section that names one file and not the other, or write text that only
+  makes sense under one of the two names. That is why the title is neutral and this
+  document says "the root guide" rather than "this file".
+
+If the two ever disagree, neither is authoritative — reconcile by hand against the actual
+repository state, not by picking one and copying it.
+
+### What to touch, and when
+
+| Change                                         | Update                                                                   |
+| ---------------------------------------------- | ------------------------------------------------------------------------ |
+| Anything at all in the root guide              | **Both** `CLAUDE.md` and `AGENTS.md`, verified with `diff`               |
+| Package added, removed, or renamed             | Root guide package table, `README.md` table and layout tree              |
+| Root script added or its meaning changed       | Root guide and `README.md` command tables                                |
+| Task graph, caching, or build ordering changed | Root guide (Commands), `README.md` (Tooling)                             |
+| Lint, format, or tsconfig convention changed   | Root guide (Conventions); the app file if it is an override              |
+| Env variable added or removed                  | The matching `.env.example`, plus `apps/api/CLAUDE.md` if it is API-side |
+| Setup or local-services steps changed          | Root guide (Setup), `README.md` (Getting started)                        |
+| Anything inside one app only                   | That app's `CLAUDE.md` — see its own guidance section                    |
+
+`README.md` is for humans getting the project running; the root guide is for agents
+working in it. They overlap on setup and commands — when one of those changes, check both.
+
+### What belongs in an agent guide
+
+Favour the things that are not recoverable by reading the code: ordering constraints,
+why a setting exists, which file is the single place a concern belongs, and the traps
+that look like mistakes but are deliberate. Skip anything a competent reader learns
+faster from the source itself — file-by-file inventories and restated type signatures go
+stale silently and earn nothing.
+
+When a documented constraint stops being true, **delete the entry**. A stale warning is
+worse than no warning, because it costs someone the time to disprove it.
+
+### Specs
+
+`docs/superpowers/specs/` holds dated design documents. They are historical records of a
+decision at a point in time — do **not** edit them to match new architecture. When a
+design supersedes one of them, write a new dated spec and update the root guide's pointer
+to it.
