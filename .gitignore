@@ -40,5 +40,7 @@ pnpm-debug.log*
 
 # agent tooling state
 .omc/
-.agents/
+.agents/*
+# shared agent skills are checked in; the rest of .agents/ is local state
+!.agents/skills/
 skills-lock.json
