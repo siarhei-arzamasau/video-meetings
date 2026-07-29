@@ -1,0 +1,7 @@
+/* Import order is load-bearing: Tailwind must be registered before HeroUI's styles. */
+@import 'tailwindcss';
+@import '@heroui/styles';
+
+/* next-themes toggles a `dark` class on <html>; point Tailwind's dark variant at it
+   instead of the default prefers-color-scheme media query. */
+@custom-variant dark (&:where(.dark, .dark *));

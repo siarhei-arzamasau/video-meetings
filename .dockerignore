@@ -1,0 +1,15 @@
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/coverage
+**/generated
+.git
+.github
+.husky
+docs
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+.DS_Store

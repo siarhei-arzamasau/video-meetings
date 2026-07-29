@@ -7,6 +7,7 @@ dist/
 build/
 .next/
 out/
+next-env.d.ts
 *.tsbuildinfo
 
 # turbo
@@ -16,6 +17,9 @@ out/
 .env
 .env.*
 !.env.example
+
+# local docker overrides
+docker-compose.override.yml
 
 # prisma generated client
 generated/
@@ -36,3 +40,5 @@ pnpm-debug.log*
 
 # agent tooling state
 .omc/
+.agents/
+skills-lock.json

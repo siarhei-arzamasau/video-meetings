@@ -1,0 +1,17 @@
+// Schema for @repo/api.
+//
+// Structure only: the datasource and generator are wired, but no models exist yet.
+// Models arrive with feature work, alongside their first migration.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+  runtime      = "nodejs"
+}
+
+// Prisma 7 removed `url` from this block. The CLI reads the connection string from
+// prisma.config.ts; the runtime client gets it through a driver adapter (PrismaService).
+datasource db {
+  provider = "postgresql"
+}

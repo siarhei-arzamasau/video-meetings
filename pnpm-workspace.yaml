@@ -1,0 +1,15 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm 11 blocks dependency lifecycle scripts unless they are allowed here.
+allowBuilds:
+  '@prisma/engines': true # downloads the query engine binaries
+  '@tailwindcss/oxide': true # native Tailwind v4 compiler
+  esbuild: true # native binary used by Vite/Vitest
+  prisma: true # generates the client on install
+  sharp: true # native image pipeline used by Next.js
+  unrs-resolver: true # native resolver used by the lint toolchain
+
+minimumReleaseAgeExclude:
+  - jsdom@30.0.1

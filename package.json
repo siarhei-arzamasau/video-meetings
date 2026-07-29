@@ -1,0 +1,38 @@
+{
+  "name": "video-meetings",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "clean": "turbo run clean && rm -rf .turbo node_modules/.cache",
+    "lint": "oxlint --max-warnings=0",
+    "lint:fix": "oxlint --fix --max-warnings=0",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "21.2.1",
+    "@commitlint/config-conventional": "21.2.0",
+    "husky": "9.1.7",
+    "lint-staged": "17.2.0",
+    "oxfmt": "0.61.0",
+    "oxlint": "1.76.0",
+    "turbo": "2.10.7",
+    "typescript": "5.9.3"
+  },
+  "lint-staged": {
+    "*.{js,mjs,cjs,jsx,ts,tsx,json,css,md}": [
+      "oxfmt",
+      "oxlint --fix"
+    ]
+  },
+  "engines": {
+    "node": ">=24",
+    "pnpm": ">=11"
+  },
+  "packageManager": "pnpm@11.15.1"
+}

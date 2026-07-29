@@ -10,24 +10,24 @@ Stand up an empty but fully wired monorepo holding two applications — a Next.j
 
 ## Stack
 
-| Concern | Choice | Version |
-|---|---|---|
-| Package manager | pnpm workspaces | 11.15.1 |
-| Task orchestration | Turborepo | 2.10.7 |
-| Frontend | Next.js, App Router | 16.2.12 |
-| UI runtime | React | 19.2.8 |
-| UI components | HeroUI | 3.2.2 |
-| CSS framework | Tailwind CSS | 4.3.3 |
-| Theming | next-themes | 0.4.6 |
-| Backend | Nest.js | 11.1.28 |
-| ORM | Prisma | 7.9.1 |
-| Language | TypeScript | 5.9.3 |
-| Lint | Oxlint | 1.76.0 |
-| Format | Oxfmt | 0.61.0 |
-| Web tests | Vitest + jsdom | 4.1.10 |
-| API tests | Jest | 30.4.2 |
-| Hooks | Husky, lint-staged, commitlint | 9.1.7 / 17.2.0 / 21.2.1 |
-| Node | 24.x (`.nvmrc`) | 24.18.0 |
+| Concern            | Choice                         | Version                 |
+| ------------------ | ------------------------------ | ----------------------- |
+| Package manager    | pnpm workspaces                | 11.15.1                 |
+| Task orchestration | Turborepo                      | 2.10.7                  |
+| Frontend           | Next.js, App Router            | 16.2.12                 |
+| UI runtime         | React                          | 19.2.8                  |
+| UI components      | HeroUI                         | 3.2.2                   |
+| CSS framework      | Tailwind CSS                   | 4.3.3                   |
+| Theming            | next-themes                    | 0.4.6                   |
+| Backend            | Nest.js                        | 11.1.28                 |
+| ORM                | Prisma                         | 7.9.1                   |
+| Language           | TypeScript                     | 5.9.3                   |
+| Lint               | Oxlint                         | 1.76.0                  |
+| Format             | Oxfmt                          | 0.61.0                  |
+| Web tests          | Vitest + jsdom                 | 4.1.10                  |
+| API tests          | Jest                           | 30.4.2                  |
+| Hooks              | Husky, lint-staged, commitlint | 9.1.7 / 17.2.0 / 21.2.1 |
+| Node               | 24.x (`.nvmrc`)                | 24.18.0                 |
 
 ### TypeScript version rationale
 
@@ -75,6 +75,7 @@ video-meetings/
 ├─ .oxlintrc.json
 ├─ .oxfmtrc.json
 ├─ .gitignore
+├─ .dockerignore
 ├─ .npmrc
 ├─ .nvmrc
 ├─ .env.example
@@ -97,13 +98,16 @@ Publishes three TypeScript base configs. No code, no build step.
 - `base.json` — strict mode, ES2023 target, `moduleResolution: bundler`-agnostic common flags.
 - `nextjs.json` — extends `base.json`; JSX preserve, `noEmit`, Next plugin.
 - `nestjs.json` — extends `base.json`; CommonJS, decorators, `emitDecoratorMetadata`, `outDir: dist`.
+  Sets `incremental: false` on purpose: nest-cli's `deleteOutDir` wipes `dist/` while a stale
+  `.tsbuildinfo` still claims those files were emitted, so `tsc` skips them and the app boots
+  against a half-populated `dist/`.
 
 **Depends on:** nothing. **Consumed by:** `apps/web`, `apps/api`, `packages/shared`.
 
 ### `@repo/shared`
 
-Cross-cutting types and API contracts consumed by both apps. Compiled to `dist/` with
-`tsc -b` so Nest (CommonJS) and Next (bundler) can both consume it without transpile
+Cross-cutting types and API contracts consumed by both apps. Compiled to CommonJS `dist/`
+with `tsc` so Nest (CommonJS) and Next (bundler) can both consume it without transpile
 configuration in either app.
 
 ```
@@ -111,14 +115,17 @@ packages/shared/
 ├─ src/
 │  ├─ index.ts               # public surface — re-exports only
 │  └─ types/
+│     ├─ health.ts           # HealthResponse — the /api/health contract
 │     ├─ meeting.ts
 │     └─ user.ts
 ├─ package.json              # main: dist/index.js, types: dist/index.d.ts
-└─ tsconfig.json             # extends @repo/tsconfig/base.json, composite: true
+└─ tsconfig.json             # extends @repo/tsconfig/base.json
 ```
 
-Initial contents are minimal placeholder types (`User`, `Meeting`) that both apps
-reference, proving the wiring end to end. They are real, compiling types — not stubs.
+Initial contents are minimal types (`User`, `Meeting`, `MeetingStatus`, `HealthResponse`)
+that both apps reference. They are real, compiling types — not stubs. `HealthResponse` is
+the load-bearing one: `apps/api` returns it and `apps/web` consumes it, so the contract is
+exercised end to end from day one.
 
 **Depends on:** `@repo/tsconfig`. **Consumed by:** `apps/web`, `apps/api`.
 
@@ -178,19 +185,22 @@ apps/api/
 │  ├─ common/
 │  │  ├─ filters/http-exception.filter.ts
 │  │  └─ interceptors/logging.interceptor.ts
-│  └─ modules/
-│     ├─ prisma/
-│     │  ├─ prisma.module.ts
-│     │  └─ prisma.service.ts        # onModuleInit connect / onModuleDestroy disconnect
-│     └─ health/
-│        ├─ health.module.ts
-│        ├─ health.controller.ts     # GET /api/health
-│        └─ health.controller.spec.ts
+│  ├─ modules/
+│  │  ├─ prisma/
+│  │  │  ├─ prisma.module.ts
+│  │  │  └─ prisma.service.ts        # driver adapter + connect/disconnect lifecycle
+│  │  └─ health/
+│  │     ├─ health.module.ts
+│  │     ├─ health.controller.ts     # GET /api/health
+│  │     └─ health.controller.spec.ts
+│  └─ generated/prisma/              # generated client (gitignored)
 ├─ prisma/
 │  └─ schema.prisma                  # datasource postgres + prisma-client generator, no models
+├─ prisma.config.ts                  # CLI config: schema path, migrations path, DATABASE_URL
 ├─ test/jest-e2e.json
 ├─ nest-cli.json
 ├─ tsconfig.json                     # extends @repo/tsconfig/nestjs.json
+├─ tsconfig.build.json               # same, minus *.spec.ts — used by `nest build`
 ├─ Dockerfile
 ├─ .env.example
 └─ package.json
@@ -199,21 +209,39 @@ apps/api/
 - `schema.prisma` declares the datasource and generator only. Models arrive with feature
   work; an empty model set is valid and `prisma generate` succeeds.
 - `env.validation.ts` fails fast on missing `DATABASE_URL` / `PORT`.
-- One real Jest test covers the health controller.
+- Two real Jest tests cover the health controller's payload and its timestamp format.
 
-**Depends on:** `@repo/shared`, `@repo/tsconfig`.
+#### Prisma 7 wiring
+
+Prisma 7 removed `url` from the schema's `datasource` block, which splits configuration in
+two:
+
+- **CLI** (`generate`, `migrate`, `studio`) reads `prisma.config.ts`. It loads `dotenv/config`
+  and falls back to the docker-compose connection string so `prisma generate` — and therefore
+  `pnpm build` — succeeds on a clean clone with no `.env` present. Commands that actually
+  reach the database still need a real `DATABASE_URL`.
+- **Runtime** gets the connection string through a driver adapter. `PrismaService` injects
+  `ConfigService`, reads `DATABASE_URL`, and passes `new PrismaPg({ connectionString })` to
+  `super()`. This is why `@prisma/adapter-pg` and `pg` are runtime dependencies.
+
+The `prisma-client` generator (the non-deprecated one) emits into `src/generated/prisma`
+with `moduleFormat = "cjs"`, so `PrismaClient` is imported from that path rather than from
+`@prisma/client`.
+
+**Depends on:** `@repo/shared`, `@repo/tsconfig`; external — `@nestjs/*`, `@prisma/client`,
+`@prisma/adapter-pg`, `pg`, `class-validator`, `class-transformer`, `dotenv`.
 
 ## Task orchestration
 
 `turbo.json` tasks:
 
-| Task | `dependsOn` | Outputs | Cache |
-|---|---|---|---|
-| `build` | `["^build"]` | `.next/**` (excl. `.next/cache/**`), `dist/**` | yes |
-| `typecheck` | `["^build"]` | — | yes |
-| `test` | `["^build"]` | — | yes |
-| `dev` | — | — | no, `persistent: true` |
-| `clean` | — | — | no |
+| Task        | `dependsOn`  | Outputs                                        | Cache                  |
+| ----------- | ------------ | ---------------------------------------------- | ---------------------- |
+| `build`     | `["^build"]` | `.next/**` (excl. `.next/cache/**`), `dist/**` | yes                    |
+| `typecheck` | `["^build"]` | —                                              | yes                    |
+| `test`      | `["^build"]` | —                                              | yes                    |
+| `dev`       | —            | —                                              | no, `persistent: true` |
+| `clean`     | —            | —                                              | no                     |
 
 `lint`, `lint:fix`, `format`, `format:check` run at the repo root via Oxlint/Oxfmt
 directly — they are not per-package Turbo tasks, since a single config covers the tree.
@@ -226,11 +254,14 @@ build         turbo run build
 typecheck     turbo run typecheck
 test          turbo run test
 clean         turbo run clean && rm -rf node_modules/.cache .turbo
-lint          oxlint
-lint:fix      oxlint --fix
-format        oxfmt --write
+lint          oxlint --max-warnings=0
+lint:fix      oxlint --fix --max-warnings=0
+format        oxfmt
 format:check  oxfmt --check
 ```
+
+`--max-warnings=0` makes Oxlint warnings fail the run, so "lint passes" means zero
+findings rather than zero errors.
 
 ## Data flow
 
@@ -257,10 +288,11 @@ app imports the other.
 
 ## Testing
 
-- `apps/web` — Vitest 4 + jsdom, one passing test on `api-client`.
-- `apps/api` — Jest 30 + ts-jest, one passing test on `HealthController`; `jest-e2e.json`
-  present and wired but with no e2e specs yet.
-- `pnpm test` at the root runs both through Turbo.
+- `apps/web` — Vitest 4 + jsdom, five passing tests on `api-client` (base-URL fallback,
+  trailing-slash handling, path joining, and `ApiError` shape).
+- `apps/api` — Jest 30 + ts-jest, two passing tests on `HealthController`; `jest-e2e.json`
+  present and wired but with no e2e specs yet, so `test:e2e` runs with `--passWithNoTests`.
+- `pnpm test` at the root runs both through Turbo — seven tests, none skipped.
 
 Coverage thresholds are deliberately not enforced yet — there is nothing meaningful to
 cover until feature work lands.
@@ -268,26 +300,35 @@ cover until feature work lands.
 ## Tooling and CI
 
 **Git hooks**
+
 - `pre-commit` → `lint-staged`: `oxfmt --write` then `oxlint --fix` on staged
   `*.{js,jsx,ts,tsx,json,css,md}`.
 - `commit-msg` → `commitlint` with `@commitlint/config-conventional`.
 
-**GitHub Actions** (`.github/workflows/ci.yml`), on push and pull request:
-`checkout → pnpm/action-setup → setup-node 24 with pnpm cache → pnpm install --frozen-lockfile → format:check → lint → typecheck → build → test`.
+**GitHub Actions** (`.github/workflows/ci.yml`), on push to `main` and on pull request:
+`checkout → pnpm/action-setup → setup-node 24 with pnpm cache → pnpm install --frozen-lockfile → format:check → lint → build → typecheck → test`.
+
+Build runs **before** typecheck deliberately: `@repo/shared` must emit its `.d.ts` files and
+Next.js generates `next-env.d.ts` plus `.next/types` during its build, both of which
+typecheck depends on. A second job runs `docker compose config --quiet` to validate the
+compose file.
 
 **Docker**
+
 - `apps/web/Dockerfile` — multi-stage, produces a Next standalone runner image.
 - `apps/api/Dockerfile` — multi-stage, `prisma generate` in the build stage, `node dist/main` at runtime.
+  Nest has no standalone-output equivalent, so the runner copies the built workspace including
+  dev dependencies; trimming that image is a later optimisation.
 - `docker-compose.yml` — `postgres:17-alpine` (named volume, healthcheck), `api` (depends on healthy postgres), `web` (depends on api).
 
 ## Environment variables
 
-| Variable | Scope | Example |
-|---|---|---|
-| `DATABASE_URL` | api | `postgresql://postgres:postgres@localhost:5432/video_meetings` |
-| `PORT` | api | `3001` |
-| `NODE_ENV` | both | `development` |
-| `NEXT_PUBLIC_API_URL` | web | `http://localhost:3001/api` |
+| Variable              | Scope | Example                                                        |
+| --------------------- | ----- | -------------------------------------------------------------- |
+| `DATABASE_URL`        | api   | `postgresql://postgres:postgres@localhost:5432/video_meetings` |
+| `PORT`                | api   | `3001`                                                         |
+| `NODE_ENV`            | both  | `development`                                                  |
+| `NEXT_PUBLIC_API_URL` | web   | `http://localhost:3001/api`                                    |
 
 Committed as `.env.example` at the root and in each app. Real `.env` files are gitignored.
 
@@ -303,7 +344,7 @@ From a clean clone with `pnpm install`:
 1. `pnpm build` succeeds for `@repo/shared`, `apps/api`, `apps/web`.
 2. `pnpm typecheck` reports zero errors.
 3. `pnpm lint` and `pnpm format:check` pass with zero violations.
-4. `pnpm test` passes — one web test, one api test, no skipped specs.
+4. `pnpm test` passes — five web tests, two api tests, no skipped specs.
 5. `pnpm dev` starts both apps; `http://localhost:3000` renders the HeroUI Card + Button
    with Tailwind styles applied, and `http://localhost:3001/api/health` returns 200.
 6. No file contains a `TODO`, placeholder stub, `test.skip`, or `test.only`.

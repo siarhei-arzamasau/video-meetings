@@ -1,0 +1,58 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import", "react", "jsx-a11y"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "env": {
+    "builtin": true,
+    "es2024": true,
+    "node": true
+  },
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/.next/**",
+    "**/.turbo/**",
+    "**/coverage/**",
+    "**/generated/**",
+    ".agents/**",
+    ".omc/**"
+  ],
+  "rules": {
+    "eqeqeq": ["error", "smart"],
+    "no-console": ["warn", { "allow": ["warn", "error"] }],
+    "typescript/consistent-type-imports": "error",
+    "typescript/no-explicit-any": "error",
+
+    // Next.js and Nest both rely on side-effect imports (CSS, reflect-metadata, dotenv).
+    "import/no-unassigned-import": "off",
+
+    // React 19 with the automatic JSX runtime needs no React import.
+    "react/react-in-jsx-scope": "off"
+  },
+  "overrides": [
+    {
+      "files": ["apps/web/**/*.{ts,tsx}"],
+      "env": { "browser": true }
+    },
+    {
+      "files": ["apps/api/**/*.ts"],
+      "rules": {
+        // Nest resolves constructor dependencies from emitted decorator metadata, which
+        // a type-only import erases.
+        "typescript/consistent-type-imports": "off",
+        // Nest modules are decorator-only classes with empty bodies by design.
+        "typescript/no-extraneous-class": ["warn", { "allowWithDecorator": true }]
+      }
+    },
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts"],
+      "rules": {
+        "no-console": "off"
+      }
+    }
+  ]
+}
