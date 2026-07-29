@@ -26,10 +26,10 @@
   },
   "lint-staged": {
     "*.{js,mjs,cjs,jsx,ts,tsx,json,css,md}": [
-      "oxfmt"
+      "oxfmt --no-error-on-unmatched-pattern"
     ],
     "*.{js,mjs,cjs,jsx,ts,tsx}": [
-      "oxlint --fix"
+      "oxlint --fix --no-error-on-unmatched-pattern"
     ]
   },
   "engines": {
