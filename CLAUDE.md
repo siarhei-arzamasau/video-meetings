@@ -5,7 +5,8 @@ Guidance for coding agents working in this repository.
 > **`CLAUDE.md` and `AGENTS.md` in the repository root are byte-identical mirrors.**
 > Every edit to one must be applied to the other in the same commit. Verify with
 > `diff CLAUDE.md AGENTS.md` — it must print nothing. Below, **"the root guide"** means
-> both files together; there is no such thing as changing one of them.
+> both files together; there is no such thing as changing one of them. The guides in
+> `apps/web` and `apps/api` are mirrored the same way.
 
 ## Output language
 
@@ -23,8 +24,8 @@ Guidance for coding agents working in this repository.
 | `@repo/tsconfig` | `packages/tsconfig` | Shared TypeScript base configs                              |
 
 The repo currently holds **structure only** — no product features. `apps/web` and
-`apps/api` each have their own `CLAUDE.md` with app-specific detail. Those are single
-files, not mirrored — only the root guide is duplicated.
+`apps/api` each have their own guide with app-specific detail, duplicated into
+`CLAUDE.md` + `AGENTS.md` exactly like the root guide.
 
 The design this implements:
 [`docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md).
@@ -99,35 +100,41 @@ without its doc update is incomplete — treat it the way you would a failing te
 **Update in the same commit as the code.** Reviewers should see the description and the
 change together, and a doc that lags by even one commit starts teaching the wrong thing.
 
-### The root guide is two files
+### Every agent guide is two files
 
-`CLAUDE.md` and `AGENTS.md` hold the same content for different agent tooling. They are
-kept byte-identical so neither can quietly become the stale one.
+Each agent guide exists twice in its directory — `CLAUDE.md` and `AGENTS.md`, the same
+content for different agent tooling. There are three pairs: the repository root, `apps/web`,
+and `apps/api`. Each pair is kept byte-identical so neither copy can quietly become the
+stale one.
 
-- **Editing:** make the change in one file, then copy it over the other —
-  `cp CLAUDE.md AGENTS.md` — rather than hand-applying the same edit twice. Retyping is
-  how whitespace and wording drift creeps in.
-- **Verifying:** `diff CLAUDE.md AGENTS.md` must print nothing. Run it before committing
-  any change to either file.
+- **Editing:** make the change in one file, then copy it over its twin —
+  `cp CLAUDE.md AGENTS.md` in that directory — rather than hand-applying the same edit
+  twice. Retyping is how whitespace and wording drift creeps in.
+- **Verifying:** `diff CLAUDE.md AGENTS.md` must print nothing, in every directory you
+  touched. Run it before committing any change to either file. All three pairs at once:
+  ```bash
+  for d in . apps/web apps/api; do diff "$d/CLAUDE.md" "$d/AGENTS.md" || echo "drift: $d"; done
+  ```
 - **Never** add a section that names one file and not the other, or write text that only
-  makes sense under one of the two names. That is why the title is neutral and this
-  document says "the root guide" rather than "this file".
+  makes sense under one of the two names. That is why the titles are neutral and these
+  documents say "the root guide" or "this guide" rather than "this file".
+- **A new agent guide** starts as both files, not as one with the other to follow.
 
-If the two ever disagree, neither is authoritative — reconcile by hand against the actual
-repository state, not by picking one and copying it.
+If a pair ever disagrees, neither copy is authoritative — reconcile by hand against the
+actual repository state, not by picking one and copying it.
 
 ### What to touch, and when
 
 | Change                                         | Update                                                                   |
 | ---------------------------------------------- | ------------------------------------------------------------------------ |
-| Anything at all in the root guide              | **Both** `CLAUDE.md` and `AGENTS.md`, verified with `diff`               |
+| Anything at all in an agent guide              | **Both** of its `CLAUDE.md` and `AGENTS.md`, verified with `diff`        |
 | Package added, removed, or renamed             | Root guide package table, `README.md` table and layout tree              |
 | Root script added or its meaning changed       | Root guide and `README.md` command tables                                |
 | Task graph, caching, or build ordering changed | Root guide (Commands), `README.md` (Tooling)                             |
 | Lint, format, or tsconfig convention changed   | Root guide (Conventions); the app file if it is an override              |
-| Env variable added or removed                  | The matching `.env.example`, plus `apps/api/CLAUDE.md` if it is API-side |
+| Env variable added or removed                  | The matching `.env.example`, plus the `apps/api` guide if it is API-side |
 | Setup or local-services steps changed          | Root guide (Setup), `README.md` (Getting started)                        |
-| Anything inside one app only                   | That app's `CLAUDE.md` — see its own guidance section                    |
+| Anything inside one app only                   | That app's guide (both files) — see its own guidance section             |
 
 `README.md` is for humans getting the project running; the root guide is for agents
 working in it. They overlap on setup and commands — when one of those changes, check both.
