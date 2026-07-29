@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_response.filePath // .tool_input.file_path // empty' | { read -r f; [ -n \"$f\" ] && printf '%s' \"$f\" | grep -qE '\\.(js|mjs|cjs|jsx|ts|tsx|json|css|md)$' && pnpm exec oxfmt --no-error-on-unmatched-pattern \"$f\"; } 2>/dev/null || true",
+            "statusMessage": "Formatting with oxfmt",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
