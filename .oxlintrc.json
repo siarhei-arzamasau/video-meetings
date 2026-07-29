@@ -19,6 +19,7 @@
     "**/coverage/**",
     "**/generated/**",
     ".agents/**",
+    ".claude/**",
     ".omc/**"
   ],
   "rules": {
