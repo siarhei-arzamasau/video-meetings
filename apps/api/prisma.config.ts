@@ -7,7 +7,7 @@ import { defineConfig } from 'prisma/config';
 //
 // The fallback matches docker-compose and .env.example so `prisma generate` works on a
 // clean clone. Commands that actually reach the database still need a real DATABASE_URL.
-const DEFAULT_DATABASE_URL = 'postgresql://postgres:postgres@localhost:5432/video_meetings';
+const DEFAULT_DATABASE_URL = 'postgresql://postgres:postgres@localhost:5433/video_meetings';
 
 export default defineConfig({
   schema: 'prisma/schema.prisma',

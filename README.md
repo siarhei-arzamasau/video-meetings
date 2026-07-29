@@ -27,20 +27,19 @@ cp .env.example .env
 cp apps/api/.env.example apps/api/.env
 cp apps/web/.env.example apps/web/.env.local
 
-docker compose up -d postgres   # PostgreSQL on :5432
+docker compose up -d postgres   # PostgreSQL on :5433
 pnpm dev                        # web on :3000, api on :3001
 ```
 
 `GET http://localhost:3001/api/health` should return `{"status":"ok",...}`.
 
-If port 5432 is already taken by a PostgreSQL you run elsewhere, remap the host side in a
-`docker-compose.override.yml` (gitignored) and point `DATABASE_URL` at the new port:
+The host port is 5433 rather than the usual 5432, so the container does not collide with a
+PostgreSQL you already run locally. To use a different one, set `POSTGRES_PORT` in `.env`
+and point `DATABASE_URL` at the same port:
 
-```yaml
-services:
-  postgres:
-    ports:
-      - '5433:5432'
+```bash
+POSTGRES_PORT=5434
+DATABASE_URL=postgresql://postgres:postgres@localhost:5434/video_meetings
 ```
 
 ## Scripts
