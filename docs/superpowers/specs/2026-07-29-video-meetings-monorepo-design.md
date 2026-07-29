@@ -14,8 +14,11 @@ Stand up an empty but fully wired monorepo holding two applications — a Next.j
 |---|---|---|
 | Package manager | pnpm workspaces | 11.15.1 |
 | Task orchestration | Turborepo | 2.10.7 |
-| Frontend | Next.js, App Router, CSS Modules | 16.2.12 |
+| Frontend | Next.js, App Router | 16.2.12 |
 | UI runtime | React | 19.2.8 |
+| UI components | HeroUI | 3.2.2 |
+| CSS framework | Tailwind CSS | 4.3.3 |
+| Theming | next-themes | 0.4.6 |
 | Backend | Nest.js | 11.1.28 |
 | ORM | Prisma | 7.9.1 |
 | Language | TypeScript | 5.9.3 |
@@ -39,6 +42,19 @@ Oxlint and Oxfmt replace ESLint and Prettier for speed and a single toolchain. T
 accepted deliberately: Oxlint has no `eslint-plugin-next` parity and type-aware rules are
 out of scope here. `pnpm typecheck` (`tsc --noEmit` per package) is the safety net for
 type-level defects.
+
+### UI library rationale
+
+HeroUI v3 (`@heroui/react@3.2.2`) is the component library for `apps/web`. It declares
+`tailwindcss >=4.0.0` as a peer dependency, so adopting it pulls Tailwind CSS v4 into the
+frontend by necessity. **This supersedes the earlier "CSS Modules, no Tailwind" decision** —
+Tailwind utilities plus HeroUI components are now the single styling system, and no CSS
+Modules exist anywhere in `apps/web`.
+
+Integration cost is small: HeroUI v3 requires no provider component (unlike v2) and is
+safe to use directly inside React Server Components without a `'use client'` directive.
+Setup reduces to two CSS imports and a PostCSS config. `@heroui/styles` ships prebuilt CSS,
+so no Tailwind v4 `@source` directive pointing into `node_modules` is required.
 
 ## Repository layout
 
@@ -112,18 +128,20 @@ reference, proving the wiring end to end. They are real, compiling types — not
 apps/web/
 ├─ src/
 │  ├─ app/
-│  │  ├─ layout.tsx
-│  │  ├─ page.tsx
-│  │  ├─ page.module.css
-│  │  ├─ globals.css
+│  │  ├─ layout.tsx          # <html suppressHydrationWarning>, wraps Providers
+│  │  ├─ providers.tsx       # 'use client' — next-themes ThemeProvider
+│  │  ├─ page.tsx            # Server Component; HeroUI Card + Button smoke test
+│  │  ├─ globals.css         # @import "tailwindcss"; then @import "@heroui/styles";
 │  │  ├─ error.tsx
 │  │  └─ not-found.tsx
-│  ├─ components/            # .gitkeep — populated in feature work
+│  ├─ components/
+│  │  └─ theme-toggle.tsx    # 'use client' — useTheme() light/dark switch
 │  └─ lib/
 │     ├─ api-client.ts       # fetch wrapper over NEXT_PUBLIC_API_URL
 │     └─ api-client.test.ts
 ├─ public/
 ├─ next.config.ts            # output: 'standalone'
+├─ postcss.config.mjs        # { plugins: { '@tailwindcss/postcss': {} } }
 ├─ tsconfig.json             # extends @repo/tsconfig/nextjs.json
 ├─ vitest.config.ts
 ├─ Dockerfile
@@ -136,8 +154,17 @@ apps/web/
   `NEXT_PUBLIC_API_URL` (default `http://localhost:3001/api`) and returns
   `@repo/shared` types.
 - One real Vitest test covers `api-client` URL construction.
+- Import order in `globals.css` is load-bearing: `tailwindcss` first, `@heroui/styles`
+  second. Reversing it breaks HeroUI's cascade.
+- HeroUI needs no provider of its own. `providers.tsx` exists solely for `next-themes`,
+  configured with `attribute={['class', 'data-theme']}` because HeroUI's theming reads
+  both. `suppressHydrationWarning` on `<html>` avoids the known theme-flash hydration
+  mismatch.
+- `page.tsx` renders a HeroUI `Card` + `Button` purely as an integration smoke test, not
+  as product UI.
 
-**Depends on:** `@repo/shared`, `@repo/tsconfig`.
+**Depends on:** `@repo/shared`, `@repo/tsconfig`; external — `@heroui/react`,
+`@heroui/styles`, `tailwindcss`, `@tailwindcss/postcss`, `next-themes`.
 
 ### `apps/api` — Nest.js
 
@@ -266,8 +293,8 @@ Committed as `.env.example` at the root and in each app. Real `.env` files are g
 
 ## Out of scope
 
-Authentication, WebRTC/media handling, signalling, database models, UI component library,
-state management, deployment targets, observability. All deferred to later cycles.
+Authentication, WebRTC/media handling, signalling, database models, state management,
+deployment targets, observability. All deferred to later cycles.
 
 ## Acceptance criteria
 
@@ -277,7 +304,9 @@ From a clean clone with `pnpm install`:
 2. `pnpm typecheck` reports zero errors.
 3. `pnpm lint` and `pnpm format:check` pass with zero violations.
 4. `pnpm test` passes — one web test, one api test, no skipped specs.
-5. `pnpm dev` starts both apps; `http://localhost:3000` renders and
-   `http://localhost:3001/api/health` returns 200.
+5. `pnpm dev` starts both apps; `http://localhost:3000` renders the HeroUI Card + Button
+   with Tailwind styles applied, and `http://localhost:3001/api/health` returns 200.
 6. No file contains a `TODO`, placeholder stub, `test.skip`, or `test.only`.
 7. `docker compose config` validates.
+8. The theme toggle switches between light and dark, updating both `class` and
+   `data-theme` on `<html>`, with no hydration warning in the console.
