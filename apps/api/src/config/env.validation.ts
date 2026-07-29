@@ -23,6 +23,21 @@ export class EnvironmentVariables {
   @IsString()
   @MinLength(1)
   DATABASE_URL: string;
+
+  /** Signs and verifies access tokens. A short secret is a guessable secret. */
+  @IsString()
+  @MinLength(32)
+  JWT_SECRET: string;
+
+  /**
+   * Access token lifetime. Seconds rather than an `ms`-style string so the bound is a
+   * number the contract can police — capped at 30 days, because a token that outlives its
+   * user's session is a credential nobody can revoke.
+   */
+  @IsInt()
+  @Min(60)
+  @Max(30 * 24 * 60 * 60)
+  JWT_EXPIRES_IN_SECONDS: number = 3600;
 }
 
 export function validate(config: Record<string, unknown>): EnvironmentVariables {

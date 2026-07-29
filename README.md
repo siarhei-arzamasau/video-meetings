@@ -9,7 +9,8 @@ Monorepo holding the video meetings frontend and backend.
 | `@repo/shared`   | `packages/shared`   | Cross-app types and API contracts                           |
 | `@repo/tsconfig` | `packages/tsconfig` | Shared TypeScript base configs                              |
 
-This repository currently contains **structure only** — no product features. See
+Email-and-password authentication is in place (`POST /api/auth/register`,
+`POST /api/auth/login`, `GET /api/auth/me`); the meetings features themselves are not. See
 [`docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md)
 for the design it implements.
 
@@ -28,10 +29,15 @@ cp apps/api/.env.example apps/api/.env
 cp apps/web/.env.example apps/web/.env.local
 
 docker compose up -d postgres   # PostgreSQL on :5433
+pnpm --filter=@repo/api prisma:migrate   # create the schema
 pnpm dev                        # web on :3000, api on :3001
 ```
 
 `GET http://localhost:3001/api/health` should return `{"status":"ok",...}`.
+
+The API will not start without a `JWT_SECRET` of at least 32 characters. The copied
+`.env.example` carries a placeholder that satisfies it; replace it with
+`openssl rand -base64 32` before the app is reachable by anyone else.
 
 The host port is 5433 rather than the usual 5432, so the container does not collide with a
 PostgreSQL you already run locally. To use a different one, set `POSTGRES_PORT` in `.env`
@@ -79,8 +85,8 @@ packages/
 
 ## Database
 
-Prisma owns the schema at `apps/api/prisma/schema.prisma`. It declares the datasource and
-generator only — models arrive with feature work.
+Prisma owns the schema at `apps/api/prisma/schema.prisma`, currently one `User` model
+mapped to a `users` table.
 
 ```bash
 pnpm --filter=@repo/api prisma:generate

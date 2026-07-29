@@ -27,6 +27,10 @@ services:
       NODE_ENV: production
       PORT: 3001
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/video_meetings
+      # Defaulted rather than required so `docker compose up -d postgres` still works
+      # without a root .env. Override it for anything but local development.
+      JWT_SECRET: ${JWT_SECRET:-dev-only-replace-with-openssl-rand-base64-32}
+      JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-3600}
     ports:
       - '3001:3001'
     depends_on:

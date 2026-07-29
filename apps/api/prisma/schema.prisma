@@ -1,7 +1,4 @@
 // Schema for @repo/api.
-//
-// Structure only: the datasource and generator are wired, but no models exist yet.
-// Models arrive with feature work, alongside their first migration.
 
 generator client {
   provider     = "prisma-client"
@@ -14,4 +11,27 @@ generator client {
 // prisma.config.ts; the runtime client gets it through a driver adapter (PrismaService).
 datasource db {
   provider = "postgresql"
+}
+
+/// A person who can host or join meetings. Mirrors the `User` shape in @repo/shared,
+/// minus `passwordHash`, which never leaves this layer.
+model User {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Stored normalised — trimmed and lowercased — so uniqueness is case-insensitive
+  /// and a login cannot miss an account over capitalisation. Normalising in the DTO
+  /// rather than here is what makes that constraint meaningful.
+  email String @unique
+
+  /// argon2id. Never bcrypt: bcrypt truncates at 72 bytes, which silently makes every
+  /// password sharing a 72-byte prefix the same credential.
+  passwordHash String @map("password_hash")
+
+  displayName String @map("display_name")
+
+  // Timestamptz, not timestamp: `timestamp` comes back from the driver as a local-time
+  // Date, so any comparison against a real instant is wrong by the machine's offset.
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@map("users")
 }

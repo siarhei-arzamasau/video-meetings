@@ -23,9 +23,9 @@ Guidance for coding agents working in this repository.
 | `@repo/shared`   | `packages/shared`   | Cross-app types and API contracts                           |
 | `@repo/tsconfig` | `packages/tsconfig` | Shared TypeScript base configs                              |
 
-The repo currently holds **structure only** — no product features. `apps/web` and
-`apps/api` each have their own guide with app-specific detail, duplicated into
-`CLAUDE.md` + `AGENTS.md` exactly like the root guide.
+Email-and-password authentication is implemented in `apps/api` (`register`, `login`, `me`);
+nothing else is. `apps/web` and `apps/api` each have their own guide with app-specific
+detail, duplicated into `CLAUDE.md` + `AGENTS.md` exactly like the root guide.
 
 The design this implements:
 [`docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md).
@@ -61,8 +61,12 @@ cp .env.example .env
 cp apps/api/.env.example apps/api/.env
 cp apps/web/.env.example apps/web/.env.local
 docker compose up -d postgres
+pnpm --filter=@repo/api prisma:migrate   # required: the API's tables do not exist yet
 pnpm dev
 ```
+
+`JWT_SECRET` must be at least 32 characters or the API refuses to boot. The `.env.example`
+placeholder satisfies that for local work only.
 
 `GET http://localhost:3001/api/health` should return `{"status":"ok",...}`.
 

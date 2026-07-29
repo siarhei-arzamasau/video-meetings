@@ -1,32 +1,19 @@
 import 'reflect-metadata';
 
-import { Logger, ValidationPipe } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from './app.module';
-import { HttpExceptionFilter } from './common/filters/http-exception.filter';
-import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { configureApp } from './configure-app';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
 
-  app.setGlobalPrefix('api');
+  configureApp(app);
 
-  // Reflects the requesting origin, which is what local development needs.
-  // Restrict this to a known origin list before deploying anywhere public.
-  app.enableCors({ origin: true, credentials: true });
-
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: { enableImplicitConversion: true },
-    }),
-  );
-  app.useGlobalFilters(new HttpExceptionFilter());
-  app.useGlobalInterceptors(new LoggingInterceptor());
+  // Process-level, so deliberately not in configureApp: this is what lets PrismaService
+  // disconnect cleanly on a signal.
   app.enableShutdownHooks();
 
   const port = app.get(ConfigService).get<number>('PORT', 3001);
