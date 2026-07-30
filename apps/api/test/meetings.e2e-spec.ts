@@ -3,13 +3,27 @@ import { randomUUID } from 'node:crypto';
 import type { Meeting } from '@repo/shared';
 import type request from 'supertest';
 
-import { useAuthSuite } from './utils/auth-suite';
-import { EMAIL, PASSWORD, REGISTER_URL, TEST_JWT_SECRET } from './utils/fixtures';
+import { useApiSuite } from './utils/api-suite';
+import {
+  EMAIL,
+  MAX_PARTICIPANTS,
+  MAX_TITLE_LENGTH,
+  MEETINGS_URL,
+  OTHER_EMAIL,
+  PASSWORD,
+  REGISTER_URL,
+  TEST_JWT_SECRET,
+  THIRD_EMAIL,
+} from './utils/fixtures';
 import { accessTokenOf } from './utils/http';
 import { signJwtHmac } from './utils/jwt';
+import {
+  countMeetings,
+  countParticipants,
+  findMeetingRows,
+  findParticipantIds,
+} from './utils/meetings-table';
 import { findUserRow } from './utils/users-table';
-
-const MEETINGS_URL = '/api/meetings';
 
 interface RegisteredUser {
   id: string;
@@ -17,7 +31,7 @@ interface RegisteredUser {
 }
 
 describe('Meetings API', () => {
-  const suite = useAuthSuite();
+  const suite = useApiSuite();
 
   const registerUser = async (email: string): Promise<RegisteredUser> => {
     const response = await suite.post(REGISTER_URL, { email, password: PASSWORD }).expect(201);
@@ -38,14 +52,14 @@ describe('Meetings API', () => {
   describe(`POST ${MEETINGS_URL}`, () => {
     it('creates a scheduled meeting owned by the current user', async () => {
       const host = await registerUser(EMAIL);
-      const grace = await registerUser('grace@example.com');
-      const charles = await registerUser('charles@example.com');
-      const date = futureDate();
+      const grace = await registerUser(OTHER_EMAIL);
+      const charles = await registerUser(THIRD_EMAIL);
+      const scheduledAt = futureInstant();
 
       const response = await createMeeting(host.token, {
         title: 'Analytical Engine planning',
-        date,
-        participants: [grace.id, charles.id],
+        scheduledAt,
+        participantIds: [grace.id, charles.id],
       }).expect(201);
       const body = response.body as Meeting;
 
@@ -62,10 +76,38 @@ describe('Meetings API', () => {
         title: 'Analytical Engine planning',
         status: 'scheduled',
         hostId: host.id,
-        scheduledAt: date,
+        scheduledAt,
         participantIds: [grace.id, charles.id].toSorted(),
       });
-      expect(body.participantIds).toHaveLength(2);
+    });
+
+    it('stores exactly the meeting it reported, and does not store the host as a participant', async () => {
+      const host = await registerUser(EMAIL);
+      const grace = await registerUser(OTHER_EMAIL);
+      const scheduledAt = futureInstant();
+
+      const response = await createMeeting(host.token, {
+        title: 'Engine review',
+        scheduledAt,
+        participantIds: [grace.id],
+      }).expect(201);
+      const body = response.body as Meeting;
+
+      // Read the rows directly rather than through the API: a response is not evidence about
+      // what was written, and the host silently landing in `meeting_participants` would be
+      // invisible to any assertion that goes back through the same `include`.
+      const rows = await findMeetingRows(suite.prisma());
+
+      expect(rows).toEqual([
+        {
+          id: body.id,
+          title: 'Engine review',
+          status: 'scheduled',
+          host_id: host.id,
+          scheduled_at: new Date(scheduledAt),
+        },
+      ]);
+      await expect(findParticipantIds(suite.prisma(), body.id)).resolves.toEqual([grace.id]);
     });
 
     it('allows a meeting with no participants', async () => {
@@ -73,57 +115,112 @@ describe('Meetings API', () => {
 
       const response = await createMeeting(host.token, {
         title: 'Private planning',
-        date: futureDate(),
-        participants: [],
+        scheduledAt: futureInstant(),
+        participantIds: [],
       }).expect(201);
       const body = response.body as Meeting;
 
       expect(body.participantIds).toEqual([]);
+      await expect(countParticipants(suite.prisma())).resolves.toBe(0);
     });
 
     it.each([
-      ['a missing title', ({ date }: { date: string }) => ({ date, participants: [] })],
-      ['a blank title', ({ date }: { date: string }) => ({ title: '   ', date, participants: [] })],
-      ['a missing date', () => ({ title: 'Planning', participants: [] })],
-      ['missing participants', ({ date }: { date: string }) => ({ title: 'Planning', date })],
+      ['a missing title', ({ scheduledAt }: Body) => ({ scheduledAt, participantIds: [] })],
       [
-        'an invalid date',
-        () => ({ title: 'Planning', date: 'tomorrow afternoon', participants: [] }),
+        'a blank title',
+        ({ scheduledAt }: Body) => ({ title: '   ', scheduledAt, participantIds: [] }),
       ],
       [
+        'an over-long title',
+        ({ scheduledAt }: Body) => ({
+          title: 'a'.repeat(MAX_TITLE_LENGTH + 1),
+          scheduledAt,
+          participantIds: [],
+        }),
+      ],
+      ['a missing timestamp', () => ({ title: 'Planning', participantIds: [] })],
+      [
+        'an unparseable timestamp',
+        () => ({ title: 'Planning', scheduledAt: 'tomorrow afternoon', participantIds: [] }),
+      ],
+      [
+        // Would parse to midnight UTC, so the response could not echo what was sent.
+        'a bare calendar date',
+        () => ({ title: 'Planning', scheduledAt: '2026-08-01', participantIds: [] }),
+      ],
+      [
+        'an impossible calendar date',
+        () => ({ title: 'Planning', scheduledAt: '2026-02-31T10:00:00.000Z', participantIds: [] }),
+      ],
+      ['missing participants', ({ scheduledAt }: Body) => ({ title: 'Planning', scheduledAt })],
+      [
         'a non-array participants value',
-        ({ date }: { date: string }) => ({ title: 'Planning', date, participants: 'user-id' }),
+        ({ scheduledAt }: Body) => ({
+          title: 'Planning',
+          scheduledAt,
+          participantIds: 'user-id',
+        }),
       ],
       [
         'a non-string participant id',
-        ({ date }: { date: string }) => ({ title: 'Planning', date, participants: [123] }),
+        ({ scheduledAt }: Body) => ({ title: 'Planning', scheduledAt, participantIds: [123] }),
+      ],
+      [
+        'a participant id that is not a uuid',
+        ({ scheduledAt }: Body) => ({
+          title: 'Planning',
+          scheduledAt,
+          participantIds: ['not-a-uuid'],
+        }),
+      ],
+      [
+        'more participants than the ceiling allows',
+        ({ scheduledAt }: Body) => ({
+          title: 'Planning',
+          scheduledAt,
+          participantIds: Array.from({ length: MAX_PARTICIPANTS + 1 }, () => randomUUID()),
+        }),
       ],
       [
         'an unrecognised field',
-        ({ date }: { date: string }) => ({
+        ({ scheduledAt }: Body) => ({
           title: 'Planning',
-          date,
-          participants: [],
+          scheduledAt,
+          participantIds: [],
           hostId: randomUUID(),
         }),
       ],
     ])('rejects %s with 400', async (_description, bodyFor) => {
       const host = await registerUser(EMAIL);
 
-      await createMeeting(host.token, bodyFor({ date: futureDate() })).expect(400);
+      await createMeeting(host.token, bodyFor({ scheduledAt: futureInstant() })).expect(400);
+      await expect(countMeetings(suite.prisma())).resolves.toBe(0);
     });
 
     it('rejects the same participant twice with different UUID casing', async () => {
       const host = await registerUser(EMAIL);
-      const participant = await registerUser('grace@example.com');
+      const participant = await registerUser(OTHER_EMAIL);
 
       await createMeeting(host.token, {
         title: 'Duplicate participant',
-        date: futureDate(),
-        participants: [participant.id, participant.id.toUpperCase()],
+        scheduledAt: futureInstant(),
+        participantIds: [participant.id, participant.id.toUpperCase()],
       }).expect(400);
 
-      await listMeetings(host.token).expect(200, []);
+      await expect(countMeetings(suite.prisma())).resolves.toBe(0);
+    });
+
+    it('rejects the host listing themselves as a participant', async () => {
+      const host = await registerUser(EMAIL);
+
+      // Hosting and attending are distinct roles: `hostId` already names them.
+      await createMeeting(host.token, {
+        title: 'Self-invite',
+        scheduledAt: futureInstant(),
+        participantIds: [host.id],
+      }).expect(400);
+
+      await expect(countMeetings(suite.prisma())).resolves.toBe(0);
     });
 
     it('rejects an unknown participant without creating the meeting', async () => {
@@ -131,11 +228,14 @@ describe('Meetings API', () => {
 
       await createMeeting(host.token, {
         title: 'Unknown participant',
-        date: futureDate(),
-        participants: [randomUUID()],
+        scheduledAt: futureInstant(),
+        participantIds: [randomUUID()],
       }).expect(400);
 
-      await listMeetings(host.token).expect(200, []);
+      // Counted over the whole table, not just this host's list: a nested create that was
+      // rolled back only partially would leave a meeting nobody can see.
+      await expect(countMeetings(suite.prisma())).resolves.toBe(0);
+      await expect(countParticipants(suite.prisma())).resolves.toBe(0);
     });
   });
 
@@ -150,40 +250,64 @@ describe('Meetings API', () => {
 
     it('returns hosted and joined meetings but excludes unrelated meetings', async () => {
       const ada = await registerUser(EMAIL);
-      const grace = await registerUser('grace@example.com');
-      const charles = await registerUser('charles@example.com');
+      const grace = await registerUser(OTHER_EMAIL);
+      const charles = await registerUser(THIRD_EMAIL);
 
       const hosted = await createMeeting(ada.token, {
         title: 'Hosted by Ada',
-        date: futureDate(1),
-        participants: [grace.id],
+        scheduledAt: futureInstant(1),
+        participantIds: [grace.id],
       }).expect(201);
       const joined = await createMeeting(grace.token, {
         title: 'Hosted by Grace',
-        date: futureDate(2),
-        participants: [ada.id],
+        scheduledAt: futureInstant(2),
+        participantIds: [ada.id],
       }).expect(201);
       await createMeeting(charles.token, {
         title: 'Unrelated meeting',
-        date: futureDate(3),
-        participants: [],
+        scheduledAt: futureInstant(3),
+        participantIds: [],
       }).expect(201);
 
       const response = await listMeetings(ada.token).expect(200);
+
+      expect(response.body).toEqual([hosted.body, joined.body]);
+    });
+
+    it('orders meetings sharing one instant by id, so the order is stable', async () => {
+      const host = await registerUser(EMAIL);
+      const scheduledAt = futureInstant();
+
+      const first = await createMeeting(host.token, {
+        title: 'Same instant A',
+        scheduledAt,
+        participantIds: [],
+      }).expect(201);
+      const second = await createMeeting(host.token, {
+        title: 'Same instant B',
+        scheduledAt,
+        participantIds: [],
+      }).expect(201);
+
+      const response = await listMeetings(host.token).expect(200);
       const meetings = response.body as Meeting[];
 
-      expect(meetings).toEqual([hosted.body, joined.body]);
+      // Insertion order says nothing here — the tie-break is on id, so derive the expectation
+      // from the ids rather than from which request happened to be sent first.
+      expect(meetings).toEqual(
+        [first.body as Meeting, second.body as Meeting].toSorted((a, b) => (a.id < b.id ? -1 : 1)),
+      );
     });
   });
 
   describe(`GET ${MEETINGS_URL}/:id`, () => {
     it('returns the meeting to its host', async () => {
       const host = await registerUser(EMAIL);
-      const participant = await registerUser('grace@example.com');
+      const participant = await registerUser(OTHER_EMAIL);
       const created = await createMeeting(host.token, {
         title: 'Engine review',
-        date: futureDate(),
-        participants: [participant.id],
+        scheduledAt: futureInstant(),
+        participantIds: [participant.id],
       }).expect(201);
       const meeting = created.body as Meeting;
 
@@ -194,11 +318,11 @@ describe('Meetings API', () => {
 
     it('returns the meeting to one of its participants', async () => {
       const host = await registerUser(EMAIL);
-      const participant = await registerUser('grace@example.com');
+      const participant = await registerUser(OTHER_EMAIL);
       const created = await createMeeting(host.token, {
         title: 'Engine review',
-        date: futureDate(),
-        participants: [participant.id],
+        scheduledAt: futureInstant(),
+        participantIds: [participant.id],
       }).expect(201);
       const meeting = created.body as Meeting;
 
@@ -211,8 +335,8 @@ describe('Meetings API', () => {
       const user = await registerUser(EMAIL);
       await createMeeting(user.token, {
         title: 'Existing meeting',
-        date: futureDate(),
-        participants: [],
+        scheduledAt: futureInstant(),
+        participantIds: [],
       }).expect(201);
 
       await getMeeting(user.token, randomUUID()).expect(404);
@@ -220,15 +344,26 @@ describe('Meetings API', () => {
 
     it('returns 404 when the meeting belongs to another user', async () => {
       const host = await registerUser(EMAIL);
-      const otherUser = await registerUser('grace@example.com');
+      const otherUser = await registerUser(OTHER_EMAIL);
       const created = await createMeeting(host.token, {
         title: 'Host-only meeting',
-        date: futureDate(),
-        participants: [],
+        scheduledAt: futureInstant(),
+        participantIds: [],
       }).expect(201);
       const meeting = created.body as Meeting;
 
       await getMeeting(otherUser.token, meeting.id).expect(404);
+    });
+
+    it.each([
+      ['not a uuid at all', 'meeting-1'],
+      // `id` is a uuid column: an unparseable value would make Postgres raise rather than
+      // simply not match, so the pipe has to reject it before the query.
+      ['a uuid of another version', '00000000-0000-1000-8000-000000000000'],
+    ])('rejects %s with 400 rather than reaching the database', async (_description, id) => {
+      const user = await registerUser(EMAIL);
+
+      await getMeeting(user.token, id).expect(400);
     });
   });
 
@@ -279,7 +414,12 @@ describe('Meetings API', () => {
   });
 });
 
-function futureDate(daysFromNow = 1): string {
+interface Body {
+  scheduledAt: string;
+}
+
+/** Millisecond precision, matching the column's `Timestamptz(3)`, so the round trip is exact. */
+function futureInstant(daysFromNow = 1): string {
   return new Date(Date.now() + daysFromNow * 24 * 60 * 60 * 1_000).toISOString();
 }
 

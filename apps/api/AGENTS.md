@@ -52,16 +52,15 @@ that is the house style for anything new, not an exception. `src/modules/health`
 the minimum a module needs when it changes no state and reaches no database; a module with
 nothing to write needs no commands.
 
-`src/modules/meetings` predates this decision and is a plain controller-plus-service. **It
-is not a template — read auth instead.** A working module is not rewritten for consistency
-alone, but a write operation added to meetings should arrive as a command, which is how it
-converges over time rather than in one disruptive pass.
+`src/modules/meetings` is the second worked example and the one to read for a module with
+both sides: `POST /meetings` is a command, while the two reads stay on a plain service.
 
 ## CQRS — the module pattern
 
 Every write operation is a command object dispatched through `@nestjs/cqrs`'s `CommandBus`
 to exactly one handler. `src/modules/auth` is the worked example: `register` and `login` are
-commands, and there is no query side.
+commands, and there is no query side. `src/modules/meetings` shows the mixed case —
+`CreateMeetingCommand` on the write, `MeetingsService` on the reads.
 
 **Reads do not need commands.** The pattern earns its indirection on operations that change
 state — one class per use case, a uniform place for the next one to land, and a handler that
@@ -112,6 +111,31 @@ purpose.
 `RegisterHandler` maps Prisma's `P2002` to a 409. It is keyed on the unique index failing,
 not on a preceding `findUnique` — two concurrent registrations of one address both pass a
 read check, and only one survives the insert.
+
+### Reading a Prisma constraint error — the meetings trap
+
+`CreateMeetingHandler` maps `P2003` to a 400, and getting there is less obvious than the
+`P2002` case above, because **two foreign keys in that insert point at `users`**:
+`meetings_host_id_fkey` and `meeting_participants_user_id_fkey`. The code alone does not say
+which failed. An unknown participant is the caller's mistake; the host row vanishing is a race
+between the guard's lookup and the insert, and reporting it as "a participant is not
+registered" sends someone hunting a bug in a participant list that was correct.
+
+**The constraint name is not where it looks like it should be.** With `@prisma/adapter-pg` it
+arrives nested, at `meta.driverAdapterError.cause.constraint.index`, _not_ as
+`meta.field_name` — that is the older non-adapter shape, and a handler written against it
+compiles, reads `undefined`, and silently misclassifies every violation. Capture the real
+payload before matching on it. `create-meeting.handler.spec.ts` pins the shape observed
+against Postgres for exactly that reason, and the handler searches the serialised `meta`
+rather than a fixed path, since the nesting is Prisma's internal shape and not a contract.
+
+The default is deliberate and asymmetric: an unrecognised payload yields the 400. The
+participant list is the overwhelmingly likelier cause, so an upgrade that moves the field
+degrades to the common answer rather than turning ordinary bad requests into 500s.
+
+`CreateMeetingHandler` also rejects a host who lists themselves as a participant. That rule
+cannot live in the DTO — the DTO never sees the host, who comes from the guard — which is what
+makes it a use-case invariant and the handler's to own.
 
 ### What is deliberately absent
 
@@ -199,8 +223,12 @@ Jest, configured inline in `package.json` with `rootDir: src` and `testRegex:
 .*\.spec\.ts$` — unit specs sit beside the code as `*.spec.ts`. E2E specs use
 `test/jest-e2e.json` and Supertest. Not Vitest — that's the web app.
 
+**Neither `pnpm test` nor CI runs `test:e2e`, so a module whose only coverage is an e2e spec
+is uncovered as far as CI is concerned.** Every write handler and read service gets a
+`*.spec.ts` beside it for that reason, not for a coverage number.
+
 E2E specs run against the **real database**, not a mock: `test/utils/create-test-app.ts`
-boots `AppModule` and `useAuthSuite` truncates the tables it touches. `test:e2e` therefore
+boots `AppModule` and `useApiSuite` truncates the tables it touches. `test:e2e` therefore
 needs `docker compose up -d postgres` and a migrated schema — without them every test fails
 in `beforeEach` with `relation "..." does not exist`, which reads like a broken suite and is
 really a missing database.
@@ -230,6 +258,12 @@ Four things about that setup are easy to get wrong:
 - **`test/utils/` reads the database over raw SQL**, not through `prisma.user`, so the
   specs pin table and column names directly (`users`, snake_case). A schema whose `@@map`
   or `@map` disagrees breaks them; the file documents the mapping it expects.
+  `meetings-table.ts` is the same idea one table over, and it exists because a response is
+  not evidence about what was written: asserting through the API would reuse the same
+  `include` the implementation does, so a row the code never meant to write — the host
+  landing in `meeting_participants` — would be invisible. It has no truncation helper on
+  purpose; `truncateUsers` cascades, and a second one would be a way for the two to
+  disagree about what "clean" means.
 - **`test/utils/jwt.ts` verifies tokens with `node:crypto` alone**, never the library the
   API signs with, so a token only `@nestjs/jwt` can read fails the assertion. It is checked
   against a signature produced by `openssl dgst -sha256 -hmac`. Do not "simplify" it into
@@ -257,12 +291,13 @@ Revisit it when:
   `schema.prisma`'s generator block, or `PrismaService` is touched.
 - **A new cross-cutting concern appears under `src/common/`** — say what it does and
   whether it is registered globally or per-controller.
-- **The module conventions shift** — `src/modules/auth` is named here as the shape to copy
-  and `src/modules/health` as the no-write minimum. If a better exemplar replaces either,
-  repoint the reference.
-- **`src/modules/meetings` gains commands, or is converted** — it is named here as the one
-  module that predates the CQRS default and must not be copied. Once it no longer is the
-  exception, that warning costs a reader time to disprove and should go.
+- **The module conventions shift** — `src/modules/auth` is named here as the shape to copy,
+  `src/modules/meetings` as the command-plus-reads example, and `src/modules/health` as the
+  no-write minimum. If a better exemplar replaces any of them, repoint the reference.
+- **Prisma's error `meta` shape changes on an upgrade** — the meetings section names the
+  exact path the constraint arrives at today and says it is not a contract. If a version
+  bump moves it, the handler keeps working but the explanation stops being true, and the
+  next person reads a path that no longer exists.
 - **A `QueryBus`, events, or sagas arrive** — the CQRS section states plainly that none
   exist. The first one to land makes that false, and the reason it was worth adding is
   exactly the kind of thing this guide should carry.

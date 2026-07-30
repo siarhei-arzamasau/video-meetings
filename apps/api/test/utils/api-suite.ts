@@ -5,7 +5,7 @@ import { PrismaService } from '../../src/modules/prisma/prisma.service';
 import { createTestApp } from './create-test-app';
 import { truncateUsers } from './users-table';
 
-export interface AuthSuite {
+export interface ApiSuite {
   /** Available from the first `beforeEach` onwards; throws if read at describe scope. */
   prisma(): PrismaService;
   post(url: string, body: object): request.Test;
@@ -13,14 +13,17 @@ export interface AuthSuite {
 }
 
 /**
- * Registers the app lifecycle every auth spec needs: one application per file, a truncated
- * users table per test.
+ * Registers the app lifecycle every e2e spec needs: one application per file, a truncated
+ * database per test.
  *
  * Call it at describe scope — it registers `beforeAll`/`afterAll`/`beforeEach` itself. This
- * exists so the three auth specs cannot drift apart in how they set up, which is the same
- * failure mode `createTestApp` warns about for `main.ts`.
+ * exists so the specs cannot drift apart in how they set up, which is the same failure mode
+ * `createTestApp` warns about for `main.ts`.
+ *
+ * `truncateUsers` cascades, so this clears meetings and participants too — a spec for a table
+ * with a foreign key to `users` inherits the cleanup instead of registering its own.
  */
-export function useAuthSuite(): AuthSuite {
+export function useApiSuite(): ApiSuite {
   let app: INestApplication | undefined;
   let prisma: PrismaService | undefined;
 
@@ -31,7 +34,7 @@ export function useAuthSuite(): AuthSuite {
 
   afterAll(async () => {
     try {
-      // Leave the table as we found it. The `beforeEach` below is what isolates one test
+      // Leave the database as we found it. The `beforeEach` below is what isolates one test
       // from the next — and from a previous run — so correctness does not depend on this.
       // What it buys is not stranding fixture rows in the developer's database: without it,
       // whatever the last test happened to leave behind simply stays there.

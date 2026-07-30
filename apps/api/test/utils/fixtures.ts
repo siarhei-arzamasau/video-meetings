@@ -8,9 +8,18 @@ export const TEST_JWT_EXPIRES_IN_SECONDS = 3600;
 export const REGISTER_URL = '/api/auth/register';
 export const LOGIN_URL = '/api/auth/login';
 export const ME_URL = '/api/auth/me';
+export const MEETINGS_URL = '/api/meetings';
 
 export const EMAIL = 'ada@example.com';
 export const PASSWORD = 'correct-horse-battery-42';
+
+/** Second and third accounts, for the cases that need someone other than `EMAIL` to exist. */
+export const OTHER_EMAIL = 'grace@example.com';
+export const THIRD_EMAIL = 'charles@example.com';
+
+/** Mirrors `CreateMeetingDto`. Declared here, not imported, so a relaxed bound fails a test. */
+export const MAX_TITLE_LENGTH = 200;
+export const MAX_PARTICIPANTS = 100;
 
 /** The shortest password the API accepts. One character less must be a 400. */
 export const MIN_PASSWORD_LENGTH = 8;

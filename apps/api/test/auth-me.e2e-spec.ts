@@ -1,7 +1,7 @@
 import { EMAIL, ME_URL, PASSWORD, REGISTER_URL, TEST_JWT_SECRET } from './utils/fixtures';
 import { accessTokenOf } from './utils/http';
 import { signJwtHmac, unsignedJwt } from './utils/jwt';
-import { useAuthSuite } from './utils/auth-suite';
+import { useApiSuite } from './utils/api-suite';
 import { deleteUser, findUserRow } from './utils/users-table';
 
 /**
@@ -9,7 +9,7 @@ import { deleteUser, findUserRow } from './utils/users-table';
  * access, and — more importantly — that forged, expired, and stale ones do not.
  */
 describe(`GET ${ME_URL}`, () => {
-  const suite = useAuthSuite();
+  const suite = useApiSuite();
 
   let token: string;
   let userId: string;

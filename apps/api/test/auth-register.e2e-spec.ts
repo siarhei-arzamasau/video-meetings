@@ -10,11 +10,11 @@ import {
 } from './utils/fixtures';
 import { accessTokenOf } from './utils/http';
 import { verifyJwtHs256 } from './utils/jwt';
-import { useAuthSuite } from './utils/auth-suite';
+import { useApiSuite } from './utils/api-suite';
 import { countUsers, findUserRow } from './utils/users-table';
 
 describe(`POST ${REGISTER_URL}`, () => {
-  const suite = useAuthSuite();
+  const suite = useApiSuite();
 
   const register = (body: object) => suite.post(REGISTER_URL, body);
 

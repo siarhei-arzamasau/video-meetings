@@ -11,14 +11,14 @@ import {
 } from './utils/fixtures';
 import { accessTokenOf, messageOf } from './utils/http';
 import { verifyJwtHs256 } from './utils/jwt';
-import { useAuthSuite } from './utils/auth-suite';
+import { useApiSuite } from './utils/api-suite';
 import { countUsers, findUserRow, readUserSnapshot } from './utils/users-table';
 
 const WRONG_PASSWORD = 'wrong-password-99';
 const UNKNOWN_EMAIL = 'nobody@example.com';
 
 describe(`POST ${LOGIN_URL}`, () => {
-  const suite = useAuthSuite();
+  const suite = useApiSuite();
 
   const login = (body: object) => suite.post(LOGIN_URL, body);
   const register = (body: object) => suite.post(REGISTER_URL, body);
