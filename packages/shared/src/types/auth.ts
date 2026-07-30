@@ -10,10 +10,25 @@ export interface AuthResponse {
   accessToken: string;
 }
 
-/** The email-and-password pair the auth endpoints validate. Not currently referenced by
- *  either app: the API takes these as command primitives, and the web client does not yet
- *  call auth. Kept as the shared shape a web auth client should use. */
+/** The email-and-password pair the auth endpoints validate. The web app's registration client
+ *  sends exactly this; the API destructures it into command primitives. */
 export interface Credentials {
   email: string;
   password: string;
 }
+
+/*
+ * The bounds below are shared so the browser can reject what the API would reject anyway.
+ * The API stays the authority — `RegisterDto` enforces them, and the client's check only
+ * saves a round trip. Relaxing a bound here relaxes it on the server too, which is the point:
+ * a second copy in the web app would drift, and the drift would only ever show up as a 400
+ * the form said could not happen.
+ */
+
+/** Longest address RFC 5321 permits. Bounds the column and the work done validating it. */
+export const MAX_EMAIL_LENGTH = 254;
+
+export const MIN_PASSWORD_LENGTH = 8;
+
+/** A ceiling on hashing work, not a security rule — argon2 costs time per byte. */
+export const MAX_PASSWORD_LENGTH = 256;

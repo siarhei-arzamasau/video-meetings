@@ -1,8 +1,8 @@
+import { MAX_EMAIL_LENGTH } from '@repo/shared';
 import { Transform } from 'class-transformer';
 import { IsEmail, IsNotEmpty, IsString, MaxLength } from 'class-validator';
 
 import { normaliseEmail } from '../email';
-import { MAX_EMAIL_LENGTH } from './register.dto';
 
 export class LoginDto {
   @Transform(normaliseEmail)

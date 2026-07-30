@@ -6,17 +6,11 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import type { ApiErrorResponse } from '@repo/shared';
 import type { Request, Response } from 'express';
 
-export interface ErrorResponseBody {
-  statusCode: number;
-  message: string | string[];
-  /** ISO 8601 timestamp. */
-  timestamp: string;
-  path: string;
-}
-
-/** Normalises every thrown value into one error shape. */
+/** Normalises every thrown value into one error shape — `ApiErrorResponse`, which the web
+ *  app reads to turn a failure into something a person can act on. */
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
@@ -36,7 +30,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       );
     }
 
-    const body: ErrorResponseBody = {
+    const body: ApiErrorResponse = {
       statusCode,
       message: extractMessage(exception, statusCode),
       timestamp: new Date().toISOString(),

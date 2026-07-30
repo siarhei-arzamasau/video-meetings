@@ -90,7 +90,10 @@ those.
   `.oxlintrc.json`. Do not add per-package lint or format configs.
 - **Types shared between web and api live in `packages/shared`.** If both apps need to
   agree on a shape, it belongs there and is imported as `@repo/shared` — never duplicated.
-  `packages/shared` exports types through `src/index.ts`; add new modules there.
+  `packages/shared` exports types through `src/index.ts`; add new modules there. **Values
+  count too, not just types** — the auth length bounds and `MEETING_STATUSES` live there
+  because a rule the client restates is a rule that will one day disagree with the server,
+  and it would disagree silently.
 - **TypeScript is strict**, including `noUncheckedIndexedAccess`, `noUnusedLocals`, and
   `noUnusedParameters` (`packages/tsconfig/base.json`). `typescript/no-explicit-any` is an
   error. App tsconfigs extend `@repo/tsconfig/nextjs.json` or `@repo/tsconfig/nestjs.json`.
