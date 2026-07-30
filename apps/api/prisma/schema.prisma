@@ -33,5 +33,43 @@ model User {
   // Date, so any comparison against a real instant is wrong by the machine's offset.
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
+  hostedMeetings        Meeting[]            @relation("MeetingHost")
+  meetingParticipations MeetingParticipant[]
+
   @@map("users")
+}
+
+enum MeetingStatus {
+  scheduled
+  live
+  ended
+
+  @@map("meeting_status")
+}
+
+model Meeting {
+  id String @id @default(uuid()) @db.Uuid
+
+  title       String
+  status      MeetingStatus @default(scheduled)
+  hostId      String        @map("host_id") @db.Uuid
+  scheduledAt DateTime      @map("scheduled_at") @db.Timestamptz(3)
+
+  host         User                 @relation("MeetingHost", fields: [hostId], references: [id], onDelete: Restrict)
+  participants MeetingParticipant[]
+
+  @@index([hostId])
+  @@map("meetings")
+}
+
+model MeetingParticipant {
+  meetingId String @map("meeting_id") @db.Uuid
+  userId    String @map("user_id") @db.Uuid
+
+  meeting Meeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([meetingId, userId])
+  @@index([userId])
+  @@map("meeting_participants")
 }

@@ -38,7 +38,12 @@ export interface UserRow {
 
 const SELECT_COLUMNS = 'id, email, password_hash, display_name, created_at';
 
-/** Empties the table so each test starts from a known state. */
+/**
+ * Empties users and every table with a foreign key to it, so each test starts from a known
+ * state. PostgreSQL's `TRUNCATE ... CASCADE` follows referencing foreign keys regardless of
+ * their `ON DELETE` action; this deliberately covers meeting and participant tables without
+ * coupling the shared test lifecycle to current or future feature-table names.
+ */
 export async function truncateUsers(prisma: PrismaService): Promise<void> {
   await prisma.$executeRawUnsafe('TRUNCATE TABLE "users" RESTART IDENTITY CASCADE');
 }

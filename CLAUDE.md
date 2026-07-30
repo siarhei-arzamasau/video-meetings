@@ -23,9 +23,10 @@ Guidance for coding agents working in this repository.
 | `@repo/shared`   | `packages/shared`   | Cross-app types and API contracts                           |
 | `@repo/tsconfig` | `packages/tsconfig` | Shared TypeScript base configs                              |
 
-Email-and-password authentication is implemented in `apps/api` (`register`, `login`, `me`);
-nothing else is. `apps/web` and `apps/api` each have their own guide with app-specific
-detail, duplicated into `CLAUDE.md` + `AGENTS.md` exactly like the root guide.
+Email-and-password authentication and the authorized meetings API are implemented in
+`apps/api` (`register`, `login`, `me`, meeting creation, current-user listing, and detail
+lookup). `apps/web` and `apps/api` each have their own guide with app-specific detail,
+duplicated into `CLAUDE.md` + `AGENTS.md` exactly like the root guide.
 
 The design this implements:
 [`docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md).

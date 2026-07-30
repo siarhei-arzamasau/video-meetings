@@ -10,7 +10,8 @@ Monorepo holding the video meetings frontend and backend.
 | `@repo/tsconfig` | `packages/tsconfig` | Shared TypeScript base configs                              |
 
 Email-and-password authentication is in place (`POST /api/auth/register`,
-`POST /api/auth/login`, `GET /api/auth/me`); the meetings features themselves are not. See
+`POST /api/auth/login`, `GET /api/auth/me`), along with the authorized meetings API
+(`POST /api/meetings`, `GET /api/meetings`, `GET /api/meetings/:id`). See
 [`docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md)
 for the design it implements.
 
@@ -85,8 +86,8 @@ packages/
 
 ## Database
 
-Prisma owns the schema at `apps/api/prisma/schema.prisma`, currently one `User` model
-mapped to a `users` table.
+Prisma owns the schema at `apps/api/prisma/schema.prisma`. Users, meetings, and meeting
+participants are mapped to `users`, `meetings`, and `meeting_participants` tables.
 
 ```bash
 pnpm --filter=@repo/api prisma:generate
