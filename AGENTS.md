@@ -25,11 +25,13 @@ Guidance for coding agents working in this repository.
 
 Email-and-password authentication and the authorized meetings API are implemented in
 `apps/api` (`register`, `login`, `me`, meeting creation, current-user listing, and detail
-lookup). `apps/web` calls two of them so far, both under `/auth`: `/auth/register` signs up and
-`/auth/login` signs in. They are the worked examples of a page talking to the API, and they
-share a `src/app/auth/layout.tsx` shell. (`/register` 308s to `/auth/register`; the sign-up
-page lived there first.) `apps/web` and `apps/api` each have their own
-guide with app-specific detail, duplicated into `CLAUDE.md` + `AGENTS.md` exactly like the
+lookup). `apps/web` calls four of them. `/auth/register` and `/auth/login` sign up and sign in,
+sharing a `src/app/auth/layout.tsx` shell — they are the worked examples of a form talking to
+the API. `/` is the signed-in home: it reads `me` and the meeting list after mount, and it is
+the worked example of an authorized page, gated on the client because the token lives in
+`localStorage` where neither the server nor middleware can read it. (`/register` 308s to
+`/auth/register`; the sign-up page lived there first.) `apps/web` and `apps/api` each have their
+own guide with app-specific detail, duplicated into `CLAUDE.md` + `AGENTS.md` exactly like the
 root guide.
 
 The design this implements:

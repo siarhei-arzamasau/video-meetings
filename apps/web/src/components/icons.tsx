@@ -1,6 +1,6 @@
-/* Icons are inline so the auth pages add no dependency and no network request for a 16px
-   glyph. They live here rather than in one of the cards because both cards draw the same
-   set, and the copy left behind in the other file is the one that drifts. */
+/* Icons are inline so the pages that draw them add no dependency and no network request for a
+   16px glyph. They live together rather than beside their first caller because several routes
+   draw the same set, and the copy left behind in the other file is the one that drifts. */
 
 const strokeProps = {
   fill: 'none',
@@ -59,6 +59,33 @@ export function CheckIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="size-7" {...strokeProps}>
       <path d="m5 12.5 4.5 4.5L19 7.5" />
+    </svg>
+  );
+}
+
+/** Sized `size-6` rather than `size-4`: its only caller draws it as the empty state's figure. */
+export function CalendarIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-6" {...strokeProps}>
+      <rect x="3.5" y="5" width="17" height="15" rx="2.5" />
+      <path d="M3.5 10h17M8 3.5v3M16 3.5v3" />
+    </svg>
+  );
+}
+
+export function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
+      <path d="M12 5.5v13M5.5 12h13" />
+    </svg>
+  );
+}
+
+export function SignOutIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
+      <path d="M15 4.5h2.5a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H15" />
+      <path d="M10.5 8 6.5 12l4 4M6.5 12H15" />
     </svg>
   );
 }

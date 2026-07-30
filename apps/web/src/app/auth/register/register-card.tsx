@@ -17,12 +17,19 @@ import { MIN_PASSWORD_LENGTH } from '@repo/shared';
 import Link from 'next/link';
 import { useMemo, useState, type FormEvent } from 'react';
 
+import {
+  CheckIcon,
+  EyeIcon,
+  EyeOffIcon,
+  LockIcon,
+  MailIcon,
+  WarningIcon,
+} from '@/components/icons';
 import { ApiError, register } from '@/lib/api-client';
 import { storeAccessToken } from '@/lib/auth-token';
 import { normaliseEmail, validateEmail, validatePassword } from '@/lib/credentials';
 
 import { CARD_CLASS } from '../card';
-import { CheckIcon, EyeIcon, EyeOffIcon, LockIcon, MailIcon, WarningIcon } from '../icons';
 
 /** The field a failure belongs on, or `null` when it belongs to the form as a whole. */
 type FailedField = 'email' | null;

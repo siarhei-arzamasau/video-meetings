@@ -1,4 +1,11 @@
-import type { ApiErrorResponse, AuthResponse, Credentials, HealthResponse } from '@repo/shared';
+import type {
+  ApiErrorResponse,
+  AuthResponse,
+  Credentials,
+  HealthResponse,
+  Meeting,
+  User,
+} from '@repo/shared';
 
 const DEFAULT_BASE_URL = 'http://localhost:3001/api';
 
@@ -107,4 +114,48 @@ export function login(credentials: Credentials): Promise<AuthResponse> {
     method: 'POST',
     body: JSON.stringify(credentials),
   });
+}
+
+/**
+ * Bearer credentials for a JWT-guarded endpoint.
+ *
+ * Private on purpose. `apiFetch` is the boundary, and an exported header builder is an
+ * invitation to assemble a request somewhere else. It exists at all because `Bearer ` carries
+ * one significant space, and omitting it produces a bare 401 indistinguishable from an expired
+ * token.
+ *
+ * A plain object, never a `Headers` instance: `apiFetch` spreads `init.headers` into an object
+ * literal, and spreading a `Headers` yields `{}` — which would drop the token silently.
+ */
+function authHeaders(token: string): Record<string, string> {
+  return { authorization: `Bearer ${token}` };
+}
+
+/**
+ * The signed-in user, as the guard that authenticated the request loaded them.
+ *
+ * The token is an argument rather than something this module fetches for itself. That keeps the
+ * credential opt-in — `register`, `login`, and `getHealth` must never send one — keeps this
+ * file runnable where there is no browser, and keeps the eventual move to an `HttpOnly` cookie
+ * local to these two functions: the parameter goes away and `credentials: 'include'` replaces
+ * it.
+ *
+ * A 401 means the token is absent, malformed, expired, or names a user who no longer exists.
+ * The API declines to say which, and all four mean the same thing to a caller — signed out.
+ */
+export function getMe(token: string): Promise<User> {
+  return apiFetch<User>('/auth/me', { headers: authHeaders(token) });
+}
+
+/**
+ * Every meeting the user hosts or attends, ascending by `scheduledAt`.
+ *
+ * The endpoint takes no query parameters — no page, no filter, no sort — so this is the whole
+ * list and narrowing it is the caller's job. See `src/lib/meetings.ts`.
+ *
+ * Returned as a `ReadonlyArray` although the API's own type is an array: the caller holds this
+ * in React state, and the readonly type makes an in-place `.sort()` a compile error.
+ */
+export function listMeetings(token: string): Promise<ReadonlyArray<Meeting>> {
+  return apiFetch<Meeting[]>('/meetings', { headers: authHeaders(token) });
 }

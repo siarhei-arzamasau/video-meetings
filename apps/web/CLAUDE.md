@@ -81,6 +81,13 @@ aliases in sync if either changes.
   constant. The symptom is a form that permanently rejects input the server would now accept.
   `login-card.tsx` sidesteps the whole problem by passing no `validationErrors` at all — see
   below for why it has no field-level server errors to report.
+- **Meeting times are formatted in the reader's own locale and time zone, and that is only safe
+  because `/` fetches after mount.** Nothing server-rendered formats a date, so there is no
+  server string for the client's to disagree with. Server-render that page — which is exactly
+  what the `HttpOnly` cookie migration invites — and every `<time>` on it becomes a hydration
+  mismatch. `src/lib/date-time.ts` takes an injectable formatter for tests only; production must
+  keep the reader's locale, because showing `7/30/2026` to someone who reads `30/07/2026` is a
+  misread date rather than a cosmetic difference.
 
 ## API access
 
@@ -98,6 +105,15 @@ one. A rejection that is not an `ApiError` means the request never reached the A
 The base URL comes from `NEXT_PUBLIC_API_URL`, defaulting to `http://localhost:3001/api`
 (origin _and_ the API's `/api` global prefix). Response shapes are imported as types from
 `@repo/shared`.
+
+**A JWT-guarded endpoint gets a wrapper whose first argument is the token** — `getMe(token)`,
+`listMeetings(token)`. `apiFetch` never reads storage, and that is the point: the credential is
+opt-in, so no request is authenticated by accident and `register`/`login`/`getHealth` cannot
+start leaking a bearer token. It also keeps this module runnable where there is no browser. When
+the API starts setting an `HttpOnly` cookie, the token parameters disappear in favour of
+`credentials: 'include'` **inside this file only** — that is what the explicit argument buys, and
+why the alternative (a transport that reaches into `auth-token.ts`) is the wrong shape. A test
+pins that the unauthenticated wrappers send no `authorization` header; keep it.
 
 ### Client-side validation and credentials
 
@@ -136,10 +152,42 @@ build more session machinery on top of it. Every access is guarded — `localSto
 outright where storage is disabled — and nothing there rethrows, because losing a token is
 survivable and failing a completed registration over it is not.
 
+**Route protection is client-side only, and there is deliberately no `middleware.ts`.** The
+token is in `localStorage`, which does not exist in the request middleware runs in and cannot be
+read while Next renders on the server — a gate there could only pass everyone through or turn
+everyone away, and the second one looks like it works when you hand-test it signed in. `/`
+therefore reads the token in an effect **after mount** (never during render — a token-dependent
+first render is a value the server could not have produced), holds a `loading` shell until it
+knows, and `router.replace`s to `/auth/login` when there is no token or when either request
+answers 401, clearing the token first because one the API has rejected is worth nothing. Two
+consequences to accept rather than paper over: **`/` is prerendered, so its empty shell is
+briefly visible to anyone** — nothing secret may go in it — and it is the _data_ that is
+protected, never the URL. All of this collapses into a middleware redirect the moment the token
+becomes an `HttpOnly` cookie, the same migration that deletes `auth-token.ts`.
+
+**A page reading the token in one effect is not session machinery.** There is no provider, no
+context, no `useSession`, no refresh, no interceptor, and there should not be — the cookie
+migration throws every one of those away. If a second protected page arrives, extract the gate,
+and ask first whether the cookie should land before it.
+
+**Signing out is local**: clear the token, `replace` to `/auth/login`. There is no logout
+endpoint because the JWT is stateless and stays valid until it expires. That is a property of
+bearer tokens, not a gap to fill; a `POST /auth/logout` added to make the button feel symmetrical
+would only pretend otherwise.
+
 ## Tests
 
 Vitest with the jsdom environment, files matching `src/**/*.test.{ts,tsx}` next to the code
 they cover. Not Jest — that's the API app.
+
+**There are no component render tests**: `@testing-library/react` is not a dependency, and the
+logic worth pinning is pushed into `src/lib` for that reason — `latestMeetings`,
+`formatMeetingTime`, and the endpoint wrappers are all pure and all covered there. Adding RTL is
+not one dependency (it is RTL, jest-dom, a `setupFiles` entry in a config that deliberately has
+none, and explicit `afterEach(cleanup)` because `globals` is off), so it is a change to argue on
+its own rather than inside a feature. What it would mostly assert here is that a component calls
+the `useRouter`/`localStorage`/`fetch` mocks it was written to call; the browser inspection above
+is the stronger check on everything else.
 
 ## Keeping this guide current
 

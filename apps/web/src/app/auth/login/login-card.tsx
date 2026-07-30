@@ -15,12 +15,12 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, type FormEvent } from 'react';
 
+import { EyeIcon, EyeOffIcon, LockIcon, MailIcon, WarningIcon } from '@/components/icons';
 import { ApiError, login } from '@/lib/api-client';
 import { storeAccessToken } from '@/lib/auth-token';
 import { normaliseEmail, validateEmail, validateLoginPassword } from '@/lib/credentials';
 
 import { CARD_CLASS } from '../card';
-import { EyeIcon, EyeOffIcon, LockIcon, MailIcon, WarningIcon } from '../icons';
 
 type Submission =
   | { state: 'idle' }

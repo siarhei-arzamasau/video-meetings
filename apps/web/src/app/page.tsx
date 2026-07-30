@@ -1,38 +1,19 @@
-import { Card, buttonVariants } from '@heroui/react';
-import Link from 'next/link';
+import type { Metadata } from 'next';
 
-import { ThemeToggle } from '@/components/theme-toggle';
-import { getApiBaseUrl } from '@/lib/api-client';
+import { HomeDashboard } from './home-dashboard';
 
-// A Server Component: HeroUI v3 renders without a 'use client' boundary.
+export const metadata: Metadata = {
+  title: 'Your meetings · Video Meetings',
+  description: 'Your latest meetings, and a way to start the next one.',
+};
+
+/**
+ * Thin by design: `metadata` has to be exported from a module Next can read without running the
+ * client bundle, and only the dashboard needs to be interactive.
+ *
+ * The dashboard gates itself on the client rather than being gated here or in middleware — the
+ * token lives in `localStorage`, which the server cannot read. See the app guide.
+ */
 export default function HomePage() {
-  return (
-    <main className="flex min-h-dvh items-center justify-center p-6">
-      <Card className="w-full max-w-md">
-        <Card.Header>
-          <Card.Title>Video Meetings</Card.Title>
-          <Card.Description>
-            Monorepo scaffold. Signing up and signing in are wired end to end; everything else still
-            proves only that HeroUI, Tailwind, and theming work.
-          </Card.Description>
-        </Card.Header>
-        <Card.Content>
-          <p className="text-sm opacity-70">
-            API base URL: <code>{getApiBaseUrl()}</code>
-          </p>
-        </Card.Content>
-        <Card.Footer className="flex gap-3">
-          {/* An anchor, not a Button: this navigates, and Next's client-side routing needs a
-              real link to hook. `buttonVariants` keeps it looking like the rest. */}
-          <Link href="/auth/register" className={buttonVariants({ variant: 'primary' })}>
-            Create an account
-          </Link>
-          <Link href="/auth/login" className={buttonVariants({ variant: 'secondary' })}>
-            Sign in
-          </Link>
-          <ThemeToggle />
-        </Card.Footer>
-      </Card>
-    </main>
-  );
+  return <HomeDashboard />;
 }

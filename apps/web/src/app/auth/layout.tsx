@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { ThemeToggle } from '@/components/theme-toggle';
+import { Wordmark } from '@/components/wordmark';
 
 /**
  * The two-column shell both auth pages sit in. A layout rather than a piece each page
@@ -113,32 +114,5 @@ function Highlight({ title, children }: { title: string; children: ReactNode }) 
         <span className="text-sm text-white/60">{children}</span>
       </span>
     </li>
-  );
-}
-
-function Wordmark({ isOnDark = false }: { isOnDark?: boolean }) {
-  return (
-    <span className="inline-flex items-center gap-2.5 text-lg font-semibold tracking-tight">
-      <span
-        className={`flex size-9 items-center justify-center rounded-xl ${
-          isOnDark ? 'bg-white/15 text-white' : 'bg-accent text-accent-foreground'
-        }`}
-      >
-        <svg
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-          className="size-5"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.75}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <rect x="2.5" y="6" width="12" height="12" rx="3" />
-          <path d="m15.5 13 4.2 2.8a1 1 0 0 0 1.55-.83V9.03a1 1 0 0 0-1.55-.83L15.5 11Z" />
-        </svg>
-      </span>
-      Video Meetings
-    </span>
   );
 }
