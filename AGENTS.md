@@ -91,6 +91,36 @@ Three consequences worth knowing:
 CI (`.github/workflows/ci.yml`) runs format:check → lint → build → typecheck → test; match
 that order when verifying work locally.
 
+### Refactoring: run the tests after every step
+
+**A refactor is a sequence of steps that each end green, not one change verified at the end.**
+Take a baseline before touching anything, then run the tests after each step — and keep the
+steps small enough that a red suite names the change that broke it. The alternative is
+finishing a large rewrite and discovering only that _something_ in it is wrong, which costs
+more to bisect by hand than the intermediate runs ever cost to run.
+
+Four things make that discipline actually work here:
+
+- **Take the baseline first, and make sure it is a real run.** `pnpm test` replays cached
+  logs and prints `FULL TURBO` when nothing has changed, which looks exactly like a passing
+  run because it is reporting one from earlier. Use `pnpm test --force` for a baseline you
+  intend to trust. A suite that was already red before you started is worth knowing about
+  before its failure looks like yours.
+- **`pnpm test` is not the whole net for `apps/api`.** Neither it nor CI runs `test:e2e`, so
+  run `pnpm --filter=@repo/api test:e2e` too — it needs `docker compose up -d postgres` and a
+  migrated schema. See [the API guide](apps/api/CLAUDE.md#tests) for why that suite is where
+  the real coverage of a module boundary lives.
+- **Prefer the steps that leave the suite green without touching it.** When a refactor moves
+  behaviour between modules, add the new destination first and rewire one caller at a time.
+  Each rewiring is independently revertible, and the untouched tests stay evidence.
+- **An adapted test is weaker evidence than an untouched one.** Unit specs usually have to
+  change alongside the code they mock, so they cannot be the only thing you are trusting.
+  The suites that pass _unmodified_ across the whole refactor — for a change behind an
+  unchanged HTTP contract, that is `test:e2e` — are what tells you behaviour survived.
+
+Run the CI order above once at the end. Passing it step by step is not the same as passing it
+on the finished tree, and `build` and `typecheck` catch things no test does.
+
 ## Setup
 
 Node 24 (`.nvmrc`), pnpm 11 (`corepack enable`), Docker for PostgreSQL.
