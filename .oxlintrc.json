@@ -50,6 +50,13 @@
       }
     },
     {
+      "files": ["scripts/**"],
+      "rules": {
+        // Root-level CLI scripts: the terminal is their output, not a side channel.
+        "no-console": "off"
+      }
+    },
+    {
       "files": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts"],
       "rules": {
         "no-console": "off"

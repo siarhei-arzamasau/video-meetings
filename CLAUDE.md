@@ -41,17 +41,46 @@ The design this implements:
 
 Run from the repository root; Turborepo fans them out.
 
-| Command                             | Does                                           |
-| ----------------------------------- | ---------------------------------------------- |
-| `pnpm dev`                          | Every app in watch mode (web :3000, api :3001) |
-| `pnpm build`                        | `@repo/shared` first, then both apps           |
-| `pnpm typecheck`                    | `tsc --noEmit` across every package            |
-| `pnpm test`                         | Vitest (web) and Jest (api)                    |
-| `pnpm lint` / `pnpm lint:fix`       | Oxlint across the workspace                    |
-| `pnpm format` / `pnpm format:check` | Oxfmt across the workspace                     |
-| `pnpm clean`                        | Removes build output and caches                |
+| Command                             | Does                                                                   |
+| ----------------------------------- | ---------------------------------------------------------------------- |
+| `pnpm dev`                          | Every app in watch mode (web :3000, api :3001, or the next free ports) |
+| `pnpm build`                        | `@repo/shared` first, then both apps                                   |
+| `pnpm typecheck`                    | `tsc --noEmit` across every package                                    |
+| `pnpm test`                         | Vitest (web) and Jest (api)                                            |
+| `pnpm lint` / `pnpm lint:fix`       | Oxlint across the workspace                                            |
+| `pnpm format` / `pnpm format:check` | Oxfmt across the workspace                                             |
+| `pnpm clean`                        | Removes build output and caches                                        |
 
 Scope to one package with a filter: `pnpm build --filter=@repo/api`.
+
+### `pnpm dev` picks the ports before Turborepo starts
+
+`pnpm dev` is `scripts/dev.mjs`, not `turbo run dev`, and the indirection buys one thing: the
+API's port and the web app's idea of it are decided **together, once, before either task
+exists**. The script probes upward from `PORT` and `WEB_PORT` (3001 and 3000) for the first free
+port each, then hands Turborepo `PORT`, `WEB_PORT`, and a matching `NEXT_PUBLIC_API_URL`. So a
+port another project is holding costs you nothing — it prints `api 3002 (3001 already in use)`
+and carries on.
+
+**It cannot be moved into the apps, and an `EADDRINUSE` retry inside `main.ts` is the wrong fix.**
+The browser reaches the API through `NEXT_PUBLIC_API_URL`, which Next inlines into the client
+bundle as it boots. An API that relocated itself would come up healthy on a port the web app has
+already been told is something else — a backend the frontend cannot see, with nothing in either
+log saying so. That is a silent failure replacing a loud one.
+
+Three consequences worth knowing:
+
+- **A port declared in `turbo.json` is a port that reaches the tasks.** Turborepo 2 defaults to
+  strict env mode, so `PORT`, `WEB_PORT`, and `NEXT_PUBLIC_API_URL` are listed on the `dev` task
+  for no other reason. Dropping one there does not fail — the app silently falls back to its
+  default.
+- **`NEXT_PUBLIC_API_URL` is only rewritten when it is a local URL already on `PORT`.** Anything
+  else — another host, another local port — is treated as deliberate and left alone, with a
+  warning if it means the web app cannot reach the API that just started.
+- **This is development only.** `pnpm build` bakes in whatever `NEXT_PUBLIC_API_URL` is set at
+  build time, and running an app on its own (`pnpm --filter=@repo/api dev`) honours its
+  configured port exactly and fails if it is busy. A deployed port is configuration, not
+  something to guess.
 
 **Ordering matters: `build` must run before `typecheck`.** `@repo/shared` has to emit its
 `.d.ts` files, and Next.js generates `next-env.d.ts` and `.next/types` during its build.
@@ -75,7 +104,8 @@ pnpm dev
 `JWT_SECRET` must be at least 32 characters or the API refuses to boot. The `.env.example`
 placeholder satisfies that for local work only.
 
-`GET http://localhost:3001/api/health` should return `{"status":"ok",...}`.
+`GET http://localhost:3001/api/health` should return `{"status":"ok",...}` — at whichever port
+`pnpm dev` printed, which is 3001 unless something else already had it.
 
 ### Agent tooling
 

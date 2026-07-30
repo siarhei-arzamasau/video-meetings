@@ -15,7 +15,7 @@ jsdom.
 ## Commands
 
 ```bash
-pnpm --filter=@repo/web dev          # next dev on :3000
+pnpm --filter=@repo/web dev          # next dev on :3000, or $WEB_PORT
 pnpm --filter=@repo/web build        # next build (standalone output)
 pnpm --filter=@repo/web typecheck    # needs a prior build for .next/types
 pnpm --filter=@repo/web test         # vitest run
@@ -35,7 +35,8 @@ applies to any change here.
 
 **The inspection happens in a real browser, driven through the Playwright MCP server** — the
 one [the root guide](../../CLAUDE.md#agent-tooling) declares in `.mcp.json`. Start the app
-(`pnpm --filter=@repo/web dev`, :3000), navigate to the routes you touched, and look at the
+(`pnpm --filter=@repo/web dev`, :3000 — or the port `pnpm dev` reported, which is not always
+3000), navigate to the routes you touched, and look at the
 rendered page. Reading the JSX is not inspection: layout, spacing, contrast, focus rings, and
 theming only exist once Tailwind and HeroUI have run. Cover both themes and at least one
 narrow viewport, and check the browser console is clean while you are there.
@@ -73,6 +74,12 @@ aliases in sync if either changes.
   entry sending `/register` to `/auth/register` — the sign-up page lived at the old path
   before the auth pages moved under `/auth`, and a 308 keeps older links working without a
   route file whose only job is to redirect.
+- **`"dev": "next dev --port ${WEB_PORT:-3000}"` is shell interpolation, and deliberate.** It
+  looks like a stray `$` in JSON; package scripts run through `sh`, so it expands. It exists
+  because `next dev` reads `PORT`, which belongs to the API here — the two apps would fight over
+  one variable. The root `pnpm dev` sets `WEB_PORT`; the `:-3000` covers running this app alone.
+  A `WEB_PORT` in `.env.local` will _not_ be seen, because the shell expands this before Next
+  loads any env file. Export it or use `--port`.
 - **A React Aria `validationErrors` object must keep its identity between renders.** React
   Aria resets its "the user has edited this field since" flag whenever the object is not the
   one it saw last render, so a fresh `{}` literal per render pins a server-side field error
@@ -105,6 +112,13 @@ one. A rejection that is not an `ApiError` means the request never reached the A
 The base URL comes from `NEXT_PUBLIC_API_URL`, defaulting to `http://localhost:3001/api`
 (origin _and_ the API's `/api` global prefix). Response shapes are imported as types from
 `@repo/shared`.
+
+**Next inlines that value into the client bundle at boot, which is why the root `pnpm dev`
+resolves ports before starting anything** — see
+[the root guide](../../CLAUDE.md#pnpm-dev-picks-the-ports-before-turborepo-starts). Reading it
+through `process.env` at call time does not change that; the bundler substitutes the literal. The
+practical consequence for this app: nothing here may treat 3001 as fixed, and the API's port is
+never discovered at runtime.
 
 **A JWT-guarded endpoint gets a wrapper whose first argument is the token** — `getMe(token)`,
 `listMeetings(token)`. `apiFetch` never reads storage, and that is the point: the credential is

@@ -19,7 +19,7 @@ enforces this; `@node-rs/argon2` also needs no `allowBuilds` entry, unlike nativ
 ## Commands
 
 ```bash
-pnpm --filter=@repo/api dev              # nest start --watch on :3001
+pnpm --filter=@repo/api dev              # nest start --watch on :3001, or $PORT
 pnpm --filter=@repo/api build            # prisma generate && nest build
 pnpm --filter=@repo/api test             # jest (*.spec.ts under src/)
 pnpm --filter=@repo/api test:e2e         # jest with test/jest-e2e.json
@@ -182,7 +182,14 @@ Every variable the app cannot start without belongs in the `EnvironmentVariables
 immediately instead of at the first request that needs it. Adding a variable means:
 the class, `.env.example`, and — if it affects local Docker — `docker-compose.yml`.
 
-`ConfigModule` is global and reads `.env.local` then `.env`.
+`ConfigModule` is global and reads `.env.local` then `.env`. Neither overrides a variable already
+in `process.env`, which is what lets the root `pnpm dev` decide `PORT` — it probes upward from the
+configured value for a free one and exports the result, so `main.ts` binds a port the web app has
+already been told about. Read
+[the root guide](../../CLAUDE.md#pnpm-dev-picks-the-ports-before-turborepo-starts) before
+"improving" that with an `EADDRINUSE` retry here: relocating the API on its own is what the
+arrangement exists to prevent, because the frontend's base URL was fixed at boot and cannot
+follow. Started on its own, this app takes its configured port and fails if it is busy.
 
 ## Prisma 7 specifics
 

@@ -34,7 +34,12 @@ pnpm --filter=@repo/api prisma:migrate   # create the schema
 pnpm dev                        # web on :3000, api on :3001
 ```
 
-`GET http://localhost:3001/api/health` should return `{"status":"ok",...}`.
+`pnpm dev` prints the ports it chose. Those two are preferences rather than requirements: when
+something else already holds one, it moves up to the next free port and points the frontend at
+wherever the API actually landed, so a leftover server from another project does not stop you.
+
+`GET http://localhost:3001/api/health` should return `{"status":"ok",...}` — on the API port
+`pnpm dev` reported.
 
 The API will not start without a `JWT_SECRET` of at least 32 characters. The copied
 `.env.example` carries a placeholder that satisfies it; replace it with
@@ -53,15 +58,15 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5434/video_meetings
 
 Run from the repository root:
 
-| Script                              | Does                                         |
-| ----------------------------------- | -------------------------------------------- |
-| `pnpm dev`                          | Starts every app in watch mode via Turborepo |
-| `pnpm build`                        | Builds `@repo/shared`, then both apps        |
-| `pnpm typecheck`                    | `tsc --noEmit` across every package          |
-| `pnpm test`                         | Vitest (web) and Jest (api)                  |
-| `pnpm lint` / `pnpm lint:fix`       | Oxlint across the workspace                  |
-| `pnpm format` / `pnpm format:check` | Oxfmt across the workspace                   |
-| `pnpm clean`                        | Removes build output and caches              |
+| Script                              | Does                                                    |
+| ----------------------------------- | ------------------------------------------------------- |
+| `pnpm dev`                          | Starts every app in watch mode, on the first free ports |
+| `pnpm build`                        | Builds `@repo/shared`, then both apps                   |
+| `pnpm typecheck`                    | `tsc --noEmit` across every package                     |
+| `pnpm test`                         | Vitest (web) and Jest (api)                             |
+| `pnpm lint` / `pnpm lint:fix`       | Oxlint across the workspace                             |
+| `pnpm format` / `pnpm format:check` | Oxfmt across the workspace                              |
+| `pnpm clean`                        | Removes build output and caches                         |
 
 Scoping to one package uses Turborepo filters: `pnpm build --filter=@repo/api`.
 
@@ -74,6 +79,8 @@ apps/
 packages/
   shared/    Types shared by both apps
   tsconfig/  Base TypeScript configs
+scripts/
+  dev.mjs    Resolves dev ports, then runs Turborepo
 ```
 
 ## Tooling
