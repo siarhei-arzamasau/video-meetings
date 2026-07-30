@@ -167,8 +167,12 @@ those.
 - **TypeScript is strict**, including `noUncheckedIndexedAccess`, `noUnusedLocals`, and
   `noUnusedParameters` (`packages/tsconfig/base.json`). `typescript/no-explicit-any` is an
   error. App tsconfigs extend `@repo/tsconfig/nextjs.json` or `@repo/tsconfig/nestjs.json`.
-- **Conventional Commits**, enforced by commitlint via Husky. `lint-staged` runs oxfmt and
-  `oxlint --fix` on commit.
+- **Conventional Commits**, enforced by commitlint via Husky. The `pre-commit` hook runs
+  `lint-staged` (oxfmt and `oxlint --fix` on staged files), then `pnpm lint` and `pnpm test`
+  across the workspace — a commit that fails either does not land. Both go through Turborepo's
+  cache, so a second attempt after a failure only re-runs what changed. `--no-verify` skips the
+  hook when you genuinely need it (a WIP commit on a scratch branch); CI runs the same checks
+  regardless, so skipping only defers them.
 - **New dependencies with install scripts** must be listed under `allowBuilds` in
   `pnpm-workspace.yaml`; pnpm 11 blocks lifecycle scripts otherwise.
 - **Env files are gitignored** except `*.env.example`. When adding a variable, update the

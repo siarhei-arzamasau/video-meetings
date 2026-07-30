@@ -87,8 +87,9 @@ scripts/
 
 - **Oxlint + Oxfmt** replace ESLint and Prettier. A single `.oxlintrc.json` and
   `.oxfmtrc.json` at the root cover the whole tree.
-- **Husky** runs `lint-staged` on commit and `commitlint` on the commit message.
-  Commits follow [Conventional Commits](https://www.conventionalcommits.org/).
+- **Husky** runs `lint-staged`, `pnpm lint`, and `pnpm test` on commit, and `commitlint` on
+  the commit message. Commits follow
+  [Conventional Commits](https://www.conventionalcommits.org/).
 - **Turborepo** caches `build`, `typecheck`, and `test` across packages.
 
 ## Database
