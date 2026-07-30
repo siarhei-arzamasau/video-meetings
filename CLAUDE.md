@@ -71,6 +71,18 @@ placeholder satisfies that for local work only.
 
 `GET http://localhost:3001/api/health` should return `{"status":"ok",...}`.
 
+### Agent tooling
+
+`.mcp.json` is committed and declares the MCP servers every collaborator gets — currently
+Playwright (`npx @playwright/mcp@latest`), for driving `apps/web` in a real browser. It
+needs no install step; `npx` fetches it on first use. Claude Code asks each person to
+approve a project-scoped server once, per machine.
+
+Add a server for everyone with `claude mcp add --scope project <name> <command>` — the
+`--scope project` is the whole point, since the default local scope stays private to you.
+Keep personal or credential-bearing servers out of `.mcp.json`; use local or user scope for
+those.
+
 ## Conventions
 
 - **Tooling is Oxlint + Oxfmt**, not ESLint/Prettier. One `.oxlintrc.json` and

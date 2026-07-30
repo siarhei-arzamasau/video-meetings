@@ -39,8 +39,16 @@ pnpm-debug.log*
 !.vscode/extensions.json
 
 # agent tooling state
+# Playwright MCP writes snapshots, console logs, and screenshots here as it drives the app.
+# The server is declared in .mcp.json, so this appears for everyone; it is run output, and
+# oxfmt fails format:check on it if it is left tracked.
+.playwright-mcp/
 .omc/
 .agents/*
 # shared agent skills are checked in; the rest of .agents/ is local state
 !.agents/skills/
+# ui-ux-pro-max is installed once at ~/.claude/skills and linked in here, so it is useful in
+# every project and its 2.7 MB of CSV data stays out of the repo. The link points at an
+# absolute home path, which is machine-local and must not be committed.
+.agents/skills/ui-ux-pro-max
 skills-lock.json
