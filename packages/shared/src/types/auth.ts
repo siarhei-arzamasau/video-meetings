@@ -10,7 +10,9 @@ export interface AuthResponse {
   accessToken: string;
 }
 
-/** Credentials accepted by both register and login. */
+/** The email-and-password pair the auth endpoints validate. Not currently referenced by
+ *  either app: the API takes these as command primitives, and the web client does not yet
+ *  call auth. Kept as the shared shape a web auth client should use. */
 export interface Credentials {
   email: string;
   password: string;
