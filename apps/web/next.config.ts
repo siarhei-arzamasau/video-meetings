@@ -12,6 +12,12 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: path.resolve(process.cwd(), '../..'),
 
   transpilePackages: ['@repo/shared'],
+
+  // `/register` was the sign-up page before the auth pages moved under `/auth`. A 308 keeps
+  // links that predate the move working without a route file that exists only to redirect.
+  async redirects() {
+    return [{ source: '/register', destination: '/auth/register', permanent: true }];
+  },
 };
 
 export default nextConfig;

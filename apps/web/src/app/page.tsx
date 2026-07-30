@@ -24,7 +24,7 @@ export default function HomePage() {
         <Card.Footer className="flex gap-3">
           {/* An anchor, not a Button: this navigates, and Next's client-side routing needs a
               real link to hook. `buttonVariants` keeps it looking like the rest. */}
-          <Link href="/register" className={buttonVariants({ variant: 'primary' })}>
+          <Link href="/auth/register" className={buttonVariants({ variant: 'primary' })}>
             Create an account
           </Link>
           <ThemeToggle />

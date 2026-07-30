@@ -21,6 +21,9 @@ import { ApiError, register } from '@/lib/api-client';
 import { storeAccessToken } from '@/lib/auth-token';
 import { normaliseEmail, validateEmail, validatePassword } from '@/lib/credentials';
 
+import { CARD_CLASS } from '../card';
+import { CheckIcon, EyeIcon, EyeOffIcon, LockIcon, MailIcon, WarningIcon } from '../icons';
+
 /** The field a failure belongs on, or `null` when it belongs to the form as a whole. */
 type FailedField = 'email' | null;
 
@@ -37,10 +40,6 @@ type Submission =
  * native validation would refuse to submit the corrected value.
  */
 const NO_FIELD_ERRORS: Record<string, string> = {};
-
-/** `.card` ships 4 units of padding, which suits a dense list card and looks cramped as the
- *  only thing on screen. Utilities win the cascade over it. */
-const CARD_CLASS = 'w-full gap-6 p-8';
 
 /**
  * The card owns the heading as well as the form, because the two have to change together:
@@ -233,68 +232,5 @@ function AccountCreated({ email }: { email: string }) {
         Continue
       </Link>
     </div>
-  );
-}
-
-/* Icons are inline so the page adds no dependency and no network request for a 16px glyph. */
-
-const strokeProps = {
-  fill: 'none',
-  stroke: 'currentColor',
-  strokeWidth: 1.75,
-  strokeLinecap: 'round',
-  strokeLinejoin: 'round',
-} as const;
-
-function MailIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
-      <rect x="3" y="5" width="18" height="14" rx="2" />
-      <path d="m3.5 7 8.5 6 8.5-6" />
-    </svg>
-  );
-}
-
-function LockIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
-      <rect x="4" y="10" width="16" height="10" rx="2" />
-      <path d="M8 10V7a4 4 0 1 1 8 0v3" />
-    </svg>
-  );
-}
-
-function EyeIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
-      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
-
-function EyeOffIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
-      <path d="M9.9 5.8A9.6 9.6 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-3.2 4M6.2 7.6A17 17 0 0 0 2.5 12S6 18.5 12 18.5a9.4 9.4 0 0 0 4-.86" />
-      <path d="M10 10a2.8 2.8 0 0 0 4 4M3 3l18 18" />
-    </svg>
-  );
-}
-
-function WarningIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7.5v5M12 16h.01" />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-7" {...strokeProps}>
-      <path d="m5 12.5 4.5 4.5L19 7.5" />
-    </svg>
   );
 }

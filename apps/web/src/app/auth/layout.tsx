@@ -1,23 +1,24 @@
-import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
 import { ThemeToggle } from '@/components/theme-toggle';
 
-import { RegisterCard } from './register-card';
-
-export const metadata: Metadata = {
-  title: 'Create your account · Video Meetings',
-  description: 'Sign up for Video Meetings with an email address and a password.',
-};
-
-// A Server Component: only the card needs interactivity, so only it is a client boundary. The
-// panel beside it is static markup and never ships as JavaScript.
-export default function RegisterPage() {
+/**
+ * The two-column shell both auth pages sit in. A layout rather than a piece each page
+ * repeats: the panel is identical on either side, and Next keeps it mounted across the
+ * sign-in ⇄ sign-up link, so following that link swaps only the card.
+ *
+ * A Server Component. Only the cards need interactivity, so only they are client boundaries
+ * and none of this ships as JavaScript.
+ */
+export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
     <main className="grid min-h-dvh lg:grid-cols-[1.05fr_1fr]">
       <BrandPanel />
 
-      <section className="relative flex items-center justify-center px-6 py-12 sm:px-10">
+      {/* `min-w-0` is load-bearing. A grid item defaults to `min-width: auto`, so this column
+          refuses to shrink below the card's min-content width and the whole page scrolls
+          sideways on a narrow phone — measured at 389px against a 375px viewport. */}
+      <section className="relative flex min-w-0 items-center justify-center px-6 py-12 sm:px-10">
         <div className="absolute top-6 right-6">
           <ThemeToggle />
         </div>
@@ -27,7 +28,7 @@ export default function RegisterPage() {
             <Wordmark />
           </div>
 
-          <RegisterCard />
+          {children}
         </div>
       </section>
     </main>
@@ -80,8 +81,11 @@ function BrandPanel() {
         </ul>
       </div>
 
+      {/* The panel deliberately carries no sign-in/sign-up link. It is hidden below `lg`,
+          so a cross-link here would be missing on exactly the viewports that most need it;
+          each card carries its own instead. */}
       <p className="relative text-sm text-white/50">
-        Already have an account? Signing in lands in a later release.
+        Your meetings, your guest list. Nothing joins a room uninvited.
       </p>
     </aside>
   );

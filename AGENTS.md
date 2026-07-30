@@ -25,8 +25,10 @@ Guidance for coding agents working in this repository.
 
 Email-and-password authentication and the authorized meetings API are implemented in
 `apps/api` (`register`, `login`, `me`, meeting creation, current-user listing, and detail
-lookup). `apps/web` calls one of them so far: `/register` is the sign-up page, and it is the
-worked example of a page talking to the API. `apps/web` and `apps/api` each have their own
+lookup). `apps/web` calls one of them so far: `/auth/register` is the sign-up page, and it is the
+worked example of a page talking to the API. It sits under a `src/app/auth/layout.tsx` shell
+built to hold the sign-in page beside it. (`/register` 308s to `/auth/register`; the page
+lived there first.) `apps/web` and `apps/api` each have their own
 guide with app-specific detail, duplicated into `CLAUDE.md` + `AGENTS.md` exactly like the
 root guide.
 

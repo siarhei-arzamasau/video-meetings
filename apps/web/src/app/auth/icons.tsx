@@ -1,0 +1,64 @@
+/* Icons are inline so the auth pages add no dependency and no network request for a 16px
+   glyph. They live here rather than in one of the cards because both cards draw the same
+   set, and the copy left behind in the other file is the one that drifts. */
+
+const strokeProps = {
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 1.75,
+  strokeLinecap: 'round',
+  strokeLinejoin: 'round',
+} as const;
+
+export function MailIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="m3.5 7 8.5 6 8.5-6" />
+    </svg>
+  );
+}
+
+export function LockIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
+      <rect x="4" y="10" width="16" height="10" rx="2" />
+      <path d="M8 10V7a4 4 0 1 1 8 0v3" />
+    </svg>
+  );
+}
+
+export function EyeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
+      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+export function EyeOffIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
+      <path d="M9.9 5.8A9.6 9.6 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-3.2 4M6.2 7.6A17 17 0 0 0 2.5 12S6 18.5 12 18.5a9.4 9.4 0 0 0 4-.86" />
+      <path d="M10 10a2.8 2.8 0 0 0 4 4M3 3l18 18" />
+    </svg>
+  );
+}
+
+export function WarningIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7.5v5M12 16h.01" />
+    </svg>
+  );
+}
+
+export function CheckIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-7" {...strokeProps}>
+      <path d="m5 12.5 4.5 4.5L19 7.5" />
+    </svg>
+  );
+}

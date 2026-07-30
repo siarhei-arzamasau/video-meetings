@@ -69,13 +69,16 @@ aliases in sync if either changes.
   attributes before React hydrates. Leave it.
 - **`next.config.ts`** sets `output: 'standalone'` (the Dockerfile copies `.next/standalone`
   as the whole runtime), `outputFileTracingRoot` pointed at the repo root so tracing
-  reaches workspace packages, and `transpilePackages: ['@repo/shared']`.
+  reaches workspace packages, `transpilePackages: ['@repo/shared']`, and a `redirects()`
+  entry sending `/register` to `/auth/register` — the sign-up page lived at the old path
+  before the auth pages moved under `/auth`, and a 308 keeps older links working without a
+  route file whose only job is to redirect.
 - **A React Aria `validationErrors` object must keep its identity between renders.** React
   Aria resets its "the user has edited this field since" flag whenever the object is not the
   one it saw last render, so a fresh `{}` literal per render pins a server-side field error
   open forever: the message never clears, and native validation then refuses to submit the
-  corrected value. `register-card.tsx` memoises it and falls back to one shared constant.
-  The symptom is a form that permanently rejects input the server would now accept.
+  corrected value. `auth/register/register-card.tsx` memoises it and falls back to one shared
+  constant. The symptom is a form that permanently rejects input the server would now accept.
 
 ## API access
 
