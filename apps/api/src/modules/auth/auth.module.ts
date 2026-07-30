@@ -12,8 +12,8 @@ import { TokenService } from './services/token.service';
 
 @Module({
   imports: [
-    // Imported here rather than registered globally: no other module uses commands, and a
-    // global registration would advertise a house style the rest of the app does not follow.
+    // Imported per module rather than registered globally, so a module's `imports` states
+    // what it actually needs. Every module that dispatches commands repeats this line.
     CqrsModule,
     JwtModule.registerAsync({
       inject: [ConfigService],

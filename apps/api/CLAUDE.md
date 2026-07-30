@@ -37,20 +37,97 @@ src/
   app.module.ts         Root module — register new feature modules here
   config/               Environment contract
   common/               Cross-cutting filters and interceptors
-  modules/<feature>/    One directory per feature: module, controller, service, spec
-                        auth/ additionally: commands/ (command + handler per use case),
-                        services/ (PasswordService, TokenService)
+  modules/<feature>/    One directory per feature: module, controller, specs, and
+                        commands/ — a command class plus its handler per write operation.
+                        services/ holds collaborators the handlers share.
   generated/prisma/     Prisma client output — generated, gitignored, never edit
 prisma/
   schema.prisma         Datasource, generator, and models
   migrations/           Applied migrations — never edit one that has shipped
 ```
 
-`src/modules/health` is the reference shape for a feature module — controller, service,
-module. Copy that. `src/modules/auth` is the place to read for DTO validation, a guard, and
-database access, but **do not copy its structure**: it is deliberately CQRS
-(`@nestjs/cqrs`, one command class and handler per write operation) and no other module is.
-A new feature adopts CQRS only on purpose, not by imitation.
+**`src/modules/auth` is the shape to copy for a new feature module.** It is CQRS — one
+command class and one handler per write operation, dispatched through `@nestjs/cqrs` — and
+that is the house style for anything new, not an exception. `src/modules/health` still shows
+the minimum a module needs when it changes no state and reaches no database; a module with
+nothing to write needs no commands.
+
+`src/modules/meetings` predates this decision and is a plain controller-plus-service. **It
+is not a template — read auth instead.** A working module is not rewritten for consistency
+alone, but a write operation added to meetings should arrive as a command, which is how it
+converges over time rather than in one disruptive pass.
+
+## CQRS — the module pattern
+
+Every write operation is a command object dispatched through `@nestjs/cqrs`'s `CommandBus`
+to exactly one handler. `src/modules/auth` is the worked example: `register` and `login` are
+commands, and there is no query side.
+
+**Reads do not need commands.** The pattern earns its indirection on operations that change
+state — one class per use case, a uniform place for the next one to land, and a handler that
+can be unit-tested without an HTTP layer. A plain read served straight from a controller and
+a service is not a violation of the house style; reaching for a `QueryBus` to make a read
+symmetrical with a write is how this pattern turns into ceremony. Add one when something
+genuinely needs it, not for consistency.
+
+### Adding a command
+
+Five things, and the middle three fail at runtime rather than compile time:
+
+1. `commands/<name>.command.ts` — a class whose constructor takes the values the operation
+   needs.
+2. `commands/handlers/<name>.handler.ts` — `@CommandHandler(TheCommand)` on a class
+   implementing `ICommandHandler`, with the work in `execute`.
+3. **Import `CqrsModule` in the feature module.** Each module that dispatches commands
+   imports it; it is not global. A module that injects `CommandBus` without importing it
+   fails at startup with an unresolved-dependency error naming the controller, not the
+   missing import.
+4. **Register the handler in the module's `providers`.** A handler that is written,
+   decorated, and never registered compiles cleanly and throws only when the route is first
+   hit. The decorator does not register anything by itself.
+5. **Dispatch with explicit type arguments** — `commandBus.execute<TheCommand, TResult>(…)`.
+   `execute` defaults its result to `any`, and `typescript/no-explicit-any` is an error here,
+   so the inferred version fails lint rather than typecheck, which reads as unrelated noise.
+
+**Commands carry primitives, never the DTO instance.** A DTO is an HTTP-transport object
+holding class-validator decorators; a handler that accepted one could not be exercised
+without constructing a web-layer object, and it would silently depend on validation having
+already run. The controller destructures the DTO and passes the fields.
+
+### Where invariants live — the auth example
+
+A handler owns its use case, and a shared service owns anything two handlers must not
+implement differently. Auth shows why that split is not cosmetic: the login endpoint must
+not become an account-enumeration oracle, and that guarantee is spread across two files on
+purpose.
+
+- `LoginHandler` owns the single shared failure message. Both the unknown-email and
+  wrong-password paths throw the same `INVALID_CREDENTIALS` constant. Give either path its
+  own message and the endpoint starts answering "does this address have an account?".
+- `PasswordService` owns the timing half — `verifyDummy` spends a real argon2 verification
+  against a dummy hash built at startup, so a miss costs what a hit costs. The no-account
+  path in `LoginHandler` must keep calling it, and keep `await`ing it. **No test catches its
+  removal**; all four login specs stay green while the defence is gone.
+
+`RegisterHandler` maps Prisma's `P2002` to a 409. It is keyed on the unique index failing,
+not on a preceding `findUnique` — two concurrent registrations of one address both pass a
+read check, and only one survives the insert.
+
+### What is deliberately absent
+
+No `QueryBus`, no `EventBus`, no events, no sagas anywhere yet. The command side is the part
+that pays for itself; the rest of the CQRS vocabulary is available and unused until
+something needs it. Adding an event with no subscriber, or a saga with one step, buys a file
+to read and nothing else.
+
+`CqrsModule` is imported per feature module rather than registered globally. That keeps a
+module's dependencies readable from its own `imports` array, and it is one line — the cost
+of a global registration is that no module states what it actually needs.
+
+In auth specifically, `GET /me` is not a query and reaches no handler: `JwtAuthGuard` loads
+the user while authenticating, and `@CurrentUser` returns it. Routing it through a bus would
+add a second database read per request to re-fetch what the guard already has. A read a
+guard or a service can answer directly should stay that way.
 
 ## Bootstrap behaviour (`src/configure-app.ts`)
 
@@ -180,11 +257,15 @@ Revisit it when:
   `schema.prisma`'s generator block, or `PrismaService` is touched.
 - **A new cross-cutting concern appears under `src/common/`** — say what it does and
   whether it is registered globally or per-controller.
-- **The module conventions shift** — `src/modules/health` is named here as the reference
-  shape for a feature module. If a better exemplar replaces it, repoint the reference.
-- **A second module adopts CQRS** — the auth module is currently the only one, which is why
-  the layout section calls it an exception. If commands become the norm, that framing is
-  wrong and the reference shape has to be re-decided rather than quietly re-pointed.
+- **The module conventions shift** — `src/modules/auth` is named here as the shape to copy
+  and `src/modules/health` as the no-write minimum. If a better exemplar replaces either,
+  repoint the reference.
+- **`src/modules/meetings` gains commands, or is converted** — it is named here as the one
+  module that predates the CQRS default and must not be copied. Once it no longer is the
+  exception, that warning costs a reader time to disprove and should go.
+- **A `QueryBus`, events, or sagas arrive** — the CQRS section states plainly that none
+  exist. The first one to land makes that false, and the reason it was worth adding is
+  exactly the kind of thing this guide should carry.
 - **The auth contract changes** — the status codes, the single shared 401 message, and the
   argon2id choice are each asserted by an e2e spec. Changing one means changing its test on
   purpose, not discovering it failed.
