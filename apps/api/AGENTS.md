@@ -180,9 +180,8 @@ Revisit it when:
   `schema.prisma`'s generator block, or `PrismaService` is touched.
 - **A new cross-cutting concern appears under `src/common/`** — say what it does and
   whether it is registered globally or per-controller.
-- **The module conventions shift** — `src/modules/health` and `src/modules/auth` are named
-  here as the reference shapes for a feature module. If a better exemplar replaces either,
-  repoint the reference.
+- **The module conventions shift** — `src/modules/health` is named here as the reference
+  shape for a feature module. If a better exemplar replaces it, repoint the reference.
 - **A second module adopts CQRS** — the auth module is currently the only one, which is why
   the layout section calls it an exception. If commands become the norm, that framing is
   wrong and the reference shape has to be re-decided rather than quietly re-pointed.
