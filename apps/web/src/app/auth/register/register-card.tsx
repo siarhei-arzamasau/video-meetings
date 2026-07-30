@@ -189,6 +189,16 @@ export function RegisterCard() {
           )}
         </Button>
 
+        <p className="text-muted text-center text-sm">
+          Already have an account?{' '}
+          <Link
+            href="/auth/login"
+            className="text-foreground font-medium underline-offset-4 hover:underline"
+          >
+            Sign in
+          </Link>
+        </p>
+
         <p className="text-muted text-center text-xs">
           By creating an account you agree to be a considerate meeting host.
         </p>

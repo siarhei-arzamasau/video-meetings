@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ApiError, buildApiUrl, getApiBaseUrl, register } from './api-client';
+import { ApiError, buildApiUrl, getApiBaseUrl, login, register } from './api-client';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -121,5 +121,63 @@ describe('register', () => {
     await expect(
       register({ email: 'ada@example.com', password: 'a-password' }),
     ).rejects.toThrowError(/failed with 500/);
+  });
+});
+
+describe('login', () => {
+  it('posts the credentials as JSON and returns the token', async () => {
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com/api');
+    // 200, not the 201 register answers with: the endpoint creates nothing.
+    const fetchMock = stubFetch(jsonResponse(200, { accessToken: 'a-signed-jwt' }));
+
+    await expect(login({ email: 'ada@example.com', password: 'a-password' })).resolves.toEqual({
+      accessToken: 'a-signed-jwt',
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    expect(url).toBe('https://api.example.com/api/auth/login');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(JSON.stringify({ email: 'ada@example.com', password: 'a-password' }));
+    expect(init.headers).toMatchObject({ 'content-type': 'application/json' });
+  });
+
+  it('surfaces the 401 message as-is, so the card can show it verbatim', async () => {
+    stubFetch(
+      jsonResponse(401, {
+        statusCode: 401,
+        message: 'Invalid email or password',
+        timestamp: '2026-07-30T00:00:00.000Z',
+        path: '/api/auth/login',
+      }),
+    );
+
+    await expect(login({ email: 'ada@example.com', password: 'wrong' })).rejects.toMatchObject({
+      status: 401,
+      message: 'Invalid email or password',
+    });
+  });
+
+  it('joins a validation failure into sentences', async () => {
+    stubFetch(
+      jsonResponse(400, {
+        statusCode: 400,
+        message: ['email must be an email', 'password should not be empty'],
+        timestamp: '2026-07-30T00:00:00.000Z',
+        path: '/api/auth/login',
+      }),
+    );
+
+    await expect(login({ email: 'nope', password: '' })).rejects.toThrowError(
+      'email must be an email. password should not be empty.',
+    );
+  });
+
+  it('falls back to the status when the failure body is not the API error shape', async () => {
+    stubFetch(new Response('<html>502 Bad Gateway</html>', { status: 502 }));
+
+    await expect(login({ email: 'ada@example.com', password: 'a-password' })).rejects.toThrowError(
+      /failed with 502/,
+    );
   });
 });

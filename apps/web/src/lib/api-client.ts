@@ -94,3 +94,17 @@ export function register(credentials: Credentials): Promise<AuthResponse> {
     body: JSON.stringify(credentials),
   });
 }
+
+/**
+ * Exchanges credentials for a token.
+ *
+ * A 401 carries one deliberate message for both an unknown address and a wrong password — the
+ * API refuses to distinguish them, so there is nothing to show but that sentence and nothing
+ * to attribute it to. Anything that tells the two apart here would undo the API's defence.
+ */
+export function login(credentials: Credentials): Promise<AuthResponse> {
+  return apiFetch<AuthResponse>('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(credentials),
+  });
+}

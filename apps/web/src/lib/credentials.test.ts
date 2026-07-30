@@ -1,7 +1,12 @@
 import { MAX_EMAIL_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from '@repo/shared';
 import { describe, expect, it } from 'vitest';
 
-import { normaliseEmail, validateEmail, validatePassword } from './credentials';
+import {
+  normaliseEmail,
+  validateEmail,
+  validateLoginPassword,
+  validatePassword,
+} from './credentials';
 
 describe('validateEmail', () => {
   it('accepts an ordinary address', () => {
@@ -68,6 +73,34 @@ describe('validatePassword', () => {
 
   it('does not trim, since the API hashes what it is sent', () => {
     expect(validatePassword(`  ${'a'.repeat(MIN_PASSWORD_LENGTH)}  `)).toBeNull();
+  });
+});
+
+describe('validateLoginPassword', () => {
+  it('accepts a password shorter than registration allows, as the login endpoint does', () => {
+    // The case this function exists for. `validatePassword` rejects it, and using that on the
+    // sign-in form would lock out an account whose password predates the current minimum.
+    expect(validateLoginPassword('a'.repeat(MIN_PASSWORD_LENGTH - 3))).toBeNull();
+  });
+
+  it('accepts a single character', () => {
+    expect(validateLoginPassword('a')).toBeNull();
+  });
+
+  it('accepts a run of spaces, which the login endpoint does not refuse either', () => {
+    expect(validateLoginPassword('  ')).toBeNull();
+  });
+
+  it('rejects an empty value, matching the API @IsNotEmpty()', () => {
+    expect(validateLoginPassword('')).not.toBeNull();
+  });
+
+  it('accepts a password at the maximum length', () => {
+    expect(validateLoginPassword('a'.repeat(MAX_PASSWORD_LENGTH))).toBeNull();
+  });
+
+  it('rejects one character past the maximum', () => {
+    expect(validateLoginPassword('a'.repeat(MAX_PASSWORD_LENGTH + 1))).not.toBeNull();
   });
 });
 

@@ -12,8 +12,8 @@ export default function HomePage() {
         <Card.Header>
           <Card.Title>Video Meetings</Card.Title>
           <Card.Description>
-            Monorepo scaffold. Registration is the first feature wired end to end; everything else
-            still proves only that HeroUI, Tailwind, and theming work.
+            Monorepo scaffold. Signing up and signing in are wired end to end; everything else still
+            proves only that HeroUI, Tailwind, and theming work.
           </Card.Description>
         </Card.Header>
         <Card.Content>
@@ -26,6 +26,9 @@ export default function HomePage() {
               real link to hook. `buttonVariants` keeps it looking like the rest. */}
           <Link href="/auth/register" className={buttonVariants({ variant: 'primary' })}>
             Create an account
+          </Link>
+          <Link href="/auth/login" className={buttonVariants({ variant: 'secondary' })}>
+            Sign in
           </Link>
           <ThemeToggle />
         </Card.Footer>

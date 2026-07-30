@@ -79,6 +79,8 @@ aliases in sync if either changes.
   open forever: the message never clears, and native validation then refuses to submit the
   corrected value. `auth/register/register-card.tsx` memoises it and falls back to one shared
   constant. The symptom is a form that permanently rejects input the server would now accept.
+  `login-card.tsx` sidesteps the whole problem by passing no `validationErrors` at all — see
+  below for why it has no field-level server errors to report.
 
 ## API access
 
@@ -104,6 +106,26 @@ The base URL comes from `NEXT_PUBLIC_API_URL`, defaulting to `http://localhost:3
 that matters** — it rejects a value the API would have accepted and gives the user no appeal
 — so the email pattern is deliberately looser than the API's `@IsEmail()`. The server keeps
 the final say either way; this only saves a round trip.
+
+**Sign-in and sign-up do not share a password check.** `validatePassword` is the registration
+rule; `validateLoginPassword` is non-empty plus the length ceiling, and no minimum. That
+mirrors `LoginDto`, which drops `@MinLength` on purpose so login keeps accepting whatever
+registration once accepted. Using `validatePassword` on the login form is the stricter-than-
+the-server failure in its most concrete form: an account whose password predates the current
+minimum could never be typed into the field, and its owner has no way to appeal a rule the
+API was never going to apply. The two functions looking near-identical is not an invitation
+to merge them.
+
+### Where an auth failure gets shown
+
+`register-card.tsx` puts a 409 on the `email` field, because a taken address genuinely is
+that field's problem and a banner would leave the user guessing which of two inputs to change.
+
+`login-card.tsx` puts **everything** in the form-level `Alert`, and that asymmetry is
+deliberate. The API answers `Invalid email or password` for an unknown address and a wrong
+password alike — one constant, so the endpoint cannot be used to ask whether an account
+exists. Attaching that message to the email field would assert which of the two was wrong,
+undoing on the client the defence the server is paying an argon2 verification to maintain.
 
 ### Signed-in state
 

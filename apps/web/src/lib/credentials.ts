@@ -55,6 +55,29 @@ export function validatePassword(password: string): string | null {
 }
 
 /**
+ * The message to show for `password` **on the sign-in form**, or `null` when it passes.
+ *
+ * No minimum length, which is not an oversight: `LoginDto` has none either. Login must accept
+ * whatever registration once accepted, so an account whose password predates the current
+ * minimum can still be signed into. Applying `validatePassword` here would reject that
+ * password in the browser, and its owner would have no way to appeal a rule the server was
+ * never going to enforce.
+ *
+ * The ceiling stays, because it bounds hashing work rather than stating a policy.
+ */
+export function validateLoginPassword(password: string): string | null {
+  if (password === '') {
+    return 'Enter your password.';
+  }
+
+  if (password.length > MAX_PASSWORD_LENGTH) {
+    return `Passwords cannot be longer than ${String(MAX_PASSWORD_LENGTH)} characters.`;
+  }
+
+  return null;
+}
+
+/**
  * Trimmed and lowercased, matching the API's `normaliseEmail`.
  *
  * Sending the raw value would work — the server normalises either way — but then the address
