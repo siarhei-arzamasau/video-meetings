@@ -38,14 +38,19 @@ src/
   config/               Environment contract
   common/               Cross-cutting filters and interceptors
   modules/<feature>/    One directory per feature: module, controller, service, spec
+                        auth/ additionally: commands/ (command + handler per use case),
+                        services/ (PasswordService, TokenService)
   generated/prisma/     Prisma client output — generated, gitignored, never edit
 prisma/
   schema.prisma         Datasource, generator, and models
   migrations/           Applied migrations — never edit one that has shipped
 ```
 
-`src/modules/health` is the reference shape for a trivial feature module;
-`src/modules/auth` is the one to copy for anything with DTOs, a guard, or database access.
+`src/modules/health` is the reference shape for a feature module — controller, service,
+module. Copy that. `src/modules/auth` is the place to read for DTO validation, a guard, and
+database access, but **do not copy its structure**: it is deliberately CQRS
+(`@nestjs/cqrs`, one command class and handler per write operation) and no other module is.
+A new feature adopts CQRS only on purpose, not by imitation.
 
 ## Bootstrap behaviour (`src/configure-app.ts`)
 
@@ -178,6 +183,9 @@ Revisit it when:
 - **The module conventions shift** — `src/modules/health` and `src/modules/auth` are named
   here as the reference shapes for a feature module. If a better exemplar replaces either,
   repoint the reference.
+- **A second module adopts CQRS** — the auth module is currently the only one, which is why
+  the layout section calls it an exception. If commands become the norm, that framing is
+  wrong and the reference shape has to be re-decided rather than quietly re-pointed.
 - **The auth contract changes** — the status codes, the single shared 401 message, and the
   argon2id choice are each asserted by an e2e spec. Changing one means changing its test on
   purpose, not discovering it failed.
