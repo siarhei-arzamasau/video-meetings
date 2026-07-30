@@ -35,7 +35,11 @@ own guide with app-specific detail, duplicated into `CLAUDE.md` + `AGENTS.md` ex
 root guide.
 
 The design this implements:
-[`docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md).
+[`docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md),
+with the API's authentication module since split in two by
+[`docs/superpowers/specs/2026-07-30-auth-user-module-split-design.md`](docs/superpowers/specs/2026-07-30-auth-user-module-split-design.md)
+— `auth` owns credentials and tokens, a new `user` module owns the user record, and they
+interact only over the CQRS buses.
 
 ## Commands
 

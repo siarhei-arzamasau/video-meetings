@@ -10,13 +10,3 @@ import { TransformFnParams } from 'class-transformer';
 export function normaliseEmail({ value }: TransformFnParams): unknown {
   return typeof value === 'string' ? value.trim().toLowerCase() : value;
 }
-
-/**
- * Everything before the last `@` of an already-normalised address, verbatim — so
- * `ada+test@example.com` yields `ada+test`, not `ada`.
- */
-export function displayNameFromEmail(email: string): string {
-  const separator = email.lastIndexOf('@');
-
-  return separator === -1 ? email : email.slice(0, separator);
-}

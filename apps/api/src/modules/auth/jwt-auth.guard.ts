@@ -1,9 +1,11 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { QueryBus } from '@nestjs/cqrs';
 import { JwtService } from '@nestjs/jwt';
+import type { User } from '@repo/shared';
 import type { Request } from 'express';
 
-import { PrismaService } from '../prisma/prisma.service';
-import { AuthenticatedRequest, toPublicUser } from './authenticated-request';
+import { FindUserByIdQuery } from '../user/queries/find-user-by-id.query';
+import { AuthenticatedRequest } from './authenticated-request';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -12,7 +14,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly jwt: JwtService,
-    private readonly prisma: PrismaService,
+    private readonly queryBus: QueryBus,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -23,14 +25,19 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException();
     }
 
-    const user = await this.prisma.user.findUnique({ where: { id: await this.subjectOf(token) } });
+    // The query already returns the public shape, so what lands on the request cannot carry a
+    // password hash — and this is the value `@CurrentUser` hands a controller, which is one
+    // `res.json` away from a response body.
+    const user = await this.queryBus.execute<FindUserByIdQuery, User | null>(
+      new FindUserByIdQuery(await this.subjectOf(token)),
+    );
 
     if (user === null) {
       // The signature was good but the account is gone. A valid token must not outlive it.
       throw new UnauthorizedException();
     }
 
-    (request as AuthenticatedRequest).user = toPublicUser(user);
+    (request as AuthenticatedRequest).user = user;
 
     return true;
   }

@@ -39,6 +39,7 @@ src/
   common/               Cross-cutting filters and interceptors
   modules/<feature>/    One directory per feature: module, controller, specs, and
                         commands/ — a command class plus its handler per write operation.
+                        queries/ mirrors it where a read crosses a module boundary.
                         services/ holds collaborators the handlers share.
   generated/prisma/     Prisma client output — generated, gitignored, never edit
 prisma/
@@ -55,19 +56,25 @@ nothing to write needs no commands.
 `src/modules/meetings` is the second worked example and the one to read for a module with
 both sides: `POST /meetings` is a command, while the two reads stay on a plain service.
 
+`src/modules/user` is the third, and the one to read before splitting a module in two. It
+owns the user record — the insert, the lookups, the public shape — and has no controller, no
+routes, and no exports. Two modules deep in a request path talk to it entirely over the
+buses; see the module boundary section below for why that is not the same as importing it.
+
 ## CQRS — the module pattern
 
 Every write operation is a command object dispatched through `@nestjs/cqrs`'s `CommandBus`
 to exactly one handler. `src/modules/auth` is the worked example: `register` and `login` are
-commands, and there is no query side. `src/modules/meetings` shows the mixed case —
-`CreateMeetingCommand` on the write, `MeetingsService` on the reads.
+commands. `src/modules/meetings` shows the mixed case — `CreateMeetingCommand` on the write,
+`MeetingsService` on the reads.
 
-**Reads do not need commands.** The pattern earns its indirection on operations that change
-state — one class per use case, a uniform place for the next one to land, and a handler that
-can be unit-tested without an HTTP layer. A plain read served straight from a controller and
-a service is not a violation of the house style; reaching for a `QueryBus` to make a read
-symmetrical with a write is how this pattern turns into ceremony. Add one when something
-genuinely needs it, not for consistency.
+**Reads inside a module do not need a bus.** The pattern earns its indirection on operations
+that change state, and on reads that cross a module boundary — one class per use case, a
+uniform place for the next one to land, and a handler that can be unit-tested without an HTTP
+layer. Within one module, a read served straight from a controller and a service is not a
+violation of the house style: `MeetingsService` is the example, and routing its two lookups
+through a `QueryBus` for symmetry with `POST /meetings` would be ceremony. The test is
+whether the read crosses a boundary, not whether it sits next to a write.
 
 ### Adding a command
 
@@ -93,6 +100,22 @@ holding class-validator decorators; a handler that accepted one could not be exe
 without constructing a web-layer object, and it would silently depend on validation having
 already run. The controller destructures the DTO and passes the fields.
 
+### Adding a query
+
+The same five things with `queries/`, `@QueryHandler`, `IQueryHandler`, and `QueryBus`
+substituted — including step 5, which matters more here, because a query's result type is
+where the useful information is. `src/modules/user/queries` is the worked example.
+
+One rule of its own: **a query returns `null` for "no such row", never a `NotFoundException`.**
+What a miss means belongs to the caller. `FindUserByIdQuery` returning `null` is how
+`JwtAuthGuard` can answer 401 while some future controller answers 404 from the same handler;
+a handler that threw would have decided for both of them.
+
+`@nestjs/cqrs` 11 also ships `Query<TResult>` and `Command<TResult>` base classes that carry
+the result type, which would make the explicit type arguments in step 5 unnecessary. Nothing
+here uses them — the messages are plain classes. Adopting them is a reasonable change, but it
+is one commit that converts all of them, not a second convention alongside the first.
+
 ### Where invariants live — the auth example
 
 A handler owns its use case, and a shared service owns anything two handlers must not
@@ -108,9 +131,12 @@ purpose.
   path in `LoginHandler` must keep calling it, and keep `await`ing it. **No test catches its
   removal**; all four login specs stay green while the defence is gone.
 
-`RegisterHandler` maps Prisma's `P2002` to a 409. It is keyed on the unique index failing,
-not on a preceding `findUnique` — two concurrent registrations of one address both pass a
-read check, and only one survives the insert.
+`CreateUserHandler` — in the user module, not auth — maps Prisma's `P2002` to the 409 that
+`POST /auth/register` returns. It is keyed on the unique index failing, not on a preceding
+`findUnique`: two concurrent registrations of one address both pass a read check, and only one
+survives the insert. It lives with the insert because that is the only place that can answer
+authoritatively, and `RegisterHandler` deliberately does not catch it on the way past — a
+`try`/`catch` there would put the response for a taken address in two files.
 
 ### Reading a Prisma constraint error — the meetings trap
 
@@ -137,21 +163,61 @@ degrades to the common answer rather than turning ordinary bad requests into 500
 cannot live in the DTO — the DTO never sees the host, who comes from the guard — which is what
 makes it a use-case invariant and the handler's to own.
 
+### The module boundary — auth and user
+
+`AuthModule` owns authentication (credentials, argon2, tokens, the guard) and `UserModule`
+owns the user record. **Auth reaches no database at all**; `PrismaService` appears nowhere
+under `src/modules/auth`, and if it reappears there, the split has been undone.
+
+Three messages are the entire interface:
+
+| Message                           | Carries                 | Resolves to               |
+| --------------------------------- | ----------------------- | ------------------------- |
+| `CreateUserCommand`               | `email`, `passwordHash` | `User`                    |
+| `FindUserByIdQuery`               | `userId`                | `User \| null`            |
+| `FindUserCredentialsByEmailQuery` | `email`                 | `UserCredentials \| null` |
+
+**`AuthModule` does not import `UserModule`, and that is deliberate.** `CqrsModule`'s
+`ExplorerService` scans every module in the container and registers all handlers into one set
+of buses, so naming a command or query class is enough to reach its handler wherever it lives.
+The buses are the decoupling. Importing the module as well would add a compile-time dependency
+that buys nothing and invites the next person to inject a provider straight across the boundary.
+
+Two rules keep the boundary honest, and neither is enforced by a type:
+
+- **A raw password never crosses it.** `CreateUserCommand` carries a hash, because argon2 and
+  the password policy are auth's. The user module could not tell a good hash from a bad one and
+  should not be handed the chance to try.
+- **`UserCredentials` is declared in its query file, never in `@repo/shared`.** That package is
+  imported by the browser bundle. A password hash must not appear in a type the client can
+  name, which is also why it is a separate query from `FindUserByIdQuery` rather than a flag on
+  it: the only caller that asks for a secret is the login path, and everyone else gets a shape
+  that cannot leak one. Both user-returning paths map through `toPublicUser`, so the omission
+  of `passwordHash` is a property of the module rather than of each call site.
+
+`GET /me` still reaches no handler of its own: `JwtAuthGuard` dispatches `FindUserByIdQuery`
+while authenticating, `@CurrentUser` returns what it attached, and the controller does no
+second read. That is one query per authenticated request, in the guard, where the lookup
+already was.
+
 ### What is deliberately absent
 
-No `QueryBus`, no `EventBus`, no events, no sagas anywhere yet. The command side is the part
-that pays for itself; the rest of the CQRS vocabulary is available and unused until
-something needs it. Adding an event with no subscriber, or a saga with one step, buys a file
-to read and nothing else.
+No `EventBus`, no events, no sagas anywhere yet. Commands and queries are the parts that pay
+for themselves; the rest of the CQRS vocabulary is available and unused until something needs
+it. Adding an event with no subscriber, or a saga with one step, buys a file to read and
+nothing else.
+
+The `QueryBus` arrived with the auth/user split and exists for exactly one reason: a read that
+crosses a module boundary. It is not there to make reads symmetrical with writes — see
+`MeetingsService`, which still serves two lookups from a plain service inside its own module,
+and should stay that way.
 
 `CqrsModule` is imported per feature module rather than registered globally. That keeps a
 module's dependencies readable from its own `imports` array, and it is one line — the cost
-of a global registration is that no module states what it actually needs.
-
-In auth specifically, `GET /me` is not a query and reaches no handler: `JwtAuthGuard` loads
-the user while authenticating, and `@CurrentUser` returns it. Routing it through a bus would
-add a second database read per request to re-fetch what the guard already has. A read a
-guard or a service can answer directly should stay that way.
+of a global registration is that no module states what it actually needs. Note the asymmetry
+this creates with the paragraph above: the buses behave globally at runtime while each module
+still declares them, which is what lets two modules share a bus without depending on each
+other.
 
 ## Bootstrap behaviour (`src/configure-app.ts`)
 
@@ -231,8 +297,8 @@ Jest, configured inline in `package.json` with `rootDir: src` and `testRegex:
 `test/jest-e2e.json` and Supertest. Not Vitest — that's the web app.
 
 **Neither `pnpm test` nor CI runs `test:e2e`, so a module whose only coverage is an e2e spec
-is uncovered as far as CI is concerned.** Every write handler and read service gets a
-`*.spec.ts` beside it for that reason, not for a coverage number.
+is uncovered as far as CI is concerned.** Every command handler, query handler, and read
+service gets a `*.spec.ts` beside it for that reason, not for a coverage number.
 
 E2E specs run against the **real database**, not a mock: `test/utils/create-test-app.ts`
 boots `AppModule` and `useApiSuite` truncates the tables it touches. `test:e2e` therefore
@@ -299,15 +365,21 @@ Revisit it when:
 - **A new cross-cutting concern appears under `src/common/`** — say what it does and
   whether it is registered globally or per-controller.
 - **The module conventions shift** — `src/modules/auth` is named here as the shape to copy,
-  `src/modules/meetings` as the command-plus-reads example, and `src/modules/health` as the
-  no-write minimum. If a better exemplar replaces any of them, repoint the reference.
+  `src/modules/meetings` as the command-plus-reads example, `src/modules/user` as the
+  bus-only boundary, and `src/modules/health` as the no-write minimum. If a better exemplar
+  replaces any of them, repoint the reference.
 - **Prisma's error `meta` shape changes on an upgrade** — the meetings section names the
   exact path the constraint arrives at today and says it is not a contract. If a version
   bump moves it, the handler keeps working but the explanation stops being true, and the
   next person reads a path that no longer exists.
-- **A `QueryBus`, events, or sagas arrive** — the CQRS section states plainly that none
-  exist. The first one to land makes that false, and the reason it was worth adding is
-  exactly the kind of thing this guide should carry.
+- **Events or sagas arrive** — the CQRS section states plainly that neither exists. The first
+  one to land makes that false, and the reason it was worth adding is exactly the kind of thing
+  this guide should carry. The `QueryBus` is the precedent: it was documented with the boundary
+  that justified it, not merely announced.
+- **A module boundary moves** — the auth/user interface is three messages, and the guide names
+  them because a fourth is a decision worth seeing in review. The two unenforced rules (no raw
+  password crosses, `UserCredentials` stays out of `@repo/shared`) have no test behind them, so
+  the guide is the only thing carrying them.
 - **The auth contract changes** — the status codes, the single shared 401 message, and the
   argon2id choice are each asserted by an e2e spec. Changing one means changing its test on
   purpose, not discovering it failed.

@@ -10,6 +10,16 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 import { PasswordService } from './services/password.service';
 import { TokenService } from './services/token.service';
 
+/**
+ * Owns authentication: credentials, hashing, tokens, and the guard. It reaches no database —
+ * every user row it needs comes from `UserModule` over the buses.
+ *
+ * The absence of `UserModule` from `imports` is deliberate and not an oversight. `CqrsModule`
+ * registers every handler in the application into one set of buses, so naming a command or
+ * query class is enough to reach its handler. Importing the module as well would add a
+ * compile-time dependency that buys nothing and invites someone to inject a provider across
+ * the boundary the buses exist to draw.
+ */
 @Module({
   imports: [
     // Imported per module rather than registered globally, so a module's `imports` states

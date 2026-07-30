@@ -1,28 +1,28 @@
 import { ConflictException } from '@nestjs/common';
+import { CommandBus } from '@nestjs/cqrs';
 import { Test } from '@nestjs/testing';
 
-import { Prisma } from '../../../../generated/prisma/client';
-import { PrismaService } from '../../../prisma/prisma.service';
+import { CreateUserCommand } from '../../../user/commands/create-user.command';
 import { PasswordService } from '../../services/password.service';
 import { TokenService } from '../../services/token.service';
 import { RegisterCommand } from '../register.command';
 import { RegisterHandler } from './register.handler';
 
 describe('RegisterHandler', () => {
-  const create = jest.fn();
+  const execute = jest.fn();
   const hash = jest.fn<Promise<string>, [string]>();
   const issueToken = jest.fn();
   let handler: RegisterHandler;
 
   beforeEach(async () => {
-    create.mockReset().mockResolvedValue({ id: 'user-id' });
+    execute.mockReset().mockResolvedValue({ id: 'user-id' });
     hash.mockReset().mockResolvedValue('hashed-password');
     issueToken.mockReset().mockResolvedValue({ accessToken: 'signed.jwt.value' });
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         RegisterHandler,
-        { provide: PrismaService, useValue: { user: { create } } },
+        { provide: CommandBus, useValue: { execute } },
         { provide: PasswordService, useValue: { hash } },
         { provide: TokenService, useValue: { issueToken } },
       ],
@@ -31,17 +31,13 @@ describe('RegisterHandler', () => {
     handler = moduleRef.get(RegisterHandler);
   });
 
-  it('stores the hash, never the password, and derives the display name', async () => {
+  it('hands the user module a hash, never the password', async () => {
     await handler.execute(new RegisterCommand('ada+test@example.com', 'correct horse'));
 
     expect(hash).toHaveBeenCalledWith('correct horse');
-    expect(create).toHaveBeenCalledWith({
-      data: {
-        email: 'ada+test@example.com',
-        passwordHash: 'hashed-password',
-        displayName: 'ada+test',
-      },
-    });
+    expect(execute).toHaveBeenCalledWith(
+      new CreateUserCommand('ada+test@example.com', 'hashed-password'),
+    );
   });
 
   it('issues a token for the created user', async () => {
@@ -51,21 +47,19 @@ describe('RegisterHandler', () => {
     expect(result).toEqual({ accessToken: 'signed.jwt.value' });
   });
 
-  it('maps the unique-index violation to a 409', async () => {
-    create.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-        code: 'P2002',
-        clientVersion: '7.9.1',
-      }),
-    );
+  it('lets the taken-address conflict through untouched', async () => {
+    execute.mockRejectedValue(new ConflictException('That email is already registered'));
 
+    // The 409 belongs to the handler that owns the unique index. Catching and re-throwing it
+    // here would put the response for a taken address in two places at once.
     await expect(handler.execute(new RegisterCommand('taken@example.com', 'pw'))).rejects.toThrow(
       new ConflictException('That email is already registered'),
     );
+    expect(issueToken).not.toHaveBeenCalled();
   });
 
-  it('lets any other database error through untouched', async () => {
-    create.mockRejectedValue(new Error('connection reset'));
+  it('lets any other failure through untouched', async () => {
+    execute.mockRejectedValue(new Error('connection reset'));
 
     await expect(handler.execute(new RegisterCommand('ada@example.com', 'pw'))).rejects.toThrow(
       'connection reset',

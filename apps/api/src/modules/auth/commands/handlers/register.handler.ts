@@ -1,18 +1,20 @@
-import { ConflictException } from '@nestjs/common';
-import { CommandHandler, ICommandHandler } from '@nestjs/cqrs';
-import type { AuthResponse } from '@repo/shared';
+import { CommandBus, CommandHandler, ICommandHandler } from '@nestjs/cqrs';
+import type { AuthResponse, User } from '@repo/shared';
 
-import { Prisma } from '../../../../generated/prisma/client';
-import { PrismaService } from '../../../prisma/prisma.service';
-import { displayNameFromEmail } from '../../email';
+import { CreateUserCommand } from '../../../user/commands/create-user.command';
 import { PasswordService } from '../../services/password.service';
 import { TokenService } from '../../services/token.service';
 import { RegisterCommand } from '../register.command';
 
+/**
+ * Registration is two concerns meeting: this module turns a password into a hash and an id
+ * into a token, and the user module owns the row in between. The only thing that crosses the
+ * boundary is a command class — this handler holds no reference to a user-module provider.
+ */
 @CommandHandler(RegisterCommand)
 export class RegisterHandler implements ICommandHandler<RegisterCommand, AuthResponse> {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly commandBus: CommandBus,
     private readonly passwords: PasswordService,
     private readonly tokens: TokenService,
   ) {}
@@ -20,24 +22,13 @@ export class RegisterHandler implements ICommandHandler<RegisterCommand, AuthRes
   async execute({ email, password }: RegisterCommand): Promise<AuthResponse> {
     const passwordHash = await this.passwords.hash(password);
 
-    try {
-      const user = await this.prisma.user.create({
-        data: { email, passwordHash, displayName: displayNameFromEmail(email) },
-      });
+    // No `try`/`catch` for the taken address: the 409 comes from `CreateUserHandler`, which
+    // owns the insert and is the only place that can answer authoritatively. There is
+    // nothing for this handler to add on the way past.
+    const user = await this.commandBus.execute<CreateUserCommand, User>(
+      new CreateUserCommand(email, passwordHash),
+    );
 
-      return await this.tokens.issueToken(user.id);
-    } catch (error) {
-      // The unique index decides, not a preceding read: two concurrent registrations of the
-      // same address both pass a `findUnique` check, and only one can survive the insert.
-      if (isUniqueViolation(error)) {
-        throw new ConflictException('That email is already registered');
-      }
-
-      throw error;
-    }
+    return this.tokens.issueToken(user.id);
   }
-}
-
-function isUniqueViolation(error: unknown): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }

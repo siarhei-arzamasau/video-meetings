@@ -1,8 +1,11 @@
 import { UnauthorizedException } from '@nestjs/common';
-import { CommandHandler, ICommandHandler } from '@nestjs/cqrs';
+import { CommandHandler, ICommandHandler, QueryBus } from '@nestjs/cqrs';
 import type { AuthResponse } from '@repo/shared';
 
-import { PrismaService } from '../../../prisma/prisma.service';
+import {
+  FindUserCredentialsByEmailQuery,
+  UserCredentials,
+} from '../../../user/queries/find-user-credentials-by-email.query';
 import { PasswordService } from '../../services/password.service';
 import { TokenService } from '../../services/token.service';
 import { LoginCommand } from '../login.command';
@@ -16,13 +19,19 @@ const INVALID_CREDENTIALS = 'Invalid email or password';
 @CommandHandler(LoginCommand)
 export class LoginHandler implements ICommandHandler<LoginCommand, AuthResponse> {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly queryBus: QueryBus,
     private readonly passwords: PasswordService,
     private readonly tokens: TokenService,
   ) {}
 
   async execute({ email, password }: LoginCommand): Promise<AuthResponse> {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    // The user module answers what the stored hash is; deciding what a miss means, and making
+    // a miss cost what a hit costs, stays here. Both halves of the enumeration defence below
+    // are this handler's, which is why the query returns `null` rather than throwing.
+    const user = await this.queryBus.execute<
+      FindUserCredentialsByEmailQuery,
+      UserCredentials | null
+    >(new FindUserCredentialsByEmailQuery(email));
 
     if (user === null) {
       // Costs what a real verification costs, so the response time does not reveal that
