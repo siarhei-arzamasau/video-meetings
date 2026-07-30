@@ -22,6 +22,28 @@ pnpm --filter=@repo/web test         # vitest run
 pnpm --filter=@repo/web test:watch
 ```
 
+## Every change is checked against `ui-ux-pro-max`
+
+**No change in this app is complete until it has been tested against the `ui-ux-pro-max`
+skill.** Invoke it and apply what it says about the surfaces you touched — style, colour,
+typography, layout, accessibility, motion, data visualisation. This is a completion gate,
+not a suggestion: passing tests and a green build are not "done" on their own.
+
+"This change isn't visual" does not exempt it. A helper in `src/lib` or a shape in
+`@repo/shared` changes what the user sees the moment a component reads it, so the check
+applies to any change here.
+
+**The inspection happens in a real browser, driven through the Playwright MCP server** — the
+one [the root guide](../../CLAUDE.md#agent-tooling) declares in `.mcp.json`. Start the app
+(`pnpm --filter=@repo/web dev`, :3000), navigate to the routes you touched, and look at the
+rendered page. Reading the JSX is not inspection: layout, spacing, contrast, focus rings, and
+theming only exist once Tailwind and HeroUI have run. Cover both themes and at least one
+narrow viewport, and check the browser console is clean while you are there.
+
+State the outcome alongside the change: what the skill flagged, what the browser showed, and
+what you did about each item — or that both came back clean. An unreported check is
+indistinguishable from a skipped one.
+
 ## Layout
 
 ```
@@ -48,17 +70,46 @@ aliases in sync if either changes.
 - **`next.config.ts`** sets `output: 'standalone'` (the Dockerfile copies `.next/standalone`
   as the whole runtime), `outputFileTracingRoot` pointed at the repo root so tracing
   reaches workspace packages, and `transpilePackages: ['@repo/shared']`.
+- **A React Aria `validationErrors` object must keep its identity between renders.** React
+  Aria resets its "the user has edited this field since" flag whenever the object is not the
+  one it saw last render, so a fresh `{}` literal per render pins a server-side field error
+  open forever: the message never clears, and native validation then refuses to submit the
+  corrected value. `register-card.tsx` memoises it and falls back to one shared constant.
+  The symptom is a form that permanently rejects input the server would now accept.
 
 ## API access
 
 All calls to the backend go through `src/lib/api-client.ts` — it is the single boundary
 between the web app and the API. Add new endpoint wrappers there (`apiFetch<T>` plus a
-named function) rather than calling `fetch` from components. Failures throw `ApiError`
-carrying the HTTP status.
+named function) rather than calling `fetch` from components.
+
+Failures throw `ApiError`, carrying the HTTP status **and the API's own message** — read out
+of the `ApiErrorResponse` body, joining the one-per-rule array a validation failure returns.
+That is what makes `error.message` safe to render: "That email is already registered" is not
+recoverable from a 409. Reading the body must never throw, because a failing response is not
+obliged to carry JSON, and a parse error raised while reporting a failure replaces the real
+one. A rejection that is not an `ApiError` means the request never reached the API at all.
 
 The base URL comes from `NEXT_PUBLIC_API_URL`, defaulting to `http://localhost:3001/api`
 (origin _and_ the API's `/api` global prefix). Response shapes are imported as types from
 `@repo/shared`.
+
+### Client-side validation and credentials
+
+`src/lib/credentials.ts` mirrors the API's registration rules, using the bounds exported by
+`@repo/shared` rather than its own copies. Being **stricter than the server is the failure
+that matters** — it rejects a value the API would have accepted and gives the user no appeal
+— so the email pattern is deliberately looser than the API's `@IsEmail()`. The server keeps
+the final say either way; this only saves a round trip.
+
+### Signed-in state
+
+`src/lib/auth-token.ts` keeps the JWT in `localStorage`, and that is a placeholder rather
+than the answer: any script the page runs can read it. The intended fix is an `HttpOnly`
+cookie set by the API, at which point this module is deleted rather than extended. Do not
+build more session machinery on top of it. Every access is guarded — `localStorage` throws
+outright where storage is disabled — and nothing there rethrows, because losing a token is
+survivable and failing a completed registration over it is not.
 
 ## Tests
 

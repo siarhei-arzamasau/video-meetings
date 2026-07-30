@@ -1,4 +1,4 @@
-import type { HealthResponse } from '@repo/shared';
+import type { ApiErrorResponse, AuthResponse, Credentials, HealthResponse } from '@repo/shared';
 
 const DEFAULT_BASE_URL = 'http://localhost:3001/api';
 
@@ -31,15 +31,66 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   });
 
   if (!response.ok) {
-    throw new ApiError(
-      response.status,
-      `Request to ${path} failed with ${String(response.status)}`,
-    );
+    throw new ApiError(response.status, await readErrorMessage(response, path));
   }
 
   return (await response.json()) as T;
 }
 
+/**
+ * The API's own message, falling back to the status when there is not one.
+ *
+ * Worth the extra read: "That email is already registered" is not recoverable from a 409, and
+ * a 400 carries one entry per broken validation rule. Anything a form can show a user has to
+ * come from here.
+ *
+ * Nothing in it may throw. A failing response is not obliged to carry JSON — a proxy or a
+ * crashed process answers with HTML — and an exception raised while reporting a failure would
+ * replace it with a parse error nobody can trace back.
+ */
+async function readErrorMessage(response: Response, path: string): Promise<string> {
+  const fallback = `Request to ${path} failed with ${String(response.status)}`;
+
+  try {
+    return extractMessage(await response.json()) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function extractMessage(body: unknown): string | undefined {
+  if (typeof body !== 'object' || body === null || !('message' in body)) {
+    return undefined;
+  }
+
+  const { message } = body as { message: ApiErrorResponse['message'] | undefined };
+
+  if (typeof message === 'string') {
+    return message.trim() === '' ? undefined : message;
+  }
+
+  if (Array.isArray(message)) {
+    // Joined into sentences: the pipe emits fragments ("password must be longer …"), one per
+    // rule, and a list rendered as a single line reads as one run-on without the separators.
+    const sentences = message.filter((entry) => typeof entry === 'string' && entry.trim() !== '');
+
+    return sentences.length === 0 ? undefined : `${sentences.join('. ')}.`;
+  }
+
+  return undefined;
+}
+
 export function getHealth(): Promise<HealthResponse> {
   return apiFetch<HealthResponse>('/health');
+}
+
+/**
+ * Creates an account. A 409 means the address is taken; a 400 means the credentials broke a
+ * rule `validateEmail`/`validatePassword` did not catch first.
+ */
+export function register(credentials: Credentials): Promise<AuthResponse> {
+  return apiFetch<AuthResponse>('/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(credentials),
+  });
 }
