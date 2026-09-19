@@ -5,17 +5,22 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Res,
+  StreamableFile,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { CommandBus } from '@nestjs/cqrs';
 import type { MeetingFile, User } from '@repo/shared';
+import contentDisposition from 'content-disposition';
+import type { Response } from 'express';
 
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { UploadMeetingFileCommand } from './commands/upload-meeting-file.command';
 import { MeetingFilesService } from './services/meeting-files.service';
+import type { OpenedFile } from './services/meeting-files.service';
 import { MeetingFileUploadInterceptor } from './storage/meeting-file-upload.interceptor';
 
 export const FILE_REQUIRED_MESSAGE = 'A file is required';
@@ -51,6 +56,37 @@ export class MeetingFilesController {
     );
   }
 
+  /**
+   * The original bytes as a download. The type is the record's sniffed one and `nosniff`
+   * tells the browser not to second-guess it; together with `attachment`, a stored text file
+   * that happens to hold HTML is never rendered. `content-disposition` handles the RFC 6266/5987
+   * encoding of the display name, including `filename*` for anything outside Latin-1.
+   */
+  @Get(':fileId/content')
+  async download(
+    @CurrentUser() user: User,
+    @Param('id', UUID_V4) meetingId: string,
+    @Param('fileId', UUID_V4) fileId: string,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<StreamableFile> {
+    const opened = await this.files.openContent(user.id, meetingId, fileId);
+
+    return stream(response, opened, 'attachment');
+  }
+
+  /** The WebP thumbnail, inline: it exists to be drawn in an `<img>`, never downloaded. */
+  @Get(':fileId/thumbnail')
+  async thumbnail(
+    @CurrentUser() user: User,
+    @Param('id', UUID_V4) meetingId: string,
+    @Param('fileId', UUID_V4) fileId: string,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<StreamableFile> {
+    const opened = await this.files.openThumbnail(user.id, meetingId, fileId);
+
+    return stream(response, opened, 'inline');
+  }
+
   /** Reads go straight to the service — no `QueryBus`, by design. */
   @Get()
   findAll(
@@ -59,4 +95,22 @@ export class MeetingFilesController {
   ): Promise<MeetingFile[]> {
     return this.files.findAll(user.id, meetingId);
   }
+}
+
+/**
+ * `Content-Length` from the record rather than from the stream, so a truncated object — which
+ * the worker marks `failed` — still produces a response the client can tell is short.
+ */
+function stream(
+  response: Response,
+  opened: OpenedFile,
+  type: 'attachment' | 'inline',
+): StreamableFile {
+  response.setHeader('Content-Type', opened.contentType);
+  response.setHeader('Content-Length', String(opened.size));
+  response.setHeader('Content-Disposition', contentDisposition(opened.name, { type }));
+  response.setHeader('X-Content-Type-Options', 'nosniff');
+  response.setHeader('Cache-Control', 'private, no-store');
+
+  return new StreamableFile(opened.stream);
 }

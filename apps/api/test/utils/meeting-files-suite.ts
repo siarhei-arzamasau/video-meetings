@@ -1,4 +1,5 @@
 import type { Meeting } from '@repo/shared';
+import request from 'supertest';
 
 import type { ApiSuite } from './api-suite';
 import { MEETINGS_URL, PASSWORD, REGISTER_URL } from './fixtures';
@@ -35,4 +36,36 @@ export async function createMeeting(
     .expect(201);
 
   return response.body as Meeting;
+}
+
+/**
+ * A multipart body built by hand, with the filename exactly as given.
+ *
+ * Supertest's `.attach` goes through `form-data`, which takes the basename of the filename
+ * and percent-encodes quotes in it — the same normalisation browsers apply. That is right for
+ * a client, but it means the API's own name rule cannot be exercised through it: a path
+ * separator or a raw quote never arrives. This sends what a hostile or unusual client would.
+ */
+export function postRawMultipart(
+  suite: ApiSuite,
+  url: string,
+  token: string,
+  filename: string,
+  bytes: Buffer,
+  contentType = 'application/octet-stream',
+): request.Test {
+  const boundary = 'raw-boundary-9f2c';
+  const body = Buffer.concat([
+    Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${contentType}\r\n\r\n`,
+    ),
+    bytes,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+
+  return request(suite.app().getHttpServer())
+    .post(url)
+    .set('Authorization', `Bearer ${token}`)
+    .set('Content-Type', `multipart/form-data; boundary=${boundary}`)
+    .send(body);
 }

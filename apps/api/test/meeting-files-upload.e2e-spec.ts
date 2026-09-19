@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { MeetingFile } from '@repo/shared';
-import request from 'supertest';
 
 import { useApiSuite } from './utils/api-suite';
 import {
@@ -21,7 +20,7 @@ import {
   findMeetingFileRow,
   insertMeetingFileRow,
 } from './utils/meeting-files-table';
-import { createMeeting, registerUser } from './utils/meeting-files-suite';
+import { createMeeting, postRawMultipart, registerUser } from './utils/meeting-files-suite';
 
 const FIXTURES = path.join(__dirname, 'fixtures');
 const fixture = (name: string): string => path.join(FIXTURES, name);
@@ -259,21 +258,13 @@ describe('POST /api/meetings/:id/files', () => {
     it('400 for a forward slash, sent as a raw multipart body because form-data strips one', async () => {
       const host = await registerUser(suite, EMAIL);
       const meeting = await createMeeting(suite, host);
-      const boundary = 'raw-boundary-9f2c';
-      const body = Buffer.concat([
-        Buffer.from(
-          `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="a/b.pdf"\r\nContent-Type: application/pdf\r\n\r\n`,
-        ),
+      const response = await postRawMultipart(
+        suite,
+        meetingFilesUrl(meeting.id),
+        host.token,
+        'a/b.pdf',
         fs.readFileSync(fixture('sample.pdf')),
-        Buffer.from(`\r\n--${boundary}--\r\n`),
-      ]);
-
-      const response = await request(suite.app().getHttpServer())
-        .post(meetingFilesUrl(meeting.id))
-        .set('Authorization', `Bearer ${host.token}`)
-        .set('Content-Type', `multipart/form-data; boundary=${boundary}`)
-        .send(body)
-        .expect(400);
+      ).expect(400);
 
       expect(messageOf(response)).toBe(
         'The file name must be 1–255 characters and contain no path separators',

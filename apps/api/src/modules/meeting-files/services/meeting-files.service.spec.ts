@@ -3,6 +3,7 @@ import { QueryBus } from '@nestjs/cqrs';
 import { Test } from '@nestjs/testing';
 
 import { FindVisibleMeetingQuery } from '../../meetings/queries/find-visible-meeting.query';
+import { MeetingFileStorage } from '../storage/meeting-file-storage';
 import { MeetingFileRepository } from './meeting-file.repository';
 import type { MeetingFileRecord } from './meeting-file.mapper';
 import { MeetingFilesService } from './meeting-files.service';
@@ -44,18 +45,24 @@ describe('MeetingFilesService', () => {
   const execute = jest.fn();
   const findAllOf = jest.fn();
   const findOneOf = jest.fn();
+  const stat = jest.fn();
+  const openRead = jest.fn();
+  const STREAM = { fake: 'stream' };
   let service: MeetingFilesService;
 
   beforeEach(async () => {
     execute.mockReset().mockResolvedValue(MEETING);
     findAllOf.mockReset().mockResolvedValue([RECORD]);
     findOneOf.mockReset().mockResolvedValue(RECORD);
+    stat.mockReset().mockResolvedValue({ size: 10 });
+    openRead.mockReset().mockReturnValue(STREAM);
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         MeetingFilesService,
         { provide: QueryBus, useValue: { execute } },
         { provide: MeetingFileRepository, useValue: { findAllOf, findOneOf } },
+        { provide: MeetingFileStorage, useValue: { stat, openRead } },
       ],
     }).compile();
 
@@ -117,6 +124,71 @@ describe('MeetingFilesService', () => {
         new NotFoundException('Meeting not found'),
       );
       expect(findOneOf).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('openContent', () => {
+    it("opens the object under the record's storage key with the record's size and type", async () => {
+      await expect(service.openContent(USER_ID, MEETING_ID, FILE_ID)).resolves.toEqual({
+        name: 'deck.pdf',
+        contentType: 'application/pdf',
+        size: 10,
+        stream: STREAM,
+      });
+
+      expect(openRead).toHaveBeenCalledWith(RECORD.storageKey);
+    });
+
+    it('serves a failed file — failing to process is not losing it', async () => {
+      findOneOf.mockResolvedValue({ ...RECORD, status: 'failed', failureReason: 'x' });
+
+      await expect(service.openContent(USER_ID, MEETING_ID, FILE_ID)).resolves.toMatchObject({
+        stream: STREAM,
+      });
+    });
+
+    it('answers a 500 with an error body when the object is missing, before any stream opens', async () => {
+      stat.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+
+      await expect(service.openContent(USER_ID, MEETING_ID, FILE_ID)).rejects.toMatchObject({
+        status: 500,
+        message: 'The stored file is missing',
+      });
+      expect(openRead).not.toHaveBeenCalled();
+    });
+
+    it('answers 404 for an invisible meeting without touching storage', async () => {
+      execute.mockResolvedValue(null);
+
+      await expect(service.openContent(USER_ID, MEETING_ID, FILE_ID)).rejects.toThrow(
+        new NotFoundException('Meeting not found'),
+      );
+      expect(stat).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('openThumbnail', () => {
+    it('answers 404 Thumbnail not found when the record has no thumbnail key', async () => {
+      await expect(service.openThumbnail(USER_ID, MEETING_ID, FILE_ID)).rejects.toThrow(
+        new NotFoundException('Thumbnail not found'),
+      );
+      expect(stat).not.toHaveBeenCalled();
+    });
+
+    it('opens the thumbnail as WebP with its own size', async () => {
+      const thumbnailKey = `${RECORD.storageKey}.thumb.webp`;
+      findOneOf.mockResolvedValue({ ...RECORD, thumbnailKey });
+      stat.mockResolvedValue({ size: 3 });
+
+      await expect(service.openThumbnail(USER_ID, MEETING_ID, FILE_ID)).resolves.toEqual({
+        name: 'deck.pdf.thumb.webp',
+        contentType: 'image/webp',
+        size: 3,
+        stream: STREAM,
+      });
+
+      expect(stat).toHaveBeenCalledWith(thumbnailKey);
+      expect(openRead).toHaveBeenCalledWith(thumbnailKey);
     });
   });
 });
