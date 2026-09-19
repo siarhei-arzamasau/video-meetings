@@ -131,11 +131,13 @@ The base URL comes from `NEXT_PUBLIC_API_URL`, defaulting to `http://localhost:3
 (origin _and_ the API's `/api` global prefix). Response shapes are imported as types from
 `@repo/shared`.
 
-**One call in that file is an `XMLHttpRequest`, not `fetch`: `uploadMeetingFile`.** `fetch`
-cannot report upload progress and the PRD asks for a percentage when the browser can give one.
-Everything else about it matches `apiFetch` — token first, `ApiError` with the API's message
-on a non-2xx, `AbortSignal` support — and it is tested with a small fake `XMLHttpRequest`. It
-is the only exception and should stay the only one.
+**Two calls in that file are an `XMLHttpRequest`, not `fetch`: `uploadMeetingFile` and
+`putChunk`.** `fetch` cannot report upload progress and the PRD asks for a percentage when the
+browser can give one; both go through one private `sendWithProgress`, so there is a single
+place where that exception lives. Everything else about them matches `apiFetch` — token first,
+`ApiError` with the API's message on a non-2xx, `AbortSignal` support, a 204 resolving to
+`undefined` — and both are tested with a small fake `XMLHttpRequest`. A third caller belongs in
+`sendWithProgress` too, or in `apiFetch`; nothing else in the app may open an `XMLHttpRequest`.
 
 **Next inlines that value into the client bundle at boot, which is why the root `pnpm dev`
 resolves ports before starting anything** — see

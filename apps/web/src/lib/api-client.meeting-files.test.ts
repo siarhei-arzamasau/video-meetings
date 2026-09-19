@@ -2,11 +2,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ApiError,
+  abortUpload,
+  completeUpload,
+  createUpload,
   deleteMeetingFile,
   downloadMeetingFile,
   fetchThumbnail,
   getMeeting,
+  getUpload,
   listMeetingFiles,
+  putChunk,
   uploadMeetingFile,
 } from './api-client';
 
@@ -154,7 +159,8 @@ describe('downloadMeetingFile and fetchThumbnail', () => {
 
 /**
  * A stand-in for the browser's `XMLHttpRequest`: records what the client did and lets a test
- * fire the events a real one would. Only the members `uploadMeetingFile` touches exist.
+ * fire the events a real one would. Only the members the two XHR callers touch exist —
+ * `uploadMeetingFile` sends a `FormData`, `putChunk` a `Blob`, hence the untyped `sent`.
  */
 class FakeXhr {
   method = '';
@@ -163,7 +169,7 @@ class FakeXhr {
   responseType = '';
   status = 0;
   response: unknown = null;
-  sent: FormData | null = null;
+  sent: unknown = null;
   aborted = false;
   readonly upload = new EventTarget();
   private readonly target = new EventTarget();
@@ -181,8 +187,17 @@ class FakeXhr {
     this.target.addEventListener(type, listener);
   }
 
-  send(body: FormData): void {
+  send(body: unknown): void {
     this.sent = body;
+  }
+
+  /** The body as the multipart form it is for an upload; fails loudly if it is not one. */
+  get sentForm(): FormData {
+    if (!(this.sent instanceof FormData)) {
+      throw new Error(`Expected a FormData body, received ${String(this.sent)}`);
+    }
+
+    return this.sent;
   }
 
   abort(): void {
@@ -224,8 +239,8 @@ describe('uploadMeetingFile', () => {
     expect(xhr.url).toBe('https://api.example.com/api/meetings/m1/files');
     expect(xhr.headers).toEqual({ authorization: 'Bearer a-signed-jwt' });
     expect(xhr.responseType).toBe('json');
-    expect([...(xhr.sent?.keys() ?? [])]).toEqual(['file']);
-    expect(xhr.sent?.get('file')).toBeInstanceOf(File);
+    expect([...xhr.sentForm.keys()]).toEqual(['file']);
+    expect(xhr.sentForm.get('file')).toBeInstanceOf(File);
   });
 
   it('reports progress as a fraction when the browser can compute one', async () => {
@@ -298,5 +313,174 @@ describe('uploadMeetingFile', () => {
     xhr.fail();
 
     await expect(pending).rejects.toBeInstanceOf(TypeError);
+  });
+});
+
+const SESSION = {
+  id: 'up1',
+  meetingId: 'm1',
+  name: 'recording.mp4',
+  size: 20_000_000,
+  chunkSize: 8 * 1024 * 1024,
+  chunkCount: 3,
+  receivedChunks: [0, 1],
+  createdAt: '2026-09-19T10:00:00.000Z',
+  expiresAt: '2026-09-20T10:00:00.000Z',
+};
+
+describe('createUpload', () => {
+  it('POSTs the declared name and size, and answers with the server chunk plan', async () => {
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com/api');
+    const fetchMock = stubFetch(jsonResponse(201, SESSION));
+
+    await expect(
+      createUpload('a-signed-jwt', 'm1', { name: 'recording.mp4', size: 20_000_000 }),
+    ).resolves.toEqual(SESSION);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://api.example.com/api/meetings/m1/files/uploads');
+    expect(init.method).toBe('POST');
+    expect(init.headers).toMatchObject({ authorization: 'Bearer a-signed-jwt' });
+    expect(JSON.parse(String(init.body))).toEqual({ name: 'recording.mp4', size: 20_000_000 });
+  });
+
+  it("surfaces the API's 413 message, which the row shows verbatim", async () => {
+    stubFetch(jsonResponse(413, { statusCode: 413, message: 'Files must be 1 GB or smaller.' }));
+
+    await expect(
+      createUpload('a-signed-jwt', 'm1', { name: 'huge.mp4', size: 1 }),
+    ).rejects.toMatchObject({ status: 413, message: 'Files must be 1 GB or smaller.' });
+  });
+});
+
+describe('getUpload', () => {
+  it('reads the session, which is what a resume asks before sending anything', async () => {
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com/api');
+    const fetchMock = stubFetch(jsonResponse(200, SESSION));
+
+    await expect(getUpload('a-signed-jwt', 'm1', 'up1')).resolves.toEqual(SESSION);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://api.example.com/api/meetings/m1/files/uploads/up1');
+    expect(init.headers).toMatchObject({ authorization: 'Bearer a-signed-jwt' });
+  });
+
+  it('surfaces a 404 for a session that expired, was aborted, or completed', async () => {
+    stubFetch(jsonResponse(404, { statusCode: 404, message: 'Upload not found' }));
+
+    await expect(getUpload('a-signed-jwt', 'm1', 'up1')).rejects.toMatchObject({
+      status: 404,
+      message: 'Upload not found',
+    });
+  });
+});
+
+describe('putChunk', () => {
+  const chunk = new Blob([new Uint8Array(8)]);
+
+  it('PUTs the raw bytes at the chunk index, with bearer credentials', async () => {
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com/api');
+    const xhr = new FakeXhr();
+
+    const pending = putChunk('a-signed-jwt', 'm1', 'up1', 2, chunk, {}, asXhr(xhr));
+    xhr.respond(204, null);
+
+    await expect(pending).resolves.toBeUndefined();
+    expect(xhr.method).toBe('PUT');
+    expect(xhr.url).toBe('https://api.example.com/api/meetings/m1/files/uploads/up1/chunks/2');
+    expect(xhr.headers).toEqual({
+      authorization: 'Bearer a-signed-jwt',
+      'content-type': 'application/octet-stream',
+    });
+    expect(xhr.sent).toBe(chunk);
+  });
+
+  it('reports progress within the chunk', async () => {
+    const xhr = new FakeXhr();
+    const onProgress = vi.fn();
+
+    const pending = putChunk('a-signed-jwt', 'm1', 'up1', 0, chunk, { onProgress }, asXhr(xhr));
+    xhr.progress(4, 8);
+    xhr.respond(204, null);
+    await pending;
+
+    expect(onProgress.mock.calls).toEqual([[0.5]]);
+  });
+
+  it("rejects with the API's message on a 400, so a bad chunk says why", async () => {
+    const xhr = new FakeXhr();
+
+    const pending = putChunk('a-signed-jwt', 'm1', 'up1', 0, chunk, {}, asXhr(xhr));
+    xhr.respond(400, { statusCode: 400, message: 'Chunk length does not match' });
+
+    await expect(pending).rejects.toMatchObject({
+      status: 400,
+      message: 'Chunk length does not match',
+    });
+  });
+
+  it('rejects with an AbortError when the signal fires, and aborts the request', async () => {
+    const xhr = new FakeXhr();
+    const controller = new AbortController();
+
+    const pending = putChunk(
+      'a-signed-jwt',
+      'm1',
+      'up1',
+      0,
+      chunk,
+      { signal: controller.signal },
+      asXhr(xhr),
+    );
+    controller.abort();
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    expect(xhr.aborted).toBe(true);
+  });
+
+  it('rejects a network failure as a TypeError, not an ApiError', async () => {
+    const xhr = new FakeXhr();
+
+    const pending = putChunk('a-signed-jwt', 'm1', 'up1', 0, chunk, {}, asXhr(xhr));
+    xhr.fail();
+
+    await expect(pending).rejects.toBeInstanceOf(TypeError);
+    await expect(pending).rejects.not.toBeInstanceOf(ApiError);
+  });
+});
+
+describe('completeUpload', () => {
+  it('POSTs to complete and answers with the file the session became', async () => {
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com/api');
+    const fetchMock = stubFetch(jsonResponse(201, FILE));
+
+    await expect(completeUpload('a-signed-jwt', 'm1', 'up1')).resolves.toEqual(FILE);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://api.example.com/api/meetings/m1/files/uploads/up1/complete');
+    expect(init.method).toBe('POST');
+    expect(init.headers).toMatchObject({ authorization: 'Bearer a-signed-jwt' });
+  });
+
+  it('surfaces a 409 for a session whose chunks are not all there', async () => {
+    stubFetch(jsonResponse(409, { statusCode: 409, message: 'The upload is incomplete' }));
+
+    await expect(completeUpload('a-signed-jwt', 'm1', 'up1')).rejects.toMatchObject({
+      status: 409,
+      message: 'The upload is incomplete',
+    });
+  });
+});
+
+describe('abortUpload', () => {
+  it('sends DELETE and resolves to undefined on the 204', async () => {
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com/api');
+    const fetchMock = stubFetch(new Response(null, { status: 204 }));
+
+    await expect(abortUpload('a-signed-jwt', 'm1', 'up1')).resolves.toBeUndefined();
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://api.example.com/api/meetings/m1/files/uploads/up1');
+    expect(init.method).toBe('DELETE');
   });
 });

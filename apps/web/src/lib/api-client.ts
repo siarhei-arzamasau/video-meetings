@@ -5,6 +5,7 @@ import type {
   HealthResponse,
   Meeting,
   MeetingFile,
+  MeetingFileUpload,
   User,
 } from '@repo/shared';
 
@@ -252,12 +253,43 @@ export function uploadMeetingFile(
   token: string,
   meetingId: string,
   file: File,
-  { signal, onProgress }: UploadOptions = {},
+  options: UploadOptions = {},
   createXhr: XhrFactory = () => new XMLHttpRequest(),
 ): Promise<MeetingFile> {
-  const path = `/meetings/${meetingId}/files`;
+  const body = new FormData();
+  body.append('file', file, file.name);
 
-  return new Promise<MeetingFile>((resolve, reject) => {
+  return sendWithProgress<MeetingFile>(
+    { method: 'POST', path: `/meetings/${meetingId}/files`, token, body },
+    options,
+    createXhr,
+  );
+}
+
+/**
+ * The `XMLHttpRequest` half of this module, shared by the single-request upload and by each
+ * chunk of a chunked one. Same contract as `apiFetch` — the API's own message in an
+ * `ApiError`, `buildApiUrl` for the URL, the token as a bearer header — plus the two things
+ * `fetch` cannot do: report upload progress and be aborted mid-body.
+ */
+function sendWithProgress<T>(
+  {
+    method,
+    path,
+    token,
+    body,
+    contentType,
+  }: {
+    method: string;
+    path: string;
+    token: string;
+    body: XMLHttpRequestBodyInit;
+    contentType?: string;
+  },
+  { signal, onProgress }: UploadOptions,
+  createXhr: XhrFactory,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
     if (signal?.aborted === true) {
       reject(new DOMException('The upload was aborted', 'AbortError'));
 
@@ -269,8 +301,13 @@ export function uploadMeetingFile(
 
     signal?.addEventListener('abort', abort, { once: true });
 
-    xhr.open('POST', buildApiUrl(path));
+    xhr.open(method, buildApiUrl(path));
     xhr.setRequestHeader('authorization', `Bearer ${token}`);
+
+    if (contentType !== undefined) {
+      xhr.setRequestHeader('content-type', contentType);
+    }
+
     xhr.responseType = 'json';
 
     xhr.upload.addEventListener('progress', (event) => {
@@ -283,7 +320,9 @@ export function uploadMeetingFile(
       signal?.removeEventListener('abort', abort);
 
       if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(xhr.response as MeetingFile);
+        // A 204 carries no body, and `apiFetch` resolves those to `undefined` too — a chunk's
+        // caller must not have to know that a real XHR reports the absence as `null`.
+        resolve((xhr.status === 204 ? undefined : xhr.response) as T);
       } else {
         reject(new ApiError(xhr.status, messageOf(xhr.response, xhr.status, path)));
       }
@@ -299,8 +338,96 @@ export function uploadMeetingFile(
       reject(new DOMException('The upload was aborted', 'AbortError'));
     });
 
-    const body = new FormData();
-    body.append('file', file, file.name);
     xhr.send(body);
+  });
+}
+
+/** The chunked upload's five calls, in the order a client makes them. */
+const uploadsPath = (meetingId: string): string => `/meetings/${meetingId}/files/uploads`;
+const uploadPath = (meetingId: string, uploadId: string): string =>
+  `${uploadsPath(meetingId)}/${uploadId}`;
+
+/**
+ * Opens a session for a file too large for one request. The server answers with the chunk
+ * plan — size and count — which the client obeys rather than chooses.
+ *
+ * A 413 means the file is over the chunked cap, a 409 that the meeting is full.
+ */
+export function createUpload(
+  token: string,
+  meetingId: string,
+  file: Pick<File, 'name' | 'size'>,
+): Promise<MeetingFileUpload> {
+  return apiFetch<MeetingFileUpload>(uploadsPath(meetingId), {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ name: file.name, size: file.size }),
+  });
+}
+
+/**
+ * The session as the server sees it, above all its `receivedChunks`. This is what makes a
+ * resume cheap: the client sends only what is missing, and never asks the user to wait for
+ * bytes the server already has. A 404 means the session expired, was aborted, or completed.
+ */
+export function getUpload(
+  token: string,
+  meetingId: string,
+  uploadId: string,
+): Promise<MeetingFileUpload> {
+  return apiFetch<MeetingFileUpload>(uploadPath(meetingId, uploadId), {
+    headers: authHeaders(token),
+  });
+}
+
+/**
+ * One chunk, as raw bytes. `XMLHttpRequest` for the same reason `uploadMeetingFile` is one:
+ * per-chunk progress is what makes a percentage move on a long upload, and an `AbortSignal`
+ * is what makes Cancel immediate rather than "after this chunk".
+ *
+ * The API answers 204, so this resolves to nothing.
+ */
+export function putChunk(
+  token: string,
+  meetingId: string,
+  uploadId: string,
+  index: number,
+  chunk: Blob,
+  options: UploadOptions = {},
+  createXhr: XhrFactory = () => new XMLHttpRequest(),
+): Promise<void> {
+  return sendWithProgress<void>(
+    {
+      method: 'PUT',
+      path: `${uploadPath(meetingId, uploadId)}/chunks/${String(index)}`,
+      token,
+      body: chunk,
+      contentType: 'application/octet-stream',
+    },
+    options,
+    createXhr,
+  );
+}
+
+/**
+ * Assembles the session into a file. Safe to retry: a rejection here leaves every chunk on
+ * the server, so a 415 or a dropped connection costs this call again, not the upload.
+ */
+export function completeUpload(
+  token: string,
+  meetingId: string,
+  uploadId: string,
+): Promise<MeetingFile> {
+  return apiFetch<MeetingFile>(`${uploadPath(meetingId, uploadId)}/complete`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+}
+
+/** Gives up on a session. A 404 means it was already gone — which is the same outcome. */
+export function abortUpload(token: string, meetingId: string, uploadId: string): Promise<void> {
+  return apiFetch<void>(uploadPath(meetingId, uploadId), {
+    method: 'DELETE',
+    headers: authHeaders(token),
   });
 }
