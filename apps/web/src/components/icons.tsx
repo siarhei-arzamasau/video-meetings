@@ -89,3 +89,11 @@ export function SignOutIcon() {
     </svg>
   );
 }
+
+export function ArrowLeftIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
+      <path d="M19 12H5M11 6l-6 6 6 6" />
+    </svg>
+  );
+}
