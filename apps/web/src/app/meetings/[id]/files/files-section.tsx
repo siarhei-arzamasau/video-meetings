@@ -36,13 +36,18 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
   const [deleting, setDeleting] = useState<MeetingFile | null>(null);
   const [dragDepth, setDragDepth] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+  // A counter, not `crypto.randomUUID()`: that exists only in secure contexts, and a dev
+  // server opened over plain HTTP from a phone is not one. The id only has to be unique
+  // within this section's lifetime.
+  const nextLocalId = useRef(0);
 
   function enqueue(files: Iterable<File>) {
     const queued = [...files].map((file): QueuedUpload => {
       const error = validateFileBeforeUpload(file);
+      nextLocalId.current += 1;
 
       return {
-        localId: crypto.randomUUID(),
+        localId: String(nextLocalId.current),
         file,
         status: error === null ? 'queued' : 'failed',
         progress: null,
@@ -107,9 +112,11 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
 
         patch(next.localId, { status: 'failed', error: describeFailure(error) });
       });
-    // `patch`, `add`, and `dismiss` are stable state updaters wrapped in plain functions.
+    // `patch` and `dismiss` are stable state updaters wrapped in plain functions. `add` is in
+    // the list because it changes with the list's readiness, and the effect bails out early
+    // while an upload is in flight, so re-running it is free.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uploads, token, meeting.id]);
+  }, [uploads, token, meeting.id, add]);
 
   function onDragEnter(event: DragEvent<HTMLDivElement>) {
     if (hasFiles(event)) {
@@ -144,6 +151,9 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
 
   const files = list.state === 'ready' ? sortNewestFirst(list.files) : [];
   const isEmpty = list.state === 'ready' && files.length === 0 && uploads.length === 0;
+  // The queue is shown whenever it has rows, even while the list is loading or failed to load:
+  // an upload the user just started must show its progress, its Cancel, or its rejection.
+  const showRows = uploads.length > 0 || (list.state === 'ready' && !isEmpty);
   const isDragging = dragDepth > 0;
 
   return (
@@ -217,7 +227,7 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
         </EmptyState>
       )}
 
-      {list.state === 'ready' && !isEmpty && (
+      {showRows && (
         <ul className="mt-6 flex flex-col" aria-label="Files">
           {uploads.map((upload, index) => (
             <li key={upload.localId} className="flex flex-col">

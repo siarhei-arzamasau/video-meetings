@@ -248,7 +248,12 @@ the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-p
   is what makes the 50-file cap safe under concurrent uploads; a read-then-write would let two
   requests both pass the count. If the insert fails the object is removed, and the temp file
   is removed on every exit that did not rename it. The record never points at bytes that are
-  not there, and bytes never outlive a failed record.
+  not there, and bytes never outlive a failed record. **The interceptor resolves the meeting
+  before it reads the body.** Nest runs interceptors before pipes and the handler, so without
+  that check `MeetingFileUploadInterceptor` would write up to 100 MB to the temp directory for
+  a non-UUID id or a meeting the caller cannot see, then reject it; the 400 and the 404 go out
+  first instead. The handler checks visibility again — a command has to be safe whatever
+  dispatched it — and that second indexed read is the cost of not writing 100 MB.
 - **The type is sniffed from the bytes, never the client's header.** `file-type` is pinned to
   **16.5.4** because 17+ is ESM-only and this is a CJS build; do not "upgrade" it. Text has no
   magic bytes, so an undetected file that decodes as UTF-8 with no NUL is typed by extension —
@@ -264,14 +269,22 @@ the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-p
   `status = processing`, `leased_until = now() + lease`, `attempts + 1`, in one statement. Two
   replicas cannot claim the same row, and a worker that dies leaves a row whose lease expires
   and is reclaimed. Prisma's query builder cannot express `SKIP LOCKED`. Every other status
-  change goes through `MeetingFileRepository.transition(id, from, to, patch)` — a conditional
-  `updateMany` on the expected `from` — and a caller that gets `false` back has lost a race
-  (a delete mid-run, a re-lease) and discards its result rather than overwriting.
+  change goes through `MeetingFileRepository.transition(id, from, to, patch, lease?)` — a
+  conditional `updateMany` on the expected `from`, and for the worker also on the
+  `leased_until` its claim was given, because a reclaim after expiry keeps the status at
+  `processing` and status alone cannot tell the current holder from the one it replaced. A
+  caller that gets `false` back has lost a race (a delete mid-run, an expired lease another
+  worker took) and discards its result rather than overwriting — including removing the
+  thumbnail it wrote, which nothing else will ever find.
 - **`purgedAt` is the purge marker the PRD's schema lacked.** Delete is soft; the worker
   claims `deleted` rows that are not yet purged, removes the object and the thumbnail, and sets
   `purged_at`. Without the column, "deleted rows still holding bytes" would be unknowable and
-  a crash mid-`unlink` unrecoverable. `attempts` counts claims, not failures; a row claimed a
-  fourth time is failed unrun.
+  a crash mid-`unlink` unrecoverable. The thumbnail is removed by the key `thumbnailKeyOf`
+  derives, not the one on the row: a file deleted while processing is purged before the row
+  has learned its key, and the thumbnail written afterwards would otherwise be orphaned.
+  `attempts` counts claims, not failures; a row claimed a fourth time is failed unrun, and a
+  purge claimed a fourth time is marked purged unrun with its keys at error level in the log,
+  so an object the process cannot unlink is not reclaimed every lease for ever.
 - **The worker is in-process, behind `MEETING_FILES_WORKER_ENABLED` (default on).** `pnpm dev`
   runs one API process and a second entry point would be a second thing to start everywhere,
   for two steps that take milliseconds. Every replica polls when it is on; switch it off per

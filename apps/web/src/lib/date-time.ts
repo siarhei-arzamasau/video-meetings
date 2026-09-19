@@ -78,5 +78,6 @@ export function formatRelativeTime(
     }
   }
 
-  return format.format(0, 'second').replace(/^in 0 seconds$|^0 seconds ago$/, 'just now');
+  // `numeric: 'auto'` renders zero as the locale's word for the present ("now" in English).
+  return format.format(0, 'second');
 }

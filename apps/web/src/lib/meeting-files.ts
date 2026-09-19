@@ -3,13 +3,21 @@ import {
   MAX_MEETING_FILE_NAME_LENGTH,
   MAX_MEETING_FILE_SIZE_BYTES,
   MEETING_FILE_ACCEPT,
+  MEETING_FILE_EMPTY_MESSAGE,
+  MEETING_FILE_NAME_MESSAGE,
+  MEETING_FILE_PROCESSING_FAILED_MESSAGE,
+  MEETING_FILE_SIZE_MESSAGE,
+  MEETING_FILE_TYPE_MESSAGE,
 } from '@repo/shared';
 
-/** The PRD's client-side copy, verbatim. The server's message wins when it disagrees. */
-export const SIZE_MESSAGE = 'Files must be 100 MB or smaller.';
-export const TYPE_MESSAGE = 'That file type is not supported.';
-export const EMPTY_MESSAGE = 'The file is empty';
-export const NAME_MESSAGE = 'The file name must be 1–255 characters and contain no path separators';
+/**
+ * The upload copy, from the same constants the API sends: a check that runs here before the
+ * round trip reads exactly like the server's rejection of the same file.
+ */
+export const SIZE_MESSAGE = MEETING_FILE_SIZE_MESSAGE;
+export const TYPE_MESSAGE = MEETING_FILE_TYPE_MESSAGE;
+export const EMPTY_MESSAGE = MEETING_FILE_EMPTY_MESSAGE;
+export const NAME_MESSAGE = MEETING_FILE_NAME_MESSAGE;
 
 const UNITS = ['B', 'KB', 'MB', 'GB'] as const;
 
@@ -56,7 +64,7 @@ export function statusPresentation(
     case 'failed':
       return {
         kind: 'failed',
-        reason: file.failureReason ?? 'Processing failed. You can still download the file.',
+        reason: file.failureReason ?? MEETING_FILE_PROCESSING_FAILED_MESSAGE,
       };
     case 'ready':
     case 'deleted':

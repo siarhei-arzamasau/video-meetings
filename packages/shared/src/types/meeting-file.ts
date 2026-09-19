@@ -38,6 +38,20 @@ export const MAX_MEETING_FILES = 50;
 export const MAX_MEETING_FILE_NAME_LENGTH = 255;
 
 /**
+ * The PRD's upload copy, stated once. The API sends these as its error messages and the web
+ * app shows the same ones for the checks it runs before a round trip, so a rejection reads
+ * the same whichever side made it. `MEETING_FILE_PROCESSING_FAILED_MESSAGE` is the worker's
+ * generic `failureReason` and the web app's fallback for a `failed` row that carries none.
+ */
+export const MEETING_FILE_SIZE_MESSAGE = 'Files must be 100 MB or smaller.';
+export const MEETING_FILE_TYPE_MESSAGE = 'That file type is not supported.';
+export const MEETING_FILE_EMPTY_MESSAGE = 'The file is empty';
+export const MEETING_FILE_NAME_MESSAGE =
+  'The file name must be 1–255 characters and contain no path separators';
+export const MEETING_FILE_PROCESSING_FAILED_MESSAGE =
+  'Processing failed. You can still download the file.';
+
+/**
  * Media types the server stores, and the extensions the picker offers for each. One table, so
  * the `accept` attribute and the server's check are derived from the same list and cannot
  * disagree. Sniffing is by content on the server: an extension here never decides a type, it

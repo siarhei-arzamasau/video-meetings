@@ -10,6 +10,7 @@ import type { ProcessingStep } from './step';
 
 const MEETING_ID = '44444444-4444-4444-8444-444444444444';
 const FILE_ID = '55555555-5555-4555-8555-555555555555';
+const LEASE = new Date(Date.now() + 60_000);
 
 const CLAIMED: ClaimedFile = {
   id: FILE_ID,
@@ -25,7 +26,7 @@ const CLAIMED: ClaimedFile = {
   previousStatus: 'uploaded',
   failureReason: null,
   attempts: 1,
-  leasedUntil: new Date(Date.now() + 60_000),
+  leasedUntil: LEASE,
   createdAt: new Date(),
   processedAt: null,
   deletedAt: null,
@@ -105,12 +106,20 @@ describe('MeetingFileWorker', () => {
 
     expect(claimNext).toHaveBeenCalledWith(30);
     expect(first.mock.invocationCallOrder[0]).toBeLessThan(second.mock.invocationCallOrder[0] ?? 0);
-    expect(transition).toHaveBeenCalledWith(FILE_ID, 'processing', 'ready', {
-      checksum: 'abc',
-      thumbnailKey: 'thumb',
-      processedAt: expect.any(Date),
-      leasedUntil: null,
-    });
+    expect(transition).toHaveBeenCalledWith(
+      FILE_ID,
+      'processing',
+      'ready',
+      {
+        checksum: 'abc',
+        thumbnailKey: 'thumb',
+        processedAt: expect.any(Date),
+        leasedUntil: null,
+      },
+      // The lease the claim was given: a worker whose lease expired and was reclaimed must
+      // not be able to record its result over the current holder's.
+      LEASE,
+    );
   });
 
   it('drains until a claim comes back empty and counts the rows it handled', async () => {
@@ -129,11 +138,17 @@ describe('MeetingFileWorker', () => {
 
     await worker.drain();
 
-    expect(transition).toHaveBeenCalledWith(FILE_ID, 'processing', 'failed', {
-      checksum: 'abc',
-      failureReason: 'The image could not be read',
-      leasedUntil: null,
-    });
+    expect(transition).toHaveBeenCalledWith(
+      FILE_ID,
+      'processing',
+      'failed',
+      {
+        checksum: 'abc',
+        failureReason: 'The image could not be read',
+        leasedUntil: null,
+      },
+      LEASE,
+    );
   });
 
   it('stores the generic reason for any other throw, never the error text', async () => {
@@ -141,10 +156,16 @@ describe('MeetingFileWorker', () => {
 
     await worker.drain();
 
-    expect(transition).toHaveBeenCalledWith(FILE_ID, 'processing', 'failed', {
-      failureReason: 'Processing failed. You can still download the file.',
-      leasedUntil: null,
-    });
+    expect(transition).toHaveBeenCalledWith(
+      FILE_ID,
+      'processing',
+      'failed',
+      {
+        failureReason: 'Processing failed. You can still download the file.',
+        leasedUntil: null,
+      },
+      LEASE,
+    );
     expect(second).not.toHaveBeenCalled();
   });
 
@@ -157,39 +178,76 @@ describe('MeetingFileWorker', () => {
     await worker.drain();
 
     expect(first).not.toHaveBeenCalled();
-    expect(transition).toHaveBeenCalledWith(FILE_ID, 'processing', 'failed', {
-      failureReason: 'Processing failed after repeated attempts',
-      leasedUntil: null,
-    });
+    expect(transition).toHaveBeenCalledWith(
+      FILE_ID,
+      'processing',
+      'failed',
+      {
+        failureReason: 'Processing failed after repeated attempts',
+        leasedUntil: null,
+      },
+      LEASE,
+    );
   });
 
-  it('discards the patch when the ready transition changes no row', async () => {
+  it('discards the patch when the ready transition changes no row, removing the thumbnail it wrote', async () => {
     transition.mockResolvedValue(false);
 
     await expect(worker.drain()).resolves.toBe(1);
 
-    // One attempt, no retry, no second write: the row was deleted or re-leased mid-run.
+    // One attempt, no retry, no second write: the row was deleted or reclaimed mid-run. The
+    // thumbnail the preview step wrote is removed, because the purge may already have run
+    // before it existed and nothing else will ever see the key.
     expect(transition).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledWith('thumb');
   });
 
-  it('purges a deleted row: removes both objects and marks it purged, with no status change', async () => {
+  it('purges a deleted row: removes the object and the derived thumbnail key and marks it purged, with no status change', async () => {
+    claimNext
+      .mockReset()
+      .mockResolvedValueOnce({ ...CLAIMED, status: 'deleted', previousStatus: 'deleted' })
+      .mockResolvedValue(null);
+
+    await expect(worker.drain()).resolves.toBe(1);
+
+    expect(remove).toHaveBeenCalledWith(CLAIMED.storageKey);
+    // Derived from the storage key, not read from the row: a file deleted mid-processing is
+    // purged before the row has a `thumbnailKey`, and the thumbnail written afterwards would
+    // otherwise be orphaned.
+    expect(remove).toHaveBeenCalledWith(`${CLAIMED.storageKey}.thumb.webp`);
+    expect(markPurged).toHaveBeenCalledWith(FILE_ID);
+    expect(transition).not.toHaveBeenCalled();
+    expect(first).not.toHaveBeenCalled();
+  });
+
+  it('gives up on a purge claimed more than MAX_ATTEMPTS times: marks it purged without touching storage', async () => {
     claimNext
       .mockReset()
       .mockResolvedValueOnce({
         ...CLAIMED,
         status: 'deleted',
         previousStatus: 'deleted',
-        thumbnailKey: 'thumb-key',
+        attempts: 4,
       })
       .mockResolvedValue(null);
 
     await expect(worker.drain()).resolves.toBe(1);
 
-    expect(remove).toHaveBeenCalledWith(CLAIMED.storageKey);
-    expect(remove).toHaveBeenCalledWith('thumb-key');
+    // Without this the row is reclaimed every lease for ever when `remove` keeps throwing.
+    expect(remove).not.toHaveBeenCalled();
     expect(markPurged).toHaveBeenCalledWith(FILE_ID);
-    expect(transition).not.toHaveBeenCalled();
-    expect(first).not.toHaveBeenCalled();
+  });
+
+  it('leaves a purge that throws claimable for the next lease', async () => {
+    claimNext
+      .mockReset()
+      .mockResolvedValueOnce({ ...CLAIMED, status: 'deleted', previousStatus: 'deleted' })
+      .mockResolvedValue(null);
+    remove.mockRejectedValue(new Error('EACCES'));
+
+    await expect(worker.drain()).rejects.toThrow('EACCES');
+
+    expect(markPurged).not.toHaveBeenCalled();
   });
 
   it('does not start the loop when disabled', () => {
@@ -233,7 +291,13 @@ describe('MeetingFileWorker', () => {
 
     expect(shutDown).toBe(true);
     // The claimed row was still handled to completion.
-    expect(transition).toHaveBeenCalledWith(FILE_ID, 'processing', 'ready', expect.anything());
+    expect(transition).toHaveBeenCalledWith(
+      FILE_ID,
+      'processing',
+      'ready',
+      expect.anything(),
+      LEASE,
+    );
     // And nothing was claimed after the stop.
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(claimNext).toHaveBeenCalledTimes(1);

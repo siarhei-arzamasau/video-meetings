@@ -94,13 +94,25 @@ export function useMeetingFiles(
     };
   }, [list, refresh]);
 
-  const add = useCallback((file: MeetingFile): void => {
-    setList((current) =>
-      current.state === 'ready'
-        ? { state: 'ready', files: [file, ...current.files.filter(({ id }) => id !== file.id)] }
-        : current,
-    );
-  }, []);
+  // While the list is loading or failed there is nothing to prepend to, and dropping the file
+  // would make a successful upload vanish until the next refetch — so that case refetches now.
+  const isReady = list.state === 'ready';
+  const add = useCallback(
+    (file: MeetingFile): void => {
+      if (!isReady) {
+        refresh();
+
+        return;
+      }
+
+      setList((current) =>
+        current.state === 'ready'
+          ? { state: 'ready', files: [file, ...current.files.filter(({ id }) => id !== file.id)] }
+          : current,
+      );
+    },
+    [isReady, refresh],
+  );
 
   const remove = useCallback((fileId: string): void => {
     setList((current) =>

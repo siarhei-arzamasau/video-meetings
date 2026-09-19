@@ -9,7 +9,12 @@ import {
 } from '@nestjs/common';
 import { CommandHandler, ICommandHandler, QueryBus } from '@nestjs/cqrs';
 import type { MeetingFile } from '@repo/shared';
-import { MAX_MEETING_FILES } from '@repo/shared';
+import {
+  MAX_MEETING_FILES,
+  MEETING_FILE_EMPTY_MESSAGE,
+  MEETING_FILE_NAME_MESSAGE,
+  MEETING_FILE_TYPE_MESSAGE,
+} from '@repo/shared';
 
 import { ContentSniffer } from '../../services/content-sniffer';
 import { MeetingFileRepository } from '../../services/meeting-file.repository';
@@ -18,10 +23,10 @@ import { requireVisibleMeeting } from '../../services/visible-meeting';
 import { MeetingFileStorage } from '../../storage/meeting-file-storage';
 import { UploadMeetingFileCommand } from '../upload-meeting-file.command';
 
-export const EMPTY_FILE_MESSAGE = 'The file is empty';
-export const BAD_NAME_MESSAGE =
-  'The file name must be 1–255 characters and contain no path separators';
-export const TYPE_MESSAGE = 'That file type is not supported.';
+// The copy lives in @repo/shared so the web app's pre-flight checks show the same words.
+export const EMPTY_FILE_MESSAGE = MEETING_FILE_EMPTY_MESSAGE;
+export const BAD_NAME_MESSAGE = MEETING_FILE_NAME_MESSAGE;
+export const TYPE_MESSAGE = MEETING_FILE_TYPE_MESSAGE;
 export const COUNT_MESSAGE = `This meeting already has ${String(MAX_MEETING_FILES)} files.`;
 
 /**

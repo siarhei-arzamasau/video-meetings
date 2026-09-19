@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { MeetingFileStatus } from '@repo/shared';
 
-import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { assertTransition } from './meeting-file-status';
 import type { MeetingFileRecord } from './meeting-file.mapper';
@@ -93,17 +92,23 @@ export class MeetingFileRepository {
    * The optimistic guard every status change goes through: a conditional update on the
    * status the caller believes the row has. Returns whether one row changed — `false` means
    * another writer (a worker, a delete) moved it first, and the caller decides what that means.
+   *
+   * A worker also passes the `lease` its claim was given. A re-claim after lease expiry keeps
+   * the status at `processing`, so status alone cannot tell the current lease holder from the
+   * one it replaced; matching `leased_until` too is what makes a stale worker's result the
+   * one that is discarded, rather than whichever finishes first.
    */
   async transition(
     id: string,
     from: MeetingFileStatus,
     to: MeetingFileStatus,
     patch: TransitionPatch = {},
+    lease?: Date | null,
   ): Promise<boolean> {
     assertTransition(from, to);
 
     const { count } = await this.prisma.meetingFile.updateMany({
-      where: { id, status: from },
+      where: { id, status: from, ...(lease === undefined ? {} : { leasedUntil: lease }) },
       data: { status: to, ...patch },
     });
 
@@ -176,5 +181,3 @@ export class MeetingFileRepository {
     return count === 1;
   }
 }
-
-export type MeetingFileWhere = Prisma.MeetingFileWhereInput;

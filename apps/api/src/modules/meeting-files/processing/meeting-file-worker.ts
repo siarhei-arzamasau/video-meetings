@@ -7,7 +7,9 @@ import {
   Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { MEETING_FILE_PROCESSING_FAILED_MESSAGE } from '@repo/shared';
 
+import { thumbnailKeyOf } from '../services/meeting-file.mapper';
 import { MeetingFileRepository } from '../services/meeting-file.repository';
 import type { ClaimedFile } from '../services/meeting-file.repository';
 import { MeetingFileStorage } from '../storage/meeting-file-storage';
@@ -21,17 +23,23 @@ export const MEETING_FILE_WORKER = 'MEETING_FILE_WORKER';
 /** Injection token for the step list, so the unit spec can substitute its own. */
 export const PIPELINE_STEPS = 'MEETING_FILE_PIPELINE_STEPS';
 
-export const GENERIC_FAILURE = 'Processing failed. You can still download the file.';
+/** Shared with the web app, which shows it for a `failed` row that carries no reason. */
+export const GENERIC_FAILURE = MEETING_FILE_PROCESSING_FAILED_MESSAGE;
 export const REPEATED_FAILURE = 'Processing failed after repeated attempts';
 
-/** Claims, not failures. A row claimed for the (MAX_ATTEMPTS + 1)th time is failed unrun. */
+/**
+ * Claims, not failures. A row claimed for the (MAX_ATTEMPTS + 1)th time is failed unrun; a
+ * deleted row claimed that often is marked purged unrun, with the keys in the log, so neither
+ * kind can be reclaimed forever.
+ */
 export const MAX_ATTEMPTS = 3;
 
 /**
  * The in-process polling worker. One claim per tick; a claimed row is either purged (it was
  * deleted) or run through the pipeline and moved to `ready` or `failed` with a conditional
- * transition, so a row that was deleted mid-run — or whose lease another worker took — is
- * left alone and the patch discarded.
+ * transition on both the status and the lease this claim was given, so a row that was deleted
+ * mid-run — or whose lease expired and went to another worker — is left alone, the patch
+ * discarded, and the thumbnail it may have written removed.
  *
  * Behind `MEETING_FILES_WORKER_ENABLED`: `pnpm dev` runs one API process, and a second entry
  * point would be a second thing to start everywhere for a pipeline whose steps take
@@ -135,13 +143,15 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
       return;
     }
 
+    const lease = claimed.leasedUntil;
+
     this.logTransition(claimed, claimed.previousStatus, 'processing', startedAt);
 
     if (claimed.attempts > MAX_ATTEMPTS) {
       this.logger.error(
         `File ${claimed.id} claimed ${String(claimed.attempts)} times; failing it unrun`,
       );
-      await this.fail(claimed, REPEATED_FAILURE, startedAt);
+      await this.fail(claimed, lease, REPEATED_FAILURE, startedAt);
 
       return;
     }
@@ -160,21 +170,34 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
       );
       // Whatever the earlier steps produced is kept: a checksum from verify is still true of
       // the bytes even when preview could not read them.
-      await this.fail(claimed, reason, startedAt, patchBefore(error));
+      await this.fail(claimed, lease, reason, startedAt, patchBefore(error));
 
       return;
     }
 
-    const changed = await this.files.transition(claimed.id, 'processing', 'ready', {
-      ...patch,
-      processedAt: new Date(),
-      leasedUntil: null,
-    });
+    const changed = await this.files.transition(
+      claimed.id,
+      'processing',
+      'ready',
+      { ...patch, processedAt: new Date(), leasedUntil: null },
+      lease,
+    );
 
     if (changed) {
       this.logTransition(claimed, 'processing', 'ready', startedAt);
     } else {
       this.logLost(claimed, 'ready');
+      await this.discard(patch);
+    }
+  }
+
+  /**
+   * A result nobody will record must not leave bytes behind: a thumbnail written for a row
+   * that was deleted mid-run would otherwise outlive the purge, which ran before it existed.
+   */
+  private async discard(patch: StepPatch): Promise<void> {
+    if (patch.thumbnailKey !== undefined) {
+      await this.storage.remove(patch.thumbnailKey);
     }
   }
 
@@ -198,30 +221,49 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
 
   private async fail(
     claimed: ClaimedFile,
+    lease: Date | null,
     failureReason: string,
     startedAt: number,
     patch: StepPatch = {},
   ): Promise<void> {
-    const changed = await this.files.transition(claimed.id, 'processing', 'failed', {
-      ...patch,
-      failureReason,
-      leasedUntil: null,
-    });
+    const changed = await this.files.transition(
+      claimed.id,
+      'processing',
+      'failed',
+      { ...patch, failureReason, leasedUntil: null },
+      lease,
+    );
 
     if (changed) {
       this.logTransition(claimed, 'processing', 'failed', startedAt);
     } else {
       this.logLost(claimed, 'failed');
+      await this.discard(patch);
     }
   }
 
+  /**
+   * Removes the object and the thumbnail — by the key the preview step derives, not only the
+   * one on the row: a file deleted while it was processing can be purged before the step has
+   * written the thumbnail, and the row never learns the key. `remove` is idempotent, so a
+   * thumbnail that never existed costs one `rm -f`.
+   *
+   * A purge that keeps throwing (an object the process cannot unlink) is given up on after
+   * MAX_ATTEMPTS claims like a processing row is, else the row is reclaimed every lease for
+   * ever: it is marked purged and the keys logged at error level for an operator.
+   */
   private async purge(claimed: ClaimedFile, startedAt: number): Promise<void> {
-    await this.storage.remove(claimed.storageKey);
+    if (claimed.attempts > MAX_ATTEMPTS) {
+      this.logger.error(
+        `File ${claimed.id} claimed ${String(claimed.attempts)} times for purge; marking it purged with objects possibly left at ${claimed.storageKey} and ${thumbnailKeyOf(claimed.storageKey)}`,
+      );
+      await this.files.markPurged(claimed.id);
 
-    if (claimed.thumbnailKey !== null) {
-      await this.storage.remove(claimed.thumbnailKey);
+      return;
     }
 
+    await this.storage.remove(claimed.storageKey);
+    await this.storage.remove(thumbnailKeyOf(claimed.storageKey));
     await this.files.markPurged(claimed.id);
     this.logger.log(
       `File ${claimed.id} of meeting ${claimed.meetingId}: purged in ${String(Date.now() - startedAt)}ms`,
@@ -236,7 +278,7 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
 
   private logLost(claimed: ClaimedFile, to: string): void {
     this.logger.warn(
-      `File ${claimed.id} of meeting ${claimed.meetingId}: not moved to ${to} — the row was deleted or re-leased mid-run; result discarded`,
+      `File ${claimed.id} of meeting ${claimed.meetingId}: not moved to ${to} — the row was deleted or its lease expired and was reclaimed mid-run; result discarded`,
     );
   }
 }

@@ -103,6 +103,16 @@ aliases in sync if either changes.
   the thumbnail with the bearer header, turns the blob into `URL.createObjectURL`, and revokes
   it on unmount. Downloads work the same way: a blob, an object URL, a programmatic
   `<a download>`. Both collapse into plain URLs once the token is an `HttpOnly` cookie.
+- **The upload queue is visible whenever it has rows, and its copy is the API's.** Add file and
+  the drop target work while the file list is still loading or failed to load, so
+  `FilesSection` renders the queue on `uploads.length`, not on the list being `ready`; hiding
+  it there would swallow a rejection message and run an upload with no progress or Cancel. A
+  success that lands while the list is not ready refetches instead of prepending to nothing.
+  The pre-flight messages in `src/lib/meeting-files.ts` are the `MEETING_FILE_*_MESSAGE`
+  constants from `@repo/shared`, the same ones the API sends, so a file rejected here reads
+  exactly as it would have from the server. Queue rows are keyed by a counter, not
+  `crypto.randomUUID()`, which exists only in secure contexts — a dev server opened over plain
+  HTTP from a phone is not one.
 
 ## API access
 
