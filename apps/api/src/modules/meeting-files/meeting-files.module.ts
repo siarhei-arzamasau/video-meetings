@@ -2,10 +2,13 @@ import { Module } from '@nestjs/common';
 import { CqrsModule } from '@nestjs/cqrs';
 
 import { AuthModule } from '../auth/auth.module';
+import { UploadMeetingFileHandler } from './commands/handlers/upload-meeting-file.handler';
 import { MeetingFilesController } from './meeting-files.controller';
+import { ContentSniffer } from './services/content-sniffer';
 import { MeetingFileRepository } from './services/meeting-file.repository';
 import { MeetingFilesService } from './services/meeting-files.service';
 import { MeetingFileStorage } from './storage/meeting-file-storage';
+import { MeetingFileUploadInterceptor } from './storage/meeting-file-upload.interceptor';
 
 /**
  * Files attached to meetings: upload, list, download, delete, and the processing worker.
@@ -19,6 +22,15 @@ import { MeetingFileStorage } from './storage/meeting-file-storage';
   // what it actually needs. `AuthModule` is for the guard.
   imports: [CqrsModule, AuthModule],
   controllers: [MeetingFilesController],
-  providers: [MeetingFilesService, MeetingFileRepository, MeetingFileStorage],
+  // `@CommandHandler` registers nothing on its own: a handler missing from this array
+  // compiles and only throws when the route is first hit.
+  providers: [
+    UploadMeetingFileHandler,
+    MeetingFilesService,
+    MeetingFileRepository,
+    MeetingFileStorage,
+    MeetingFileUploadInterceptor,
+    ContentSniffer,
+  ],
 })
 export class MeetingFilesModule {}

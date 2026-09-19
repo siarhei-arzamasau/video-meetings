@@ -15,6 +15,17 @@ export interface TransitionPatch {
   deletedAt?: Date | null;
 }
 
+/** What an upload writes. Everything else takes its default. */
+export interface NewMeetingFile {
+  id: string;
+  meetingId: string;
+  uploaderId: string;
+  name: string;
+  contentType: string;
+  size: number;
+  storageKey: string;
+}
+
 /**
  * Every write to `meeting_files`, so the status guard and the raw SQL live in one place.
  *
@@ -38,6 +49,38 @@ export class MeetingFileRepository {
     return this.prisma.meetingFile.findFirst({
       where: { id: fileId, meetingId, status: { not: 'deleted' } },
     });
+  }
+
+  /**
+   * Inserts a file unless the meeting already holds `cap` non-deleted ones, in which case
+   * nothing is written and `null` comes back.
+   *
+   * The meeting row is locked first (`FOR UPDATE`), which serialises concurrent uploads to
+   * one meeting: two requests at the edge of the cap cannot both pass the count, because the
+   * second one's count waits for the first one's insert to commit. That is the PRD's "enforced
+   * in a transaction, not by a read-then-write". The lock is on the meeting, so uploads to
+   * different meetings do not wait on each other.
+   */
+  createWithinCap(data: NewMeetingFile, cap: number): Promise<MeetingFileRecord | null> {
+    return this.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "meetings" WHERE id = ${data.meetingId}::uuid FOR UPDATE`;
+
+        const count = await tx.meetingFile.count({
+          where: { meetingId: data.meetingId, status: { not: 'deleted' } },
+        });
+
+        if (count >= cap) {
+          return null;
+        }
+
+        return tx.meetingFile.create({ data });
+      },
+      // Fifty uploads racing for one meeting's lock queue behind each other and behind the
+      // connection pool; the defaults (2 s / 5 s) are too tight for that and too tight for
+      // nothing else.
+      { maxWait: 10_000, timeout: 15_000 },
+    );
   }
 
   /**
