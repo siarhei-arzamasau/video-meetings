@@ -21,6 +21,14 @@ export const THIRD_EMAIL = 'charles@example.com';
 export const MAX_TITLE_LENGTH = 200;
 export const MAX_PARTICIPANTS = 100;
 
+/**
+ * Mirrors the meeting file contract in `@repo/shared`. Restated rather than imported, for the
+ * same reason as `MAX_TITLE_LENGTH`: a relaxed bound must fail a test.
+ */
+export const MAX_MEETING_FILE_SIZE_BYTES = 100 * 1024 * 1024;
+export const MAX_MEETING_FILES = 50;
+export const MAX_MEETING_FILE_NAME_LENGTH = 255;
+
 /** The shortest password the API accepts. One character less must be a 400. */
 export const MIN_PASSWORD_LENGTH = 8;
 
