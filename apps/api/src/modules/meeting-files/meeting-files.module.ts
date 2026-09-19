@@ -5,6 +5,7 @@ import { AuthModule } from '../auth/auth.module';
 import { DeleteMeetingFileHandler } from './commands/handlers/delete-meeting-file.handler';
 import { UploadMeetingFileHandler } from './commands/handlers/upload-meeting-file.handler';
 import { MeetingFilesController } from './meeting-files.controller';
+import { MEETING_FILE_WORKER, MeetingFileWorker } from './processing/meeting-file-worker';
 import { ContentSniffer } from './services/content-sniffer';
 import { MeetingFileRepository } from './services/meeting-file.repository';
 import { MeetingFilesService } from './services/meeting-files.service';
@@ -33,6 +34,11 @@ import { MeetingFileUploadInterceptor } from './storage/meeting-file-upload.inte
     MeetingFileStorage,
     MeetingFileUploadInterceptor,
     ContentSniffer,
+    MeetingFileWorker,
+    // Also under a string token, so the e2e spec can `app.get('MEETING_FILE_WORKER')` and
+    // call `drain()` without importing anything from this module — which is what lets that
+    // spec compile, and fail, before the worker exists.
+    { provide: MEETING_FILE_WORKER, useExisting: MeetingFileWorker },
   ],
 })
 export class MeetingFilesModule {}

@@ -52,15 +52,20 @@ export class MeetingFilesService {
   /**
    * The original bytes, in any status but `deleted` (which the lookup already filters): a file
    * whose processing failed is still the user's file.
+   *
+   * `size` is the object's, not the record's. They differ only for a truncated object, which
+   * the worker has marked `failed` with a reason; declaring the record's length there would
+   * make the download an aborted transfer instead of the bytes that exist.
    */
   async openContent(userId: string, meetingId: string, fileId: string): Promise<OpenedFile> {
     const record = await this.visibleRecord(userId, meetingId, fileId);
+    const { size } = await this.statObject(record.storageKey);
 
     return {
       name: record.name,
       contentType: record.contentType,
-      size: record.size,
-      stream: await this.openObject(record.storageKey),
+      size,
+      stream: this.storage.openRead(record.storageKey),
     };
   }
 
@@ -77,7 +82,7 @@ export class MeetingFilesService {
       name: `${record.name}.thumb.webp`,
       contentType: THUMBNAIL_TYPE,
       size,
-      stream: await this.openObject(record.thumbnailKey),
+      stream: this.storage.openRead(record.thumbnailKey),
     };
   }
 
@@ -98,16 +103,10 @@ export class MeetingFilesService {
   }
 
   /**
-   * Checks the object exists before the stream is opened. A `createReadStream` on a missing
+   * Also the existence check, before the stream is opened. A `createReadStream` on a missing
    * path only fails once the response is already being written, which leaves the client with
    * headers and no body; a `stat` up front turns that into an ordinary 500 with an error body.
    */
-  private async openObject(key: string): Promise<ReadStream> {
-    await this.statObject(key);
-
-    return this.storage.openRead(key);
-  }
-
   private async statObject(key: string): Promise<{ size: number }> {
     try {
       return await this.storage.stat(key);

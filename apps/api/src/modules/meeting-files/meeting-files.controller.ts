@@ -113,10 +113,7 @@ export class MeetingFilesController {
   }
 }
 
-/**
- * `Content-Length` from the record rather than from the stream, so a truncated object — which
- * the worker marks `failed` — still produces a response the client can tell is short.
- */
+/** The headers every streamed object gets; see `MeetingFilesService.openContent` for `size`. */
 function stream(
   response: Response,
   opened: OpenedFile,
