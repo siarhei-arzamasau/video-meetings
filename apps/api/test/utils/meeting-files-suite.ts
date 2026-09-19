@@ -69,3 +69,21 @@ export function postRawMultipart(
     .set('Content-Type', `multipart/form-data; boundary=${boundary}`)
     .send(body);
 }
+
+/**
+ * A request with a raw body, for the chunk route: `Content-Type` is set explicitly so the
+ * module's raw parser handles it and supertest does not serialise the buffer as JSON.
+ */
+export function putBytes(
+  suite: ApiSuite,
+  url: string,
+  token: string,
+  bytes: Buffer,
+  contentType = 'application/octet-stream',
+): request.Test {
+  return request(suite.app().getHttpServer())
+    .put(url)
+    .set('Authorization', `Bearer ${token}`)
+    .set('Content-Type', contentType)
+    .send(bytes);
+}
