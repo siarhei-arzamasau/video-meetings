@@ -89,3 +89,44 @@ export function SignOutIcon() {
     </svg>
   );
 }
+
+export function ArrowLeftIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
+      <path d="M19 12H5M11 6l-6 6 6 6" />
+    </svg>
+  );
+}
+
+export function FileIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-5" {...strokeProps}>
+      <path d="M14 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5l-5-5Z" />
+      <path d="M14 3.5v5h5" />
+    </svg>
+  );
+}
+
+export function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
+      <path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14" />
+    </svg>
+  );
+}
+
+export function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
+      <path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l.8 12a1.5 1.5 0 0 0 1.5 1.4h6.4a1.5 1.5 0 0 0 1.5-1.4l.8-12" />
+    </svg>
+  );
+}
+
+export function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
+      <path d="m6 6 12 12M18 6 6 18" />
+    </svg>
+  );
+}

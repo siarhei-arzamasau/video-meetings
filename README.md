@@ -35,6 +35,10 @@ pnpm --filter=@repo/api prisma:migrate   # create the schema
 pnpm dev                        # web on :3000, api on :3001
 ```
 
+Files uploaded to a meeting are stored under `apps/api/storage/` (gitignored, created at
+boot; set `MEETING_FILES_DIR` to move it). Under `docker compose` the API keeps them on a named
+volume instead.
+
 `pnpm dev` prints the ports it chose. Those two are preferences rather than requirements: when
 something else already holds one, it moves up to the next free port and points the frontend at
 wherever the API actually landed, so a leftover server from another project does not stop you.
@@ -71,6 +75,17 @@ Run from the repository root:
 
 Scoping to one package uses Turborepo filters: `pnpm build --filter=@repo/api`.
 
+Two end-to-end suites are not part of `pnpm test` because they need PostgreSQL running:
+
+```bash
+pnpm --filter=@repo/api test:e2e        # Jest + Supertest against the real database
+pnpm exec playwright install chromium   # once
+pnpm --filter=@repo/web test:e2e        # Playwright; starts the API and the web app on 3101/3100
+```
+
+Both truncate the `users` table in whatever `DATABASE_URL` points at, and they share it, so run
+one at a time.
+
 ## Layout
 
 ```
@@ -95,8 +110,9 @@ scripts/
 
 ## Database
 
-Prisma owns the schema at `apps/api/prisma/schema.prisma`. Users, meetings, and meeting
-participants are mapped to `users`, `meetings`, and `meeting_participants` tables.
+Prisma owns the schema at `apps/api/prisma/schema.prisma`. Users, meetings, meeting
+participants, and meeting files are mapped to `users`, `meetings`, `meeting_participants`, and
+`meeting_files` tables.
 
 ```bash
 pnpm --filter=@repo/api prisma:generate

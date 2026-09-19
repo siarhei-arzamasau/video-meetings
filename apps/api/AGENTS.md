@@ -41,6 +41,8 @@ src/
                         commands/ — a command class plus its handler per write operation.
                         queries/ mirrors it where a read crosses a module boundary.
                         services/ holds collaborators the handlers share.
+                        storage/ and processing/ appear where a module owns bytes on disk
+                        or a background worker (meeting-files is the one that does).
   generated/prisma/     Prisma client output — generated, gitignored, never edit
 prisma/
   schema.prisma         Datasource, generator, and models
@@ -60,6 +62,11 @@ both sides: `POST /meetings` is a command, while the two reads stay on a plain s
 owns the user record — the insert, the lookups, the public shape — and has no controller, no
 routes, and no exports. Two modules deep in a request path talk to it entirely over the
 buses; see the module boundary section below for why that is not the same as importing it.
+
+`src/modules/meeting-files` is the fourth and the largest: two commands, a read service, a
+storage service over `fs`, and a polling worker. It has its own section below because most of
+what it does right is invisible in the code — ordering, locking, and a claim query that
+Prisma cannot express.
 
 ## CQRS — the module pattern
 
@@ -200,6 +207,16 @@ while authenticating, `@CurrentUser` returns what it attached, and the controlle
 second read. That is one query per authenticated request, in the guard, where the lookup
 already was.
 
+### The second boundary — meetings and meeting-files
+
+`FindVisibleMeetingQuery(userId, meetingId) → Meeting | null` is the fourth message on the
+buses and the first read to cross out of `meetings`. Every file route dispatches it before
+touching a file, so a stranger, a guessed id, and a missing meeting all get the same 404 from
+the same place. `MeetingFilesModule` does not import `MeetingsModule` — the buses are the
+boundary, exactly as with auth and user — and `MeetingsController.findOne` still reads from
+`MeetingsService`, not from the handler: the in-module read stays on the service, and two
+near-identical reads is the accepted price of the rule.
+
 ### What is deliberately absent
 
 No `EventBus`, no events, no sagas anywhere yet. Commands and queries are the parts that pay
@@ -218,6 +235,74 @@ of a global registration is that no module states what it actually needs. Note t
 this creates with the paragraph above: the buses behave globally at runtime while each module
 still declares them, which is what lets two modules share a bus without depending on each
 other.
+
+## Meeting files (`src/modules/meeting-files`)
+
+What the code cannot say for itself. The PRD is `docs/specs/2026-09-19-meeting-file-upload-prd.md`;
+the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-phase-1.md`.
+
+- **Upload is bytes first, then one transaction.** Multer writes to `<MEETING_FILES_DIR>/tmp`
+  (on disk, never a 100 MB buffer); the handler sniffs, `fsync`s, and `rename`s the file into
+  `<meetingId>/<fileId>` (same filesystem, so atomic), and only then inserts — inside a
+  transaction that first takes `SELECT … FOR UPDATE` on the meeting row and counts. That lock
+  is what makes the 50-file cap safe under concurrent uploads; a read-then-write would let two
+  requests both pass the count. If the insert fails the object is removed, and the temp file
+  is removed on every exit that did not rename it. The record never points at bytes that are
+  not there, and bytes never outlive a failed record. **The interceptor resolves the meeting
+  before it reads the body.** Nest runs interceptors before pipes and the handler, so without
+  that check `MeetingFileUploadInterceptor` would write up to 100 MB to the temp directory for
+  a non-UUID id or a meeting the caller cannot see, then reject it; the 400 and the 404 go out
+  first instead. The handler checks visibility again — a command has to be safe whatever
+  dispatched it — and that second indexed read is the cost of not writing 100 MB.
+- **The type is sniffed from the bytes, never the client's header.** `file-type` is pinned to
+  **16.5.4** because 17+ is ESM-only and this is a CJS build; do not "upgrade" it. Text has no
+  magic bytes, so an undetected file that decodes as UTF-8 with no NUL is typed by extension —
+  but only among `.txt`/`.md`/`.csv`. An extension never elevates a file to a binary type,
+  which is why `page.html` renamed `page.pdf` is a 415 and `page.html` renamed `notes.txt` is
+  stored as `text/plain` and served as an attachment with `nosniff`.
+- **Multer needs two options that look optional.** `defParamCharset: 'utf8'` — busboy decodes
+  filenames as latin1 by default and `отчёт.pdf` arrives as mojibake without it — and
+  `preservePath: true`, because otherwise multer takes the basename and a path separator never
+  reaches the name rule that exists to reject it.
+- **`claimNext` is the one raw SQL statement in the module, and it has to be.** A worker claims
+  a row with a single `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1)`, setting
+  `status = processing`, `leased_until = now() + lease`, `attempts + 1`, in one statement. Two
+  replicas cannot claim the same row, and a worker that dies leaves a row whose lease expires
+  and is reclaimed. Prisma's query builder cannot express `SKIP LOCKED`. Every other status
+  change goes through `MeetingFileRepository.transition(id, from, to, patch, lease?)` — a
+  conditional `updateMany` on the expected `from`, and for the worker also on the
+  `leased_until` its claim was given, because a reclaim after expiry keeps the status at
+  `processing` and status alone cannot tell the current holder from the one it replaced. A
+  caller that gets `false` back has lost a race (a delete mid-run, an expired lease another
+  worker took) and discards its result rather than overwriting — including removing the
+  thumbnail it wrote, which nothing else will ever find.
+- **`purgedAt` is the purge marker the PRD's schema lacked.** Delete is soft; the worker
+  claims `deleted` rows that are not yet purged, removes the object and the thumbnail, and sets
+  `purged_at`. Without the column, "deleted rows still holding bytes" would be unknowable and
+  a crash mid-`unlink` unrecoverable. The thumbnail is removed by the key `thumbnailKeyOf`
+  derives, not the one on the row: a file deleted while processing is purged before the row
+  has learned its key, and the thumbnail written afterwards would otherwise be orphaned.
+  `attempts` counts claims, not failures; a row claimed a fourth time is failed unrun, and a
+  purge claimed a fourth time is marked purged unrun with its keys at error level in the log,
+  so an object the process cannot unlink is not reclaimed every lease for ever.
+- **The worker is in-process, behind `MEETING_FILES_WORKER_ENABLED` (default on).** `pnpm dev`
+  runs one API process and a second entry point would be a second thing to start everywhere,
+  for two steps that take milliseconds. Every replica polls when it is on; switch it off per
+  replica if that matters. **`test/setup-env.ts` turns it off**, and the API e2e suite drives
+  it through `drain()` instead — that is what makes "the row is now ready" an assertion rather
+  than a race. `drain()` is reached under the string token `MEETING_FILE_WORKER`, so the spec
+  compiles (and fails) before the worker exists.
+- **Failures store copy, never causes.** Only a `StepError`'s `userMessage` reaches
+  `failureReason`; anything else stores `Processing failed. You can still download the file.`
+  and logs the real error with its stack. Every transition logs file id, meeting id, from, to,
+  and duration.
+- **Downloads declare the object's real length.** `Content-Length` is the `stat` size, not the
+  record's; they differ only for a truncated object, which is already `failed` with a reason,
+  and declaring the record's length would turn that download into an aborted transfer instead
+  of the bytes that exist. The `stat` is also the existence check, so a missing object is an
+  ordinary 500 with an error body rather than headers with no body.
+- **Backups of `MEETING_FILES_DIR` are operational.** The database has the records; the
+  directory has the bytes; nothing here copies either anywhere.
 
 ## Bootstrap behaviour (`src/configure-app.ts`)
 
@@ -323,7 +408,16 @@ Four things about that setup are easy to get wrong:
   `process.env` over the `.env` file. Anything assigned after that import — including at the
   top of `createTestApp` — is too late, so the app signs tokens with the developer's local
   `JWT_SECRET` while the specs verify with the test one. The failure looks like broken
-  signing code, not like configuration. Jest `setupFiles` runs early enough.
+  signing code, not like configuration. Jest `setupFiles` runs early enough. The same file
+  points `MEETING_FILES_DIR` at a per-run temp directory (removed at exit, so the suite never
+  reads or deletes real uploads) and sets `MEETING_FILES_WORKER_ENABLED=false`. The
+  `start:e2e-web` script exists for the web app's browser suite and must stay in step with it:
+  the same temp-dir idea, but the worker **on** with a fast poll, because that suite watches
+  the Processing chip disappear.
+- **`truncateUsers` cascades to `meeting_files`** through `meetings`, so the file specs need no
+  cleanup of their own; `test/utils/meeting-files-table.ts` reads and seeds that table over
+  raw SQL, including the worker states (`leased_until`, `attempts`, `purged_at`) a route cannot
+  produce on demand.
 - **`maxWorkers: 1` is load-bearing.** Jest parallelises across spec files by default, and
   every auth spec truncates the same `users` table in the same database. Run them in
   parallel and they delete each other's fixtures — a seeded `register` starts returning 409.

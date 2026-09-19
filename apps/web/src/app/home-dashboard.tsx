@@ -4,107 +4,76 @@ import {
   Alert,
   Button,
   Card,
-  Chip,
   EmptyState,
   Separator,
   Skeleton,
   Spinner,
   buttonVariants,
 } from '@heroui/react';
-import type { Meeting, MeetingStatus, User } from '@repo/shared';
+import type { Meeting, User } from '@repo/shared';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 import { CalendarIcon, PlusIcon, SignOutIcon, WarningIcon } from '@/components/icons';
+import { MeetingStatusChip } from '@/components/meeting-status-chip';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Wordmark } from '@/components/wordmark';
-import { ApiError, getMe, listMeetings } from '@/lib/api-client';
-import { clearAccessToken, readAccessToken } from '@/lib/auth-token';
+import { ApiError, listMeetings } from '@/lib/api-client';
 import { formatMeetingTime } from '@/lib/date-time';
 import { LATEST_MEETINGS_COUNT, latestMeetings } from '@/lib/meetings';
+import { describeFailure, useSignedIn } from '@/lib/use-signed-in';
 
 /**
- * Two omissions here are decisions.
- *
- * Checking the token and loading the data are one `loading` variant: they differ in the
- * effect's control flow, not in what is on screen, and a state nobody can observe is not a
- * state. Starting at `loading` is also what keeps the first render identical on the server and
- * during hydration, without reading storage to produce it.
- *
- * `ready` with an empty list is not its own variant either — nothing about the data flow
- * differs, and a variant restating a derivable fact is a second source of truth for it.
- *
- * `signedOut` does earn its place. This component stays mounted while Next navigates away, and
- * in that window it must render neither the user's email nor a spinner captioned "Loading your
- * meetings".
+ * The meetings list, once the gate has a user. `ready` with an empty list is not its own
+ * variant: nothing about the data flow differs, and a variant restating a derivable fact is a
+ * second source of truth for it.
  */
 type Dashboard =
   | { state: 'loading' }
   | { state: 'ready'; user: User; meetings: ReadonlyArray<Meeting> }
-  | { state: 'failed'; message: string }
+  | { state: 'failed'; message: string; retry(): void }
   | { state: 'signedOut' };
 
+type MeetingsList =
+  | { state: 'loading' }
+  | { state: 'ready'; meetings: ReadonlyArray<Meeting> }
+  | { state: 'failed'; message: string };
+
 export function HomeDashboard() {
-  const router = useRouter();
-  const [dashboard, setDashboard] = useState<Dashboard>({ state: 'loading' });
-  // Bumped by "Try again". The effect owns the whole load, so a retry re-runs it rather than
-  // growing a second copy of the request logic inside a handler.
+  // The gate — token read, `getMe`, 401 redirect — lives in the hook now that the meeting page
+  // shares it. What stays here is the one request this page adds: the list.
+  const { session, signOut } = useSignedIn();
+  const [list, setList] = useState<MeetingsList>({ state: 'loading' });
   const [reloadCount, setReloadCount] = useState(0);
+  const token = session.state === 'ready' ? session.token : null;
 
   useEffect(() => {
-    // Read here, never during render: `localStorage` does not exist while Next renders this on
-    // the server, so a token-dependent first render would be a value the server could not have
-    // produced — a hydration mismatch, and a flash of the wrong view before it resolved.
-    const token = readAccessToken();
-
     if (token === null) {
-      setDashboard({ state: 'signedOut' });
-      router.replace('/auth/login');
       return;
     }
 
-    // Ignores a response from a torn-down run. Strict Mode invokes this effect twice in
-    // development, and "Try again" starts a second run while the first may still be in flight;
-    // either way the older response must not land on the newer state.
     let active = true;
 
     async function load(bearer: string) {
       try {
-        // Together, not in sequence: neither request feeds the other, both need only the token,
-        // and the greeting and the list should appear in one commit rather than filling the
-        // page in twice. `Promise.all` subscribes to both, so the second 401 — and a dead token
-        // fails both — is handled rather than orphaned into an unhandled rejection.
-        const [user, meetings] = await Promise.all([getMe(bearer), listMeetings(bearer)]);
+        const meetings = await listMeetings(bearer);
 
-        if (!active) {
-          return;
+        if (active) {
+          setList({ state: 'ready', meetings });
         }
-
-        // Updater form, so a load that resolves after the user pressed Log out cannot put the
-        // dashboard back on screen mid-navigation.
-        setDashboard((current) =>
-          current.state === 'loading' ? { state: 'ready', user, meetings } : current,
-        );
       } catch (error) {
         if (!active) {
           return;
         }
 
         if (error instanceof ApiError && error.status === 401) {
-          // Cleared first: a token the API has rejected is worth nothing, and leaving it behind
-          // means the next visit spends a round trip learning the same thing.
-          clearAccessToken();
-          setDashboard({ state: 'signedOut' });
-          router.replace('/auth/login');
+          // The token went bad between the two requests. Same answer as the gate's.
+          signOut();
+
           return;
         }
 
-        setDashboard((current) =>
-          current.state === 'loading'
-            ? { state: 'failed', message: describeFailure(error) }
-            : current,
-        );
+        setList({ state: 'failed', message: describeFailure(error) });
       }
     }
 
@@ -113,16 +82,27 @@ export function HomeDashboard() {
     return () => {
       active = false;
     };
-    // `router` is stable across renders in the App Router, so it does not re-run this.
-  }, [router, reloadCount]);
+  }, [token, signOut, reloadCount]);
 
-  function signOut() {
-    // Local only. The JWT is stateless and there is no logout endpoint to call: the token stays
-    // valid until it expires, which is a property of bearer tokens rather than a gap to fill.
-    clearAccessToken();
-    setDashboard({ state: 'signedOut' });
-    router.replace('/auth/login');
-  }
+  // One `loading` on screen for both the gate and the list: they differ in control flow, not
+  // in what the reader sees, and starting there keeps the first render identical on the server.
+  const dashboard: Dashboard =
+    session.state === 'signedOut'
+      ? { state: 'signedOut' }
+      : session.state === 'failed'
+        ? { state: 'failed', message: session.message, retry: session.retry }
+        : session.state === 'loading' || list.state === 'loading'
+          ? { state: 'loading' }
+          : list.state === 'failed'
+            ? {
+                state: 'failed',
+                message: list.message,
+                retry: () => {
+                  setList({ state: 'loading' });
+                  setReloadCount((count) => count + 1);
+                },
+              }
+            : { state: 'ready', user: session.user, meetings: list.meetings };
 
   if (dashboard.state === 'signedOut') {
     return (
@@ -157,13 +137,7 @@ export function HomeDashboard() {
             <Alert.Title>We could not load your meetings</Alert.Title>
             <Alert.Description>{dashboard.message}</Alert.Description>
           </Alert.Content>
-          <Button
-            variant="secondary"
-            onPress={() => {
-              setDashboard({ state: 'loading' });
-              setReloadCount((count) => count + 1);
-            }}
-          >
+          <Button variant="secondary" onPress={dashboard.retry}>
             Try again
           </Button>
         </Alert>
@@ -247,46 +221,28 @@ function ReadyDashboard({ user, meetings }: { user: User; meetings: ReadonlyArra
   );
 }
 
+/**
+ * A `Link`, not a `Button` with `onPress`: this navigates, and Next's client-side routing needs a
+ * real anchor to hook. The whole row is the target so the tap area on a phone is the row, not
+ * the title; `-mx-2 px-2` lets the focus ring and hover surface clear the text.
+ */
 function MeetingRow({ meeting, isHost }: { meeting: Meeting; isHost: boolean }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
-      <div className="flex min-w-0 flex-col gap-0.5">
+    <Link
+      href={`/meetings/${meeting.id}`}
+      className="hover:bg-surface-secondary focus-visible:ring-focus -mx-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg px-2 py-3 transition-colors outline-none focus-visible:ring-2"
+    >
+      <span className="flex min-w-0 flex-col gap-0.5">
         <span className="truncate font-medium">{meeting.title}</span>
         <span className="text-muted text-sm">
           <time dateTime={meeting.scheduledAt}>{formatMeetingTime(meeting.scheduledAt)}</time>
           {' · '}
           {isHost ? 'Hosting' : 'Invited'}
         </span>
-      </div>
+      </span>
 
-      <StatusChip status={meeting.status} />
-    </div>
-  );
-}
-
-/**
- * Exhaustive by type, so adding an entry to `MEETING_STATUSES` is a typecheck error here rather
- * than a chip that renders untinted.
- *
- * Each label is an explicit string rather than a CSS `capitalize` over the raw status: a label
- * is copy, and copy that is really a text-transform cannot be reworded or translated.
- */
-const STATUS_CHIP: Record<
-  MeetingStatus,
-  { color: 'accent' | 'success' | 'default'; variant: 'soft' | 'primary'; label: string }
-> = {
-  scheduled: { color: 'accent', variant: 'soft', label: 'Scheduled' },
-  live: { color: 'success', variant: 'primary', label: 'Live' },
-  ended: { color: 'default', variant: 'soft', label: 'Ended' },
-};
-
-function StatusChip({ status }: { status: MeetingStatus }) {
-  const { color, variant, label } = STATUS_CHIP[status];
-
-  return (
-    <Chip color={color} variant={variant} size="sm">
-      <Chip.Label>{label}</Chip.Label>
-    </Chip>
+      <MeetingStatusChip status={meeting.status} />
+    </Link>
   );
 }
 
@@ -352,20 +308,4 @@ function LoadingShell() {
       </div>
     </>
   );
-}
-
-/**
- * Turns a thrown value into something to show.
- *
- * A 401 never reaches this — that branch clears the token and redirects — which is what makes
- * rendering the message safe: a 401's `ApiError.message` is Nest's bare "Unauthorized", which
- * tells a reader nothing.
- */
-function describeFailure(error: unknown): string {
-  if (error instanceof ApiError) {
-    return error.message;
-  }
-
-  // `fetch` rejects rather than resolving when the request never reached the API at all.
-  return 'We could not reach the server. Check your connection and try again.';
 }

@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
     "clean": "rm -rf .next coverage"
   },
   "dependencies": {
@@ -21,13 +22,17 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@repo/tsconfig": "workspace:*",
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "24.13.3",
+    "@types/pg": "8.20.0",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.4",
+    "dotenv": "17.4.2",
     "jsdom": "30.0.1",
+    "pg": "8.22.0",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
     "vitest": "4.1.10"

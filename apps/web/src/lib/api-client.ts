@@ -4,6 +4,7 @@ import type {
   Credentials,
   HealthResponse,
   Meeting,
+  MeetingFile,
   User,
 } from '@repo/shared';
 
@@ -30,7 +31,12 @@ export class ApiError extends Error {
   }
 }
 
-/** The single boundary between the web app and the API. */
+/**
+ * The single boundary between the web app and the API — with one exception, `uploadMeetingFile`
+ * below, which is an `XMLHttpRequest` because `fetch` cannot report upload progress.
+ *
+ * A 204 resolves to `undefined`: there is no body to parse, and reading one would throw.
+ */
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(buildApiUrl(path), {
     ...init,
@@ -41,7 +47,22 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     throw new ApiError(response.status, await readErrorMessage(response, path));
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return (await response.json()) as T;
+}
+
+/** The same boundary for a binary response: the body as a `Blob`, the failure as an `ApiError`. */
+async function apiFetchBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const response = await fetch(buildApiUrl(path), init);
+
+  if (!response.ok) {
+    throw new ApiError(response.status, await readErrorMessage(response, path));
+  }
+
+  return response.blob();
 }
 
 /**
@@ -56,13 +77,20 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
  * replace it with a parse error nobody can trace back.
  */
 async function readErrorMessage(response: Response, path: string): Promise<string> {
-  const fallback = `Request to ${path} failed with ${String(response.status)}`;
-
   try {
-    return extractMessage(await response.json()) ?? fallback;
+    return messageOf(await response.json(), response.status, path);
   } catch {
-    return fallback;
+    return fallbackMessage(response.status, path);
   }
+}
+
+/** The API's message from an already-parsed body, or the status fallback. Never throws. */
+function messageOf(body: unknown, status: number, path: string): string {
+  return extractMessage(body) ?? fallbackMessage(status, path);
+}
+
+function fallbackMessage(status: number, path: string): string {
+  return `Request to ${path} failed with ${String(status)}`;
 }
 
 function extractMessage(body: unknown): string | undefined {
@@ -158,4 +186,121 @@ export function getMe(token: string): Promise<User> {
  */
 export function listMeetings(token: string): Promise<ReadonlyArray<Meeting>> {
   return apiFetch<Meeting[]>('/meetings', { headers: authHeaders(token) });
+}
+
+/** One meeting the user hosts or attends. A 404 covers both "no such meeting" and "not yours". */
+export function getMeeting(token: string, meetingId: string): Promise<Meeting> {
+  return apiFetch<Meeting>(`/meetings/${meetingId}`, { headers: authHeaders(token) });
+}
+
+/** Every non-deleted file of a meeting, newest first as the API orders them. */
+export function listMeetingFiles(
+  token: string,
+  meetingId: string,
+): Promise<ReadonlyArray<MeetingFile>> {
+  return apiFetch<MeetingFile[]>(`/meetings/${meetingId}/files`, { headers: authHeaders(token) });
+}
+
+/** Soft delete. A 404 means the file is gone, or the caller is neither uploader nor host. */
+export function deleteMeetingFile(token: string, meetingId: string, fileId: string): Promise<void> {
+  return apiFetch<void>(`/meetings/${meetingId}/files/${fileId}`, {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  });
+}
+
+/**
+ * The original bytes. A `Blob` rather than a URL: the token lives in `localStorage` and cannot
+ * ride on a plain `<a href>`, so the caller turns this into an object URL and clicks it.
+ */
+export function downloadMeetingFile(
+  token: string,
+  meetingId: string,
+  fileId: string,
+): Promise<Blob> {
+  return apiFetchBlob(`/meetings/${meetingId}/files/${fileId}/content`, {
+    headers: authHeaders(token),
+  });
+}
+
+/** The WebP thumbnail, for the same reason as a `Blob`: an `<img src>` cannot carry the token. */
+export function fetchThumbnail(token: string, meetingId: string, fileId: string): Promise<Blob> {
+  return apiFetchBlob(`/meetings/${meetingId}/files/${fileId}/thumbnail`, {
+    headers: authHeaders(token),
+  });
+}
+
+export interface UploadOptions {
+  /** Aborts the request; the promise rejects with an `AbortError` `DOMException`. */
+  signal?: AbortSignal;
+  /** Called with a fraction in `[0, 1]` whenever the browser reports upload progress. */
+  onProgress?: (fraction: number) => void;
+}
+
+/** Injectable for tests only; production always uses the browser's. */
+type XhrFactory = () => XMLHttpRequest;
+
+/**
+ * One file as `multipart/form-data`, field `file`.
+ *
+ * The only non-`fetch` call in this module, and deliberately so: `fetch` cannot report upload
+ * progress, and the PRD asks for a percentage when the browser can give one. Everything else
+ * about it matches `apiFetch` — the token as the first argument, `ApiError` with the API's
+ * own message on a non-2xx, and the URL from `buildApiUrl`.
+ */
+export function uploadMeetingFile(
+  token: string,
+  meetingId: string,
+  file: File,
+  { signal, onProgress }: UploadOptions = {},
+  createXhr: XhrFactory = () => new XMLHttpRequest(),
+): Promise<MeetingFile> {
+  const path = `/meetings/${meetingId}/files`;
+
+  return new Promise<MeetingFile>((resolve, reject) => {
+    if (signal?.aborted === true) {
+      reject(new DOMException('The upload was aborted', 'AbortError'));
+
+      return;
+    }
+
+    const xhr = createXhr();
+    const abort = (): void => xhr.abort();
+
+    signal?.addEventListener('abort', abort, { once: true });
+
+    xhr.open('POST', buildApiUrl(path));
+    xhr.setRequestHeader('authorization', `Bearer ${token}`);
+    xhr.responseType = 'json';
+
+    xhr.upload.addEventListener('progress', (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        onProgress?.(Math.min(1, event.loaded / event.total));
+      }
+    });
+
+    xhr.addEventListener('load', () => {
+      signal?.removeEventListener('abort', abort);
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(xhr.response as MeetingFile);
+      } else {
+        reject(new ApiError(xhr.status, messageOf(xhr.response, xhr.status, path)));
+      }
+    });
+
+    xhr.addEventListener('error', () => {
+      signal?.removeEventListener('abort', abort);
+      reject(new TypeError('Failed to fetch'));
+    });
+
+    xhr.addEventListener('abort', () => {
+      signal?.removeEventListener('abort', abort);
+      reject(new DOMException('The upload was aborted', 'AbortError'));
+    });
+
+    const body = new FormData();
+    body.append('file', file, file.name);
+    xhr.send(body);
+  });
 }

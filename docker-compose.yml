@@ -31,8 +31,13 @@ services:
       # without a root .env. Override it for anything but local development.
       JWT_SECRET: ${JWT_SECRET:-dev-only-replace-with-openssl-rand-base64-32}
       JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-3600}
+      MEETING_FILES_DIR: /data/meeting-files
     ports:
       - '3001:3001'
+    volumes:
+      # A named volume, so a rebuilt container keeps its uploads. The Dockerfile creates and
+      # chowns this directory, which Docker copies onto the volume on its first mount.
+      - meeting-files:/data/meeting-files
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,3 +59,4 @@ services:
 
 volumes:
   postgres-data:
+  meeting-files:

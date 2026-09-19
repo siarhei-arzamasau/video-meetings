@@ -30,16 +30,24 @@ sharing a `src/app/auth/layout.tsx` shell — they are the worked examples of a 
 the API. `/` is the signed-in home: it reads `me` and the meeting list after mount, and it is
 the worked example of an authorized page, gated on the client because the token lives in
 `localStorage` where neither the server nor middleware can read it. (`/register` 308s to
-`/auth/register`; the sign-up page lived there first.) `apps/web` and `apps/api` each have their
-own guide with app-specific detail, duplicated into `CLAUDE.md` + `AGENTS.md` exactly like the
-root guide.
+`/auth/register`; the sign-up page lived there first.) `/meetings/[id]` is the second gated page:
+the meeting's header and its files section, which uploads, lists, downloads, and deletes files
+through the API's `meeting-files` module — a CQRS module over local-disk storage with an
+in-process worker that verifies and thumbnails each upload. `apps/web` and `apps/api` each have
+their own guide with app-specific detail, duplicated into `CLAUDE.md` + `AGENTS.md` exactly like
+the root guide.
 
 The design this implements:
 [`docs/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/specs/2026-07-29-video-meetings-monorepo-design.md),
 with the API's authentication module since split in two by
 [`docs/specs/2026-07-30-auth-user-module-split-design.md`](docs/specs/2026-07-30-auth-user-module-split-design.md)
 — `auth` owns credentials and tokens, a new `user` module owns the user record, and they
-interact only over the CQRS buses.
+interact only over the CQRS buses. Meeting file upload is specified by
+[`docs/specs/2026-09-19-meeting-file-upload-prd.md`](docs/specs/2026-09-19-meeting-file-upload-prd.md)
+and built in phases; phase 1 (upload, list, download, delete, verify + preview) followed
+[`docs/plans/2026-09-19-meeting-file-upload-phase-1.md`](docs/plans/2026-09-19-meeting-file-upload-phase-1.md),
+whose _Design decisions_ section is the design record for the worker, the storage layout, and
+the module's file layout.
 
 ## Commands
 
@@ -106,10 +114,13 @@ Four things make that discipline actually work here:
   run because it is reporting one from earlier. Use `pnpm test --force` for a baseline you
   intend to trust. A suite that was already red before you started is worth knowing about
   before its failure looks like yours.
-- **`pnpm test` is not the whole net for `apps/api`.** Neither it nor CI runs `test:e2e`, so
+- **`pnpm test` is not the whole net for either app.** Neither it nor CI runs `test:e2e`, so
   run `pnpm --filter=@repo/api test:e2e` too — it needs `docker compose up -d postgres` and a
   migrated schema. See [the API guide](apps/api/CLAUDE.md#tests) for why that suite is where
-  the real coverage of a module boundary lives.
+  the real coverage of a module boundary lives. The web app has a browser suite of its own,
+  `pnpm --filter=@repo/web test:e2e` (Playwright, starts the API and the web app itself on
+  3100/3101), which is the contract for its pages; the two suites share one database and must
+  never run at the same time.
 - **Prefer the steps that leave the suite green without touching it.** When a refactor moves
   behaviour between modules, add the new destination first and rewire one caller at a time.
   Each rewiring is independently revertible, and the untouched tests stay evidence.
@@ -133,8 +144,13 @@ cp apps/web/.env.example apps/web/.env.local
 docker compose up -d postgres
 pnpm --filter=@repo/api prisma:generate  # required: the client is gitignored, and `dev` does not generate it
 pnpm --filter=@repo/api prisma:migrate   # required: the API's tables do not exist yet
+pnpm exec playwright install chromium    # only for the web browser suite (test:e2e)
 pnpm dev
 ```
+
+Uploaded meeting files land under `apps/api/storage/` (`MEETING_FILES_DIR`, gitignored),
+which the API creates and checks for writability at boot. In `docker compose`, the `api`
+service mounts a named volume there instead, so a rebuilt container keeps its files.
 
 `JWT_SECRET` must be at least 32 characters or the API refuses to boot. The `.env.example`
 placeholder satisfies that for local work only.

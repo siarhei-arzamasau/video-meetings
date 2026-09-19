@@ -5,3 +5,17 @@ export type { CreateMeetingRequest, Meeting, MeetingStatus } from './types/meeti
 export { MEETING_STATUSES } from './types/meeting';
 export type { ApiErrorResponse } from './types/error';
 export type { HealthResponse } from './types/health';
+export type { MeetingFile, MeetingFileStatus } from './types/meeting-file';
+export {
+  MAX_MEETING_FILE_NAME_LENGTH,
+  MAX_MEETING_FILE_SIZE_BYTES,
+  MAX_MEETING_FILES,
+  MEETING_FILE_ACCEPT,
+  MEETING_FILE_ALLOWED_TYPES,
+  MEETING_FILE_EMPTY_MESSAGE,
+  MEETING_FILE_NAME_MESSAGE,
+  MEETING_FILE_PROCESSING_FAILED_MESSAGE,
+  MEETING_FILE_SIZE_MESSAGE,
+  MEETING_FILE_STATUSES,
+  MEETING_FILE_TYPE_MESSAGE,
+} from './types/meeting-file';

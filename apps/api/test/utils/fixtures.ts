@@ -10,6 +10,25 @@ export const LOGIN_URL = '/api/auth/login';
 export const ME_URL = '/api/auth/me';
 export const MEETINGS_URL = '/api/meetings';
 
+export function meetingFilesUrl(meetingId: string): string {
+  return `${MEETINGS_URL}/${meetingId}/files`;
+}
+
+export function meetingFileUrl(meetingId: string, fileId: string): string {
+  return `${meetingFilesUrl(meetingId)}/${fileId}`;
+}
+
+export function meetingFileContentUrl(meetingId: string, fileId: string): string {
+  return `${meetingFileUrl(meetingId, fileId)}/content`;
+}
+
+export function meetingFileThumbnailUrl(meetingId: string, fileId: string): string {
+  return `${meetingFileUrl(meetingId, fileId)}/thumbnail`;
+}
+
+/** Provider token the worker is registered under, so the e2e spec can reach `drain()`. */
+export const MEETING_FILE_WORKER_TOKEN = 'MEETING_FILE_WORKER';
+
 export const EMAIL = 'ada@example.com';
 export const PASSWORD = 'correct-horse-battery-42';
 
@@ -20,6 +39,29 @@ export const THIRD_EMAIL = 'charles@example.com';
 /** Mirrors `CreateMeetingDto`. Declared here, not imported, so a relaxed bound fails a test. */
 export const MAX_TITLE_LENGTH = 200;
 export const MAX_PARTICIPANTS = 100;
+
+/**
+ * Mirrors the meeting file contract in `@repo/shared`. Restated rather than imported, for the
+ * same reason as `MAX_TITLE_LENGTH`: a relaxed bound must fail a test.
+ */
+export const MAX_MEETING_FILE_SIZE_BYTES = 100 * 1024 * 1024;
+export const MAX_MEETING_FILES = 50;
+export const MAX_MEETING_FILE_NAME_LENGTH = 255;
+
+/**
+ * The storage root `setup-env.ts` created for this run. Read at call time, not at import: the
+ * setup file runs first, but a module-level constant here would freeze whatever `process.env`
+ * held when this module happened to be evaluated.
+ */
+export function meetingFilesDir(): string {
+  const dir = process.env['MEETING_FILES_DIR'];
+
+  if (dir === undefined || dir === '') {
+    throw new Error('MEETING_FILES_DIR is not set — is test/setup-env.ts in setupFiles?');
+  }
+
+  return dir;
+}
 
 /** The shortest password the API accepts. One character less must be a 400. */
 export const MIN_PASSWORD_LENGTH = 8;
