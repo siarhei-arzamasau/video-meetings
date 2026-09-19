@@ -47,7 +47,12 @@ interact only over the CQRS buses. Meeting file upload is specified by
 and built in phases; phase 1 (upload, list, download, delete, verify + preview) followed
 [`docs/plans/2026-09-19-meeting-file-upload-phase-1.md`](docs/plans/2026-09-19-meeting-file-upload-phase-1.md),
 whose _Design decisions_ section is the design record for the worker, the storage layout, and
-the module's file layout.
+the module's file layout. Phase 2 (chunked, resumable upload for files over the single-request
+cap) followed
+[`docs/plans/2026-09-19-meeting-file-upload-phase-2.md`](docs/plans/2026-09-19-meeting-file-upload-phase-2.md),
+whose _Assumptions_ and _Design constraints_ sections are the record for the 1 GiB cap, the
+8 MiB chunk size, the session table, and why a completed session enters the phase 1 pipeline
+unchanged.
 
 ## Commands
 
