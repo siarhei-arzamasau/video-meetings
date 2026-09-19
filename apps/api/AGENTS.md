@@ -390,3 +390,7 @@ Revisit it when:
 
 Adding a feature module that follows the existing shape needs no update. Document the
 shape, not each module that uses it.
+
+## File upload
+
+Use this research for it: @docs/research-meeting-upload.md
