@@ -35,6 +35,7 @@ model User {
 
   hostedMeetings        Meeting[]            @relation("MeetingHost")
   meetingParticipations MeetingParticipant[]
+  uploadedFiles         MeetingFile[]
 
   @@map("users")
 }
@@ -57,6 +58,7 @@ model Meeting {
 
   host         User                 @relation("MeetingHost", fields: [hostId], references: [id], onDelete: Restrict)
   participants MeetingParticipant[]
+  files        MeetingFile[]
 
   @@index([hostId])
   @@map("meetings")
@@ -72,4 +74,57 @@ model MeetingParticipant {
   @@id([meetingId, userId])
   @@index([userId])
   @@map("meeting_participants")
+}
+
+enum MeetingFileStatus {
+  uploaded
+  processing
+  ready
+  failed
+  deleted
+
+  @@map("meeting_file_status")
+}
+
+/// A file attached to a meeting. Mirrors `MeetingFile` in @repo/shared plus the columns the
+/// processing worker owns (`storageKey`, `checksum`, `attempts`, `leasedUntil`, `purgedAt`),
+/// which never leave this layer.
+model MeetingFile {
+  id         String @id @default(uuid()) @db.Uuid
+  meetingId  String @map("meeting_id") @db.Uuid
+  uploaderId String @map("uploader_id") @db.Uuid
+
+  /// The user's filename after trimming. Display only — the object lives at `storageKey`.
+  name        String
+  contentType String @map("content_type")
+  /// Int, not BigInt: the cap is 100 MB. Past 2 GB this column changes in the same commit.
+  size        Int
+  /// `<meetingId>/<fileId>` under MEETING_FILES_DIR. Opaque, so a name can never be a path.
+  storageKey  String @unique @map("storage_key")
+
+  checksum     String?
+  thumbnailKey String? @map("thumbnail_key")
+
+  status        MeetingFileStatus @default(uploaded)
+  /// User-safe copy only; the real cause is logged, never stored.
+  failureReason String?           @map("failure_reason")
+  /// Claims, not failures: incremented every time a worker takes the row.
+  attempts      Int               @default(0)
+  leasedUntil   DateTime?         @map("leased_until") @db.Timestamptz(3)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  processedAt DateTime? @map("processed_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  /// Set once the worker has removed the bytes of a soft-deleted row, so the purge runs
+  /// exactly once and a crash mid-unlink is retried rather than forgotten.
+  purgedAt    DateTime? @map("purged_at") @db.Timestamptz(3)
+
+  // Restrict on both: nothing deletes a meeting or a user from under a file without going
+  // through the worker's soft-delete-then-purge path.
+  meeting  Meeting @relation(fields: [meetingId], references: [id], onDelete: Restrict)
+  uploader User    @relation(fields: [uploaderId], references: [id], onDelete: Restrict)
+
+  @@index([meetingId, status])
+  @@index([status, leasedUntil])
+  @@map("meeting_files")
 }
