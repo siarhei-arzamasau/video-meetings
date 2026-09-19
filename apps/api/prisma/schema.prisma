@@ -36,6 +36,7 @@ model User {
   hostedMeetings        Meeting[]            @relation("MeetingHost")
   meetingParticipations MeetingParticipant[]
   uploadedFiles         MeetingFile[]
+  fileUploads           MeetingFileUpload[]
 
   @@map("users")
 }
@@ -59,6 +60,7 @@ model Meeting {
   host         User                 @relation("MeetingHost", fields: [hostId], references: [id], onDelete: Restrict)
   participants MeetingParticipant[]
   files        MeetingFile[]
+  fileUploads  MeetingFileUpload[]
 
   @@index([hostId])
   @@map("meetings")
@@ -127,4 +129,52 @@ model MeetingFile {
   @@index([meetingId, status])
   @@index([status, leasedUntil])
   @@map("meeting_files")
+}
+
+/// A chunked upload in progress: the bytes of a large file arriving one chunk at a time,
+/// before any `MeetingFile` exists. Its own table precisely so that it is not one — no file
+/// is listed, downloadable, or counted against the meeting's cap until `complete` assembles
+/// the chunks and hands them to the single-request upload command.
+///
+/// Chunks live at `uploads/<id>/<index>` under MEETING_FILES_DIR and are removed by the
+/// worker, which claims expired, unpurged rows the same way it claims a deleted file.
+model MeetingFileUpload {
+  id         String @id @default(uuid()) @db.Uuid
+  meetingId  String @map("meeting_id") @db.Uuid
+  uploaderId String @map("uploader_id") @db.Uuid
+
+  /// The declared display name, already through `normaliseFileName`. The type is not declared
+  /// at all: it is sniffed from the assembled bytes at completion, never taken from a client.
+  name String
+  /// Int, like `MeetingFile.size`, and capped at 1 GiB for the same reason.
+  size Int
+
+  chunkSize  Int @map("chunk_size")
+  chunkCount Int @map("chunk_count")
+  /// Indexes durably on disk. A resend of the same index leaves one entry, so this is a set
+  /// the handler keeps sorted rather than an append log.
+  receivedChunks Int[] @map("received_chunks")
+
+  /// Claims, not failures, and the purge lease: the same pair `meeting_files` carries, so a
+  /// worker that dies mid-removal leaves a row another worker reclaims when the lease lapses,
+  /// and a removal that keeps throwing is given up on instead of retried for ever.
+  attempts    Int       @default(0)
+  leasedUntil DateTime? @map("leased_until") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// When the session stops accepting chunks. Aborting sets this to now(); the worker treats
+  /// expired and aborted identically, which is why abort needs no status column.
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  /// Set once the chunk tree is gone, so the removal runs exactly once and a crash mid-removal
+  /// is retried rather than forgotten.
+  purgedAt  DateTime? @map("purged_at") @db.Timestamptz(3)
+
+  // Restrict on both, as for a file: nothing deletes a meeting or a user out from under an
+  // upload whose chunks are still on disk.
+  meeting  Meeting @relation(fields: [meetingId], references: [id], onDelete: Restrict)
+  uploader User    @relation(fields: [uploaderId], references: [id], onDelete: Restrict)
+
+  @@index([meetingId])
+  @@index([expiresAt, purgedAt])
+  @@map("meeting_file_uploads")
 }

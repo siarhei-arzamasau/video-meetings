@@ -285,6 +285,16 @@ the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-p
   `attempts` counts claims, not failures; a row claimed a fourth time is failed unrun, and a
   purge claimed a fourth time is marked purged unrun with its keys at error level in the log,
   so an object the process cannot unlink is not reclaimed every lease for ever.
+- **A chunked upload is a row in its own table, `meeting_file_uploads`, and not a `MeetingFile`.**
+  That is the PRD's "nothing is listed until the bytes are complete", enforced structurally:
+  while the chunks are arriving there is no file row to list, download, or count against the
+  meeting's 50-file cap, so no route needs a rule excluding one. Its chunks live at
+  `uploads/<uploadId>/<index>` under `MEETING_FILES_DIR`. The row carries `attempts` and
+  `leased_until` for the same reason `meeting_files` does — the worker removes an expired
+  session's chunk tree under a lease, so a crash mid-removal is retried and a removal that
+  keeps throwing is eventually given up on rather than reclaimed for ever. `expires_at` is
+  the whole lifecycle: aborting a session sets it to `now()`, so abort and expiry are one
+  path in the worker and the row needs no status column.
 - **The worker is in-process, behind `MEETING_FILES_WORKER_ENABLED` (default on).** `pnpm dev`
   runs one API process and a second entry point would be a second thing to start everywhere,
   for two steps that take milliseconds. Every replica polls when it is on; switch it off per
@@ -414,10 +424,11 @@ Four things about that setup are easy to get wrong:
   `start:e2e-web` script exists for the web app's browser suite and must stay in step with it:
   the same temp-dir idea, but the worker **on** with a fast poll, because that suite watches
   the Processing chip disappear.
-- **`truncateUsers` cascades to `meeting_files`** through `meetings`, so the file specs need no
-  cleanup of their own; `test/utils/meeting-files-table.ts` reads and seeds that table over
-  raw SQL, including the worker states (`leased_until`, `attempts`, `purged_at`) a route cannot
-  produce on demand.
+- **`truncateUsers` cascades to `meeting_files` and `meeting_file_uploads`** through
+  `meetings`, so the file specs need no cleanup of their own; `test/utils/meeting-files-table.ts`
+  and `test/utils/meeting-file-uploads-table.ts` read and seed those tables over raw SQL,
+  including the states (`leased_until`, `attempts`, `purged_at`, an `expires_at` in the past) a
+  route cannot produce on demand.
 - **`maxWorkers: 1` is load-bearing.** Jest parallelises across spec files by default, and
   every auth spec truncates the same `users` table in the same database. Run them in
   parallel and they delete each other's fixtures — a seeded `register` starts returning 409.
