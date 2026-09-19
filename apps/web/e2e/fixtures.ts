@@ -23,17 +23,35 @@ export const NOTES_TXT = path.join(FIXTURES, 'notes.txt');
 
 /** Restated, as the API fixtures restate it: a relaxed bound must fail a test. */
 export const MAX_MEETING_FILE_SIZE_BYTES = 100 * 1024 * 1024;
+export const MAX_CHUNKED_MEETING_FILE_SIZE_BYTES = 1024 ** 3;
+export const MEETING_FILE_CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
+
+/** 150 MB — over the single-request cap, so the app must send it in chunks. */
+export const LARGE_FILE_BYTES = 150 * 1024 * 1024;
 
 /**
- * One byte over the cap, generated into the OS temp directory rather than checked in. Sparse
- * where the filesystem allows it; a full write of 100 MB otherwise, once per run.
+ * One byte over the size a client rejects outright — the **chunked** cap, since Phase 2.3:
+ * anything between the two caps is uploaded in chunks rather than refused. Sparse, and under
+ * an accepted extension so it is the size that is being tested and not the type.
  */
 export function oversizedFile(): string {
-  const file = path.join(os.tmpdir(), 'meeting-files-e2e-oversized.bin');
+  return sparsePdf('meeting-files-e2e-oversized.pdf', MAX_CHUNKED_MEETING_FILE_SIZE_BYTES + 1);
+}
 
-  if (!fs.existsSync(file) || fs.statSync(file).size !== MAX_MEETING_FILE_SIZE_BYTES + 1) {
+/**
+ * A sparse file of `size` bytes that the server will accept.
+ *
+ * It opens with a real PDF header: the API sniffs the assembled bytes, and 150 MB of zeros is
+ * no type it stores. Everything after the header is a hole, so this costs no disk and is
+ * written once per run.
+ */
+export function sparsePdf(name: string, size: number): string {
+  const file = path.join(os.tmpdir(), name);
+
+  if (!fs.existsSync(file) || fs.statSync(file).size !== size) {
     const handle = fs.openSync(file, 'w');
-    fs.ftruncateSync(handle, MAX_MEETING_FILE_SIZE_BYTES + 1);
+    fs.writeSync(handle, Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', 'latin1'));
+    fs.ftruncateSync(handle, size);
     fs.closeSync(handle);
   }
 

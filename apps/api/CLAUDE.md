@@ -285,6 +285,51 @@ the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-p
   `attempts` counts claims, not failures; a row claimed a fourth time is failed unrun, and a
   purge claimed a fourth time is marked purged unrun with its keys at error level in the log,
   so an object the process cannot unlink is not reclaimed every lease for ever.
+- **A chunked upload is a row in its own table, `meeting_file_uploads`, and not a `MeetingFile`.**
+  That is the PRD's "nothing is listed until the bytes are complete", enforced structurally:
+  while the chunks are arriving there is no file row to list, download, or count against the
+  meeting's 50-file cap, so no route needs a rule excluding one. Its chunks live at
+  `uploads/<uploadId>/<index>` under `MEETING_FILES_DIR`. The row carries `attempts` and
+  `leased_until` for the same reason `meeting_files` does — the worker removes an expired
+  session's chunk tree under a lease, so a crash mid-removal is retried and a removal that
+  keeps throwing is eventually given up on rather than reclaimed for ever. `expires_at` is
+  the whole lifecycle: aborting a session sets it to `now()`, so abort and expiry are one
+  path in the worker and the row needs no status column.
+- **Completing a session claims it first, and expires it the moment the file exists.**
+  `CompleteUploadHandler` takes the row's `leased_until` in one conditional statement
+  (`claimForCompletion`) before it reads a chunk, so of two completions racing for one
+  session — a client whose connection dropped mid-completion and retried, as it is told it
+  may — exactly one assembles and the other is a 409 `The upload is already being completed`.
+  The lease is the completion's own five minutes, not the worker's, because it has to outlast
+  a gigabyte copy on a slow disk. A failure before the file exists releases it, so the retry
+  needs no waiting; once `UploadMeetingFileCommand` has answered, `expires_at` is set to
+  `now()` **before** the chunk tree is removed, so a retry from then on is a 404 and never a
+  second file. Assembly writes to `tmp/assemble-<uuid>`, never `tmp/<uploadId>` — two
+  completions must not write into or remove one another's file, whatever the lease is doing.
+- **Three things about the chunked routes are not visible in the controller.** The chunk body
+  is parsed by a raw middleware declared in `MeetingFilesModule.configure` — which is why
+  `express` is a direct dependency of this package and not only a transitive one through
+  `@nestjs/platform-express`: a value imported from it must resolve at runtime, and pnpm's
+  strict layout means an undeclared one compiles and then fails at boot. It is scoped to
+  `MeetingFileUploadsController` and to `PUT` — scoped to the controller rather than a path
+  string so it cannot drift from the route or miss the global `api` prefix, and to `PUT` so the
+  sibling `POST` keeps the global JSON parser. Its limit is one chunk, which is what rejects an
+  oversized body before it is buffered. `MeetingFileUploadsController` is listed **before**
+  `MeetingFilesController`, so `files/uploads/…` is matched as a session and never as a file id
+  by the routes one segment shorter. And a session is private to the person who opened it: the
+  host may delete anyone's file but has no business resuming anyone's upload, so
+  `requireOwnedUpload` matches on `uploaderId` and answers the same 404 for expired, purged,
+  another meeting's, and another user's.
+- **A chunk's length is derived from the session, never believed from the request.** Every
+  chunk but the last must be exactly `chunk_size`; the last is the remainder. That is what
+  makes a truncated chunk a 400 instead of a hole in the assembled file that only the checksum
+  would catch — and it is why the client never chooses the chunk size.
+- **The worker claims two kinds of row, files first.** An expired or aborted session is looked
+  for only when no file is claimable, because a file someone is waiting on outranks a chunk
+  tree nobody will read again. `claimExpired` is the sessions' `claimNext`: the same
+  `FOR UPDATE SKIP LOCKED` under the same lease, so two replicas cannot claim one session and
+  a worker that dies mid-removal leaves a row another reclaims. The tree goes first and
+  `purged_at` second, so a crash between them is retried rather than forgotten.
 - **The worker is in-process, behind `MEETING_FILES_WORKER_ENABLED` (default on).** `pnpm dev`
   runs one API process and a second entry point would be a second thing to start everywhere,
   for two steps that take milliseconds. Every replica polls when it is on; switch it off per
@@ -414,10 +459,11 @@ Four things about that setup are easy to get wrong:
   `start:e2e-web` script exists for the web app's browser suite and must stay in step with it:
   the same temp-dir idea, but the worker **on** with a fast poll, because that suite watches
   the Processing chip disappear.
-- **`truncateUsers` cascades to `meeting_files`** through `meetings`, so the file specs need no
-  cleanup of their own; `test/utils/meeting-files-table.ts` reads and seeds that table over
-  raw SQL, including the worker states (`leased_until`, `attempts`, `purged_at`) a route cannot
-  produce on demand.
+- **`truncateUsers` cascades to `meeting_files` and `meeting_file_uploads`** through
+  `meetings`, so the file specs need no cleanup of their own; `test/utils/meeting-files-table.ts`
+  and `test/utils/meeting-file-uploads-table.ts` read and seed those tables over raw SQL,
+  including the states (`leased_until`, `attempts`, `purged_at`, an `expires_at` in the past) a
+  route cannot produce on demand.
 - **`maxWorkers: 1` is load-bearing.** Jest parallelises across spec files by default, and
   every auth spec truncates the same `users` table in the same database. Run them in
   parallel and they delete each other's fixtures — a seeded `register` starts returning 409.

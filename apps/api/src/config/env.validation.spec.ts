@@ -55,9 +55,18 @@ describe('validate', () => {
       ...VALID,
       MEETING_FILES_LEASE_SECONDS: '30',
       MEETING_FILES_POLL_MS: '250',
+      MEETING_FILE_UPLOAD_TTL_HOURS: '6',
     });
 
     expect(env.MEETING_FILES_LEASE_SECONDS).toBe(30);
     expect(env.MEETING_FILES_POLL_MS).toBe(250);
+    expect(env.MEETING_FILE_UPLOAD_TTL_HOURS).toBe(6);
+  });
+
+  it('defaults the upload session lifetime to a day and rejects one under an hour', () => {
+    expect(validate({ ...VALID }).MEETING_FILE_UPLOAD_TTL_HOURS).toBe(24);
+    expect(() => validate({ ...VALID, MEETING_FILE_UPLOAD_TTL_HOURS: '0' })).toThrow(
+      /MEETING_FILE_UPLOAD_TTL_HOURS/,
+    );
   });
 });

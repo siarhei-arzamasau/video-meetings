@@ -19,3 +19,9 @@ export {
   MEETING_FILE_STATUSES,
   MEETING_FILE_TYPE_MESSAGE,
 } from './types/meeting-file';
+export type { MeetingFileUpload } from './types/meeting-file-upload';
+export {
+  MAX_CHUNKED_MEETING_FILE_SIZE_BYTES,
+  MEETING_FILE_CHUNKED_SIZE_MESSAGE,
+  MEETING_FILE_CHUNK_SIZE_BYTES,
+} from './types/meeting-file-upload';

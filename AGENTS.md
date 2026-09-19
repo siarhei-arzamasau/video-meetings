@@ -47,7 +47,12 @@ interact only over the CQRS buses. Meeting file upload is specified by
 and built in phases; phase 1 (upload, list, download, delete, verify + preview) followed
 [`docs/plans/2026-09-19-meeting-file-upload-phase-1.md`](docs/plans/2026-09-19-meeting-file-upload-phase-1.md),
 whose _Design decisions_ section is the design record for the worker, the storage layout, and
-the module's file layout.
+the module's file layout. Phase 2 (chunked, resumable upload for files over the single-request
+cap) followed
+[`docs/plans/2026-09-19-meeting-file-upload-phase-2.md`](docs/plans/2026-09-19-meeting-file-upload-phase-2.md),
+whose _Assumptions_ and _Design constraints_ sections are the record for the 1 GiB cap, the
+8 MiB chunk size, the session table, and why a completed session enters the phase 1 pipeline
+unchanged.
 
 ## Commands
 
@@ -151,6 +156,12 @@ pnpm dev
 Uploaded meeting files land under `apps/api/storage/` (`MEETING_FILES_DIR`, gitignored),
 which the API creates and checks for writability at boot. In `docker compose`, the `api`
 service mounts a named volume there instead, so a rebuilt container keeps its files.
+
+A file of 100 MB or less is one request. A larger one — up to 1 GiB — is sent in 8 MiB chunks
+through an upload session, which lives under `storage/uploads/<uploadId>/` and stays open for
+`MEETING_FILE_UPLOAD_TTL_HOURS` (default 24). An abandoned session's chunks are removed by the
+same worker that purges deleted files, so the only cost of walking away from an upload is disk
+until it lapses.
 
 `JWT_SECRET` must be at least 32 characters or the API refuses to boot. The `.env.example`
 placeholder satisfies that for local work only.

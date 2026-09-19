@@ -103,6 +103,19 @@ aliases in sync if either changes.
   the thumbnail with the bearer header, turns the blob into `URL.createObjectURL`, and revokes
   it on unmount. Downloads work the same way: a blob, an object URL, a programmatic
   `<a download>`. Both collapse into plain URLs once the token is an `HttpOnly` cookie.
+- **A file over 100 MB is uploaded in chunks, and the row is the only part that looks
+  different.** `FilesSection`'s queue routes on `isChunkedUpload` — over the single-request
+  cap goes to `uploadInChunks`, everything else to the Phase 1 path — and the rest of the
+  component only learns that such a row carries a session id: Cancel tells the server to drop
+  it, Retry resumes it. The client-side size check is the **chunked** cap for that reason;
+  rejecting at 100 MB would refuse a file the app can perfectly well send.
+- **Resume after a reload needs the user to pick the file again, and that is not a gap.** A
+  browser cannot keep a `File` handle across a reload, so `src/lib/upload-sessions.ts` stores
+  the session id in `localStorage` under `video-meetings.upload-session.<name>:<size>:<lastModified>`
+  and the re-picked file is matched to it by that fingerprint. A stored id is a hint, never a
+  promise: `uploadInChunks` asks the server for the session and opens a new one when it has
+  expired or describes a different file, which is what makes a stale entry harmless and why
+  nothing expires entries here. The entry is removed when the upload completes or is cancelled.
 - **The upload queue is visible whenever it has rows, and its copy is the API's.** Add file and
   the drop target work while the file list is still loading or failed to load, so
   `FilesSection` renders the queue on `uploads.length`, not on the list being `ready`; hiding
@@ -131,11 +144,13 @@ The base URL comes from `NEXT_PUBLIC_API_URL`, defaulting to `http://localhost:3
 (origin _and_ the API's `/api` global prefix). Response shapes are imported as types from
 `@repo/shared`.
 
-**One call in that file is an `XMLHttpRequest`, not `fetch`: `uploadMeetingFile`.** `fetch`
-cannot report upload progress and the PRD asks for a percentage when the browser can give one.
-Everything else about it matches `apiFetch` — token first, `ApiError` with the API's message
-on a non-2xx, `AbortSignal` support — and it is tested with a small fake `XMLHttpRequest`. It
-is the only exception and should stay the only one.
+**Two calls in that file are an `XMLHttpRequest`, not `fetch`: `uploadMeetingFile` and
+`putChunk`.** `fetch` cannot report upload progress and the PRD asks for a percentage when the
+browser can give one; both go through one private `sendWithProgress`, so there is a single
+place where that exception lives. Everything else about them matches `apiFetch` — token first,
+`ApiError` with the API's message on a non-2xx, `AbortSignal` support, a 204 resolving to
+`undefined` — and both are tested with a small fake `XMLHttpRequest`. A third caller belongs in
+`sendWithProgress` too, or in `apiFetch`; nothing else in the app may open an `XMLHttpRequest`.
 
 **Next inlines that value into the client bundle at boot, which is why the root `pnpm dev`
 resolves ports before starting anything** — see

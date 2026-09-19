@@ -9,6 +9,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { MEETING_FILE_PROCESSING_FAILED_MESSAGE } from '@repo/shared';
 
+import { MeetingFileUploadRepository } from '../services/meeting-file-upload.repository';
+import type { MeetingFileUploadRecord } from '../services/meeting-file-upload.mapper';
 import { thumbnailKeyOf } from '../services/meeting-file.mapper';
 import { MeetingFileRepository } from '../services/meeting-file.repository';
 import type { ClaimedFile } from '../services/meeting-file.repository';
@@ -29,17 +31,20 @@ export const REPEATED_FAILURE = 'Processing failed after repeated attempts';
 
 /**
  * Claims, not failures. A row claimed for the (MAX_ATTEMPTS + 1)th time is failed unrun; a
- * deleted row claimed that often is marked purged unrun, with the keys in the log, so neither
- * kind can be reclaimed forever.
+ * deleted row or an expired upload session claimed that often is marked purged unrun, with
+ * the keys in the log, so no kind of row can be reclaimed forever.
  */
 export const MAX_ATTEMPTS = 3;
 
 /**
- * The in-process polling worker. One claim per tick; a claimed row is either purged (it was
- * deleted) or run through the pipeline and moved to `ready` or `failed` with a conditional
- * transition on both the status and the lease this claim was given, so a row that was deleted
- * mid-run — or whose lease expired and went to another worker — is left alone, the patch
- * discarded, and the thumbnail it may have written removed.
+ * The in-process polling worker. One claim per tick: a file, or — when no file is claimable —
+ * an expired upload session, whose chunk tree it removes.
+ *
+ * A claimed file row is either purged (it was deleted) or run through the pipeline and moved
+ * to `ready` or `failed` with a conditional transition on both the status and the lease this
+ * claim was given, so a row that was deleted mid-run — or whose lease expired and went to
+ * another worker — is left alone, the patch discarded, and the thumbnail it may have written
+ * removed.
  *
  * Behind `MEETING_FILES_WORKER_ENABLED`: `pnpm dev` runs one API process, and a second entry
  * point would be a second thing to start everywhere for a pipeline whose steps take
@@ -61,6 +66,7 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
   constructor(
     config: ConfigService,
     private readonly files: MeetingFileRepository,
+    private readonly uploads: MeetingFileUploadRepository,
     private readonly storage: MeetingFileStorage,
     @Optional() @Inject(PIPELINE_STEPS) steps?: ReadonlyArray<ProcessingStep>,
   ) {
@@ -95,17 +101,31 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     return this.drainFrom(0);
   }
 
-  /** One claim. Resolves to whether there was a row to handle. */
+  /**
+   * One claim, of either kind. Resolves to whether there was a row to handle.
+   *
+   * Files first: a file someone is waiting on outranks a chunk tree nobody will read again.
+   * An expired session is only looked for once there is no file left to process, which also
+   * means `drain()` ends with every session of both kinds handled.
+   */
   async tick(): Promise<boolean> {
     const claimed = await this.files.claimNext(this.leaseSeconds);
 
-    if (claimed === null) {
-      return false;
+    if (claimed !== null) {
+      await this.handle(claimed);
+
+      return true;
     }
 
-    await this.handle(claimed);
+    const expired = await this.uploads.claimExpired(this.leaseSeconds);
 
-    return true;
+    if (expired !== null) {
+      await this.purgeUpload(expired);
+
+      return true;
+    }
+
+    return false;
   }
 
   private async drainFrom(count: number): Promise<number> {
@@ -267,6 +287,34 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     await this.files.markPurged(claimed.id);
     this.logger.log(
       `File ${claimed.id} of meeting ${claimed.meetingId}: purged in ${String(Date.now() - startedAt)}ms`,
+    );
+  }
+
+  /**
+   * An expired or aborted session: remove its chunk tree, then mark it purged — in that
+   * order, so a crash between the two leaves a row that is claimed again rather than chunks
+   * nobody will ever collect. `removeTree` is idempotent, so the retry costs one `rm -rf`.
+   *
+   * Given up on after MAX_ATTEMPTS claims, as a file's purge is, with the directory logged
+   * for an operator: a tree the process cannot remove must not be reclaimed every lease for
+   * ever.
+   */
+  private async purgeUpload(upload: MeetingFileUploadRecord): Promise<void> {
+    const startedAt = Date.now();
+
+    if (upload.attempts > MAX_ATTEMPTS) {
+      this.logger.error(
+        `Upload ${upload.id} claimed ${String(upload.attempts)} times for purge; marking it purged with chunks possibly left under uploads/${upload.id}`,
+      );
+      await this.uploads.markPurged(upload.id);
+
+      return;
+    }
+
+    await this.storage.removeTree(upload.id);
+    await this.uploads.markPurged(upload.id);
+    this.logger.log(
+      `Upload ${upload.id} of meeting ${upload.meetingId}: chunks purged in ${String(Date.now() - startedAt)}ms`,
     );
   }
 

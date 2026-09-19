@@ -26,6 +26,22 @@ export function meetingFileThumbnailUrl(meetingId: string, fileId: string): stri
   return `${meetingFileUrl(meetingId, fileId)}/thumbnail`;
 }
 
+export function meetingFileUploadsUrl(meetingId: string): string {
+  return `${meetingFilesUrl(meetingId)}/uploads`;
+}
+
+export function meetingFileUploadUrl(meetingId: string, uploadId: string): string {
+  return `${meetingFileUploadsUrl(meetingId)}/${uploadId}`;
+}
+
+export function meetingFileChunkUrl(meetingId: string, uploadId: string, index: number): string {
+  return `${meetingFileUploadUrl(meetingId, uploadId)}/chunks/${String(index)}`;
+}
+
+export function meetingFileCompleteUrl(meetingId: string, uploadId: string): string {
+  return `${meetingFileUploadUrl(meetingId, uploadId)}/complete`;
+}
+
 /** Provider token the worker is registered under, so the e2e spec can reach `drain()`. */
 export const MEETING_FILE_WORKER_TOKEN = 'MEETING_FILE_WORKER';
 
@@ -47,6 +63,10 @@ export const MAX_PARTICIPANTS = 100;
 export const MAX_MEETING_FILE_SIZE_BYTES = 100 * 1024 * 1024;
 export const MAX_MEETING_FILES = 50;
 export const MAX_MEETING_FILE_NAME_LENGTH = 255;
+
+/** The chunked upload contract, restated for the same reason. */
+export const MAX_CHUNKED_MEETING_FILE_SIZE_BYTES = 1024 ** 3;
+export const MEETING_FILE_CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
 
 /**
  * The storage root `setup-env.ts` created for this run. Read at call time, not at import: the
