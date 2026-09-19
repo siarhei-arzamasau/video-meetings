@@ -8,8 +8,18 @@ import { truncateUsers } from './users-table';
 export interface ApiSuite {
   /** Available from the first `beforeEach` onwards; throws if read at describe scope. */
   prisma(): PrismaService;
+  /** The running application, for the rare spec that needs a provider by token. */
+  app(): INestApplication;
   post(url: string, body: object): request.Test;
+  /** A multipart request with one file part. `fieldName` defaults to the API's `file`. */
+  postFile(
+    url: string,
+    token: string,
+    file: string | Buffer,
+    options?: { fieldName?: string; filename?: string },
+  ): request.Test;
   get(url: string): request.Test;
+  delete(url: string): request.Test;
 }
 
 /**
@@ -55,8 +65,15 @@ export function useApiSuite(): ApiSuite {
 
   return {
     prisma: () => assigned(prisma, 'prisma'),
+    app: () => assigned(app, 'app'),
     post: (url, body) => request(assigned(app, 'app').getHttpServer()).post(url).send(body),
+    postFile: (url, token, file, { fieldName = 'file', filename } = {}) =>
+      request(assigned(app, 'app').getHttpServer())
+        .post(url)
+        .set('Authorization', `Bearer ${token}`)
+        .attach(fieldName, file, filename === undefined ? undefined : { filename }),
     get: (url) => request(assigned(app, 'app').getHttpServer()).get(url),
+    delete: (url) => request(assigned(app, 'app').getHttpServer()).delete(url),
   };
 }
 

@@ -10,6 +10,25 @@ export const LOGIN_URL = '/api/auth/login';
 export const ME_URL = '/api/auth/me';
 export const MEETINGS_URL = '/api/meetings';
 
+export function meetingFilesUrl(meetingId: string): string {
+  return `${MEETINGS_URL}/${meetingId}/files`;
+}
+
+export function meetingFileUrl(meetingId: string, fileId: string): string {
+  return `${meetingFilesUrl(meetingId)}/${fileId}`;
+}
+
+export function meetingFileContentUrl(meetingId: string, fileId: string): string {
+  return `${meetingFileUrl(meetingId, fileId)}/content`;
+}
+
+export function meetingFileThumbnailUrl(meetingId: string, fileId: string): string {
+  return `${meetingFileUrl(meetingId, fileId)}/thumbnail`;
+}
+
+/** Provider token the worker is registered under, so the e2e spec can reach `drain()`. */
+export const MEETING_FILE_WORKER_TOKEN = 'MEETING_FILE_WORKER';
+
 export const EMAIL = 'ada@example.com';
 export const PASSWORD = 'correct-horse-battery-42';
 

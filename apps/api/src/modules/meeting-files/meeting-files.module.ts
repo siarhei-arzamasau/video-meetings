@@ -1,5 +1,10 @@
 import { Module } from '@nestjs/common';
+import { CqrsModule } from '@nestjs/cqrs';
 
+import { AuthModule } from '../auth/auth.module';
+import { MeetingFilesController } from './meeting-files.controller';
+import { MeetingFileRepository } from './services/meeting-file.repository';
+import { MeetingFilesService } from './services/meeting-files.service';
 import { MeetingFileStorage } from './storage/meeting-file-storage';
 
 /**
@@ -10,6 +15,10 @@ import { MeetingFileStorage } from './storage/meeting-file-storage';
  * module owns its own table, so `PrismaService` is allowed here.
  */
 @Module({
-  providers: [MeetingFileStorage],
+  // Imported per module rather than registered globally, so a module's `imports` states
+  // what it actually needs. `AuthModule` is for the guard.
+  imports: [CqrsModule, AuthModule],
+  controllers: [MeetingFilesController],
+  providers: [MeetingFilesService, MeetingFileRepository, MeetingFileStorage],
 })
 export class MeetingFilesModule {}
