@@ -296,7 +296,10 @@ the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-p
   the whole lifecycle: aborting a session sets it to `now()`, so abort and expiry are one
   path in the worker and the row needs no status column.
 - **Three things about the chunked routes are not visible in the controller.** The chunk body
-  is parsed by a raw middleware declared in `MeetingFilesModule.configure`, scoped to
+  is parsed by a raw middleware declared in `MeetingFilesModule.configure` — which is why
+  `express` is a direct dependency of this package and not only a transitive one through
+  `@nestjs/platform-express`: a value imported from it must resolve at runtime, and pnpm's
+  strict layout means an undeclared one compiles and then fails at boot. It is scoped to
   `MeetingFileUploadsController` and to `PUT` — scoped to the controller rather than a path
   string so it cannot drift from the route or miss the global `api` prefix, and to `PUT` so the
   sibling `POST` keeps the global JSON parser. Its limit is one chunk, which is what rejects an
