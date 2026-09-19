@@ -1,10 +1,15 @@
 import type { MeetingFile } from '@repo/shared';
-import { MAX_MEETING_FILE_SIZE_BYTES, MEETING_FILE_ACCEPT } from '@repo/shared';
+import {
+  MAX_CHUNKED_MEETING_FILE_SIZE_BYTES,
+  MAX_MEETING_FILE_SIZE_BYTES,
+  MEETING_FILE_ACCEPT,
+} from '@repo/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
   acceptAttribute,
   formatFileSize,
+  isChunkedUpload,
   isProcessing,
   sortNewestFirst,
   statusPresentation,
@@ -71,15 +76,24 @@ describe('validateFileBeforeUpload', () => {
     expect(validateFileBeforeUpload({ name: 'NOTES.MD', size: 10 })).toBeNull();
   });
 
-  it('rejects over the cap with the size copy, before anything else', () => {
+  it('rejects over the chunked cap with the size copy, before anything else', () => {
     expect(
-      validateFileBeforeUpload({ name: 'page.html', size: MAX_MEETING_FILE_SIZE_BYTES + 1 }),
-    ).toBe('Files must be 100 MB or smaller.');
+      validateFileBeforeUpload({
+        name: 'page.html',
+        size: MAX_CHUNKED_MEETING_FILE_SIZE_BYTES + 1,
+      }),
+    ).toBe('Files must be 1 GB or smaller.');
   });
 
-  it('accepts exactly the cap', () => {
+  it('accepts a file over the single-request cap: it is chunked, not rejected', () => {
     expect(
-      validateFileBeforeUpload({ name: 'big.mp4', size: MAX_MEETING_FILE_SIZE_BYTES }),
+      validateFileBeforeUpload({ name: 'big.mp4', size: MAX_MEETING_FILE_SIZE_BYTES + 1 }),
+    ).toBeNull();
+  });
+
+  it('accepts exactly the chunked cap', () => {
+    expect(
+      validateFileBeforeUpload({ name: 'big.mp4', size: MAX_CHUNKED_MEETING_FILE_SIZE_BYTES }),
     ).toBeNull();
   });
 
@@ -146,5 +160,12 @@ describe('sortNewestFirst', () => {
 
     expect(sorted).not.toBe(files);
     expect(files.map(({ id }) => id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('isChunkedUpload', () => {
+  it('is the single-request cap, exclusive: one byte over goes in chunks', () => {
+    expect(isChunkedUpload({ size: MAX_MEETING_FILE_SIZE_BYTES })).toBe(false);
+    expect(isChunkedUpload({ size: MAX_MEETING_FILE_SIZE_BYTES + 1 })).toBe(true);
   });
 });

@@ -13,23 +13,38 @@ export interface QueuedUpload {
   progress: number | null;
   controller: AbortController;
   error: string | null;
+  /** The chunked session's id once it exists; `null` for a single-request upload. */
+  uploadId: string | null;
+  /** Set when a chunked upload picked up chunks the server already had. */
+  resuming: boolean;
+  /**
+   * Whether another attempt is worth offering. A file the client rejected before any request
+   * would be rejected again, so only a failure after the bytes started moving gets Retry.
+   */
+  canRetry: boolean;
 }
 
 interface UploadRowProps {
   upload: QueuedUpload;
   onCancel(localId: string): void;
   onDismiss(localId: string): void;
+  onRetry(localId: string): void;
 }
 
 /**
  * An upload as a row in the same list as the files, so it lands where the file will. In
- * flight: a progress bar, indeterminate until the browser reports a length, and Cancel — there
- * is nothing to clean up server-side, because the record is written only after the bytes land.
- * Failed: the message, from the client check or the API verbatim, and Dismiss.
+ * flight: a progress bar, indeterminate until the browser reports a length, and Cancel —
+ * which for a chunked upload also tells the server to drop the session, and for a
+ * single-request one has nothing to clean up, because the record is written only after the
+ * bytes land. Failed: the message, from the client check or the API verbatim, Dismiss, and —
+ * when the bytes had started moving — Retry, which resumes rather than starts over.
  */
-export function UploadRow({ upload, onCancel, onDismiss }: UploadRowProps) {
-  const { file, status, progress, error, localId } = upload;
-  const label = `Uploading ${file.name}`;
+export function UploadRow({ upload, onCancel, onDismiss, onRetry }: UploadRowProps) {
+  const { file, status, progress, error, localId, resuming, canRetry } = upload;
+  // The one place a resume is announced: a progress bar's value already reaches assistive
+  // technology through its role, so the label carries the state instead of a live region that
+  // would read out every percent.
+  const label = `${resuming ? 'Resuming' : 'Uploading'} ${file.name}`;
 
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3">
@@ -54,7 +69,7 @@ export function UploadRow({ upload, onCancel, onDismiss }: UploadRowProps) {
                 ? 'Waiting'
                 : progress === null
                   ? 'Uploading'
-                  : `${String(Math.round(progress * 100))}%`}
+                  : `${resuming ? 'Resuming… ' : ''}${String(Math.round(progress * 100))}%`}
             </span>
             <ProgressBar
               aria-label={label}
@@ -71,10 +86,17 @@ export function UploadRow({ upload, onCancel, onDismiss }: UploadRowProps) {
       </div>
 
       {status === 'failed' ? (
-        <Button variant="tertiary" size="sm" onPress={() => onDismiss(localId)}>
-          <CloseIcon />
-          Dismiss
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {canRetry && (
+            <Button variant="secondary" size="sm" onPress={() => onRetry(localId)}>
+              Retry
+            </Button>
+          )}
+          <Button variant="tertiary" size="sm" onPress={() => onDismiss(localId)}>
+            <CloseIcon />
+            Dismiss
+          </Button>
+        </div>
       ) : (
         <Button variant="tertiary" size="sm" onPress={() => onCancel(localId)}>
           <CloseIcon />

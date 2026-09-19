@@ -1,12 +1,13 @@
 import type { MeetingFile } from '@repo/shared';
 import {
+  MAX_CHUNKED_MEETING_FILE_SIZE_BYTES,
   MAX_MEETING_FILE_NAME_LENGTH,
   MAX_MEETING_FILE_SIZE_BYTES,
   MEETING_FILE_ACCEPT,
+  MEETING_FILE_CHUNKED_SIZE_MESSAGE,
   MEETING_FILE_EMPTY_MESSAGE,
   MEETING_FILE_NAME_MESSAGE,
   MEETING_FILE_PROCESSING_FAILED_MESSAGE,
-  MEETING_FILE_SIZE_MESSAGE,
   MEETING_FILE_TYPE_MESSAGE,
 } from '@repo/shared';
 
@@ -14,7 +15,7 @@ import {
  * The upload copy, from the same constants the API sends: a check that runs here before the
  * round trip reads exactly like the server's rejection of the same file.
  */
-export const SIZE_MESSAGE = MEETING_FILE_SIZE_MESSAGE;
+export const SIZE_MESSAGE = MEETING_FILE_CHUNKED_SIZE_MESSAGE;
 export const TYPE_MESSAGE = MEETING_FILE_TYPE_MESSAGE;
 export const EMPTY_MESSAGE = MEETING_FILE_EMPTY_MESSAGE;
 export const NAME_MESSAGE = MEETING_FILE_NAME_MESSAGE;
@@ -81,12 +82,25 @@ function extensionOf(name: string): string {
 }
 
 /**
+ * Whether a file goes through the chunked path. The single-request route still enforces its
+ * own 100 MB cap server-side, so this is not a preference — a larger file sent that way is a
+ * 413.
+ */
+export function isChunkedUpload(file: Pick<File, 'size'>): boolean {
+  return file.size > MAX_MEETING_FILE_SIZE_BYTES;
+}
+
+/**
  * The checks worth a round trip: size, emptiness, name, and type by extension. `file.type`
  * is not used for the type — browsers report it inconsistently for Markdown and CSV, and the
  * server sniffs the bytes anyway. `null` means send it.
+ *
+ * The size bound is the **chunked** cap, not the single-request one: anything over 100 MB is
+ * uploaded in chunks rather than rejected, so rejecting it here would refuse a file the app
+ * can perfectly well send.
  */
 export function validateFileBeforeUpload(file: Pick<File, 'name' | 'size'>): string | null {
-  if (file.size > MAX_MEETING_FILE_SIZE_BYTES) {
+  if (file.size > MAX_CHUNKED_MEETING_FILE_SIZE_BYTES) {
     return SIZE_MESSAGE;
   }
 

@@ -6,8 +6,19 @@ import type { DragEvent } from 'react';
 import { useEffect, useRef, useState } from 'react';
 
 import { FileIcon, PlusIcon, WarningIcon } from '@/components/icons';
-import { ApiError, uploadMeetingFile } from '@/lib/api-client';
-import { acceptAttribute, sortNewestFirst, validateFileBeforeUpload } from '@/lib/meeting-files';
+import { ApiError, abortUpload, uploadMeetingFile } from '@/lib/api-client';
+import { fingerprint, uploadInChunks } from '@/lib/chunked-upload';
+import {
+  acceptAttribute,
+  isChunkedUpload,
+  sortNewestFirst,
+  validateFileBeforeUpload,
+} from '@/lib/meeting-files';
+import {
+  forgetUploadSession,
+  recallUploadSession,
+  rememberUploadSession,
+} from '@/lib/upload-sessions';
 import { describeFailure } from '@/lib/use-signed-in';
 import { DeleteFileDialog } from './delete-file-dialog';
 import { FileRow } from './file-row';
@@ -25,10 +36,15 @@ interface FilesSectionProps {
 /**
  * The files of a meeting: the list, an upload queue that feeds it, and a drop target.
  *
- * Pick and drop go through one `enqueue`. The queue runs one request at a time — the PRD's
+ * Pick and drop go through one `enqueue`. The queue runs one upload at a time — the PRD's
  * "one rejection does not lose the rest" — with the client-side checks applied on the way
  * in so an oversized or wrong-typed file lands as a failed row without a round trip. A
  * success is put straight into the list; a failure stays on its row with its message.
+ *
+ * A file over the single-request cap goes through `uploadInChunks` instead, and the only
+ * difference the rest of this component sees is that such a row carries a session id: Cancel
+ * tells the server to drop it, Retry resumes it, and the id is remembered under the file's
+ * fingerprint so a reload can resume it too once the user picks the same file again.
  */
 export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSectionProps) {
   const { list, refresh, add, remove } = useMeetingFiles(token, meeting.id, onUnauthorized);
@@ -53,6 +69,10 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
         progress: null,
         controller: new AbortController(),
         error,
+        uploadId: null,
+        resuming: false,
+        // A file this app rejected without asking the server would be rejected again.
+        canRetry: false,
       };
     });
 
@@ -72,7 +92,24 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
   function cancel(localId: string) {
     const upload = uploads.find((candidate) => candidate.localId === localId);
     upload?.controller.abort();
+
+    if (upload !== undefined && upload.uploadId !== null) {
+      forgetUploadSession(fingerprint(upload.file));
+      // Best effort: an abort that does not arrive costs the session its TTL on the server,
+      // after which the worker removes the chunks anyway. There is nothing to tell the user.
+      void abortUpload(token, meeting.id, upload.uploadId).catch(() => undefined);
+    }
+
     dismiss(localId);
+  }
+
+  /**
+   * Another attempt at a chunked upload that failed after its session existed. The runner
+   * picks the row up again and `uploadInChunks` resumes from the remembered session, so a
+   * retry costs the chunks that did not land, not the whole file.
+   */
+  function retry(localId: string) {
+    patch(localId, { status: 'queued', error: null, canRetry: false });
   }
 
   // The runner: whenever nothing is in flight and something is waiting, start it. Keyed on the
@@ -90,11 +127,31 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
 
     patch(next.localId, { status: 'uploading' });
 
-    void uploadMeetingFile(token, meeting.id, next.file, {
-      signal: next.controller.signal,
-      onProgress: (fraction) => patch(next.localId, { progress: fraction }),
-    })
+    const chunked = isChunkedUpload(next.file);
+    const key = fingerprint(next.file);
+    const onProgress = (fraction: number) => patch(next.localId, { progress: fraction });
+    const started = chunked
+      ? uploadInChunks(token, meeting.id, next.file, {
+          signal: next.controller.signal,
+          onProgress,
+          resumeFrom: recallUploadSession(key) ?? undefined,
+          onSession: (uploadId) => {
+            rememberUploadSession(key, uploadId);
+            patch(next.localId, { uploadId });
+          },
+          onResume: () => patch(next.localId, { resuming: true }),
+        })
+      : uploadMeetingFile(token, meeting.id, next.file, {
+          signal: next.controller.signal,
+          onProgress,
+        });
+
+    void started
       .then((file) => {
+        if (chunked) {
+          forgetUploadSession(key);
+        }
+
         add(file);
         dismiss(next.localId);
       })
@@ -110,7 +167,12 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
           return;
         }
 
-        patch(next.localId, { status: 'failed', error: describeFailure(error) });
+        // A chunked upload keeps its session, so Retry resumes rather than starts over.
+        patch(next.localId, {
+          status: 'failed',
+          error: describeFailure(error),
+          canRetry: chunked,
+        });
       });
     // `patch` and `dismiss` are stable state updaters wrapped in plain functions. `add` is in
     // the list because it changes with the list's readiness, and the effect bails out early
@@ -232,7 +294,7 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
           {uploads.map((upload, index) => (
             <li key={upload.localId} className="flex flex-col">
               {index > 0 && <Separator className="my-1" />}
-              <UploadRow upload={upload} onCancel={cancel} onDismiss={dismiss} />
+              <UploadRow upload={upload} onCancel={cancel} onDismiss={dismiss} onRetry={retry} />
             </li>
           ))}
           {files.map((file, index) => (

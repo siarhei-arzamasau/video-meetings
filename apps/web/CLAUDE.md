@@ -103,6 +103,19 @@ aliases in sync if either changes.
   the thumbnail with the bearer header, turns the blob into `URL.createObjectURL`, and revokes
   it on unmount. Downloads work the same way: a blob, an object URL, a programmatic
   `<a download>`. Both collapse into plain URLs once the token is an `HttpOnly` cookie.
+- **A file over 100 MB is uploaded in chunks, and the row is the only part that looks
+  different.** `FilesSection`'s queue routes on `isChunkedUpload` — over the single-request
+  cap goes to `uploadInChunks`, everything else to the Phase 1 path — and the rest of the
+  component only learns that such a row carries a session id: Cancel tells the server to drop
+  it, Retry resumes it. The client-side size check is the **chunked** cap for that reason;
+  rejecting at 100 MB would refuse a file the app can perfectly well send.
+- **Resume after a reload needs the user to pick the file again, and that is not a gap.** A
+  browser cannot keep a `File` handle across a reload, so `src/lib/upload-sessions.ts` stores
+  the session id in `localStorage` under `video-meetings.upload-session.<name>:<size>:<lastModified>`
+  and the re-picked file is matched to it by that fingerprint. A stored id is a hint, never a
+  promise: `uploadInChunks` asks the server for the session and opens a new one when it has
+  expired or describes a different file, which is what makes a stale entry harmless and why
+  nothing expires entries here. The entry is removed when the upload completes or is cancelled.
 - **The upload queue is visible whenever it has rows, and its copy is the API's.** Add file and
   the drop target work while the file list is still loading or failed to load, so
   `FilesSection` renders the queue on `uploads.length`, not on the list being `ready`; hiding
