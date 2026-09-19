@@ -12,7 +12,7 @@ Monorepo holding the video meetings frontend and backend.
 Email-and-password authentication is in place (`POST /api/auth/register`,
 `POST /api/auth/login`, `GET /api/auth/me`), along with the authorized meetings API
 (`POST /api/meetings`, `GET /api/meetings`, `GET /api/meetings/:id`). See
-[`docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/superpowers/specs/2026-07-29-video-meetings-monorepo-design.md)
+[`docs/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/specs/2026-07-29-video-meetings-monorepo-design.md)
 for the design it implements.
 
 ## Requirements
