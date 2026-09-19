@@ -29,6 +29,21 @@ export const MAX_MEETING_FILE_SIZE_BYTES = 100 * 1024 * 1024;
 export const MAX_MEETING_FILES = 50;
 export const MAX_MEETING_FILE_NAME_LENGTH = 255;
 
+/**
+ * The storage root `setup-env.ts` created for this run. Read at call time, not at import: the
+ * setup file runs first, but a module-level constant here would freeze whatever `process.env`
+ * held when this module happened to be evaluated.
+ */
+export function meetingFilesDir(): string {
+  const dir = process.env['MEETING_FILES_DIR'];
+
+  if (dir === undefined || dir === '') {
+    throw new Error('MEETING_FILES_DIR is not set — is test/setup-env.ts in setupFiles?');
+  }
+
+  return dir;
+}
+
 /** The shortest password the API accepts. One character less must be a 400. */
 export const MIN_PASSWORD_LENGTH = 8;
 

@@ -24,6 +24,9 @@ docker-compose.override.yml
 # prisma generated client
 generated/
 
+# meeting file uploads (MEETING_FILES_DIR default, created by the API at boot)
+apps/api/storage/
+
 # tests & coverage
 coverage/
 
