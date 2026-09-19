@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -10,12 +11,14 @@ import { createTestApp } from './utils/create-test-app';
 import {
   EMAIL,
   MAX_CHUNKED_MEETING_FILE_SIZE_BYTES,
+  MEETING_FILE_WORKER_TOKEN,
   MAX_MEETING_FILES,
   MAX_MEETING_FILE_NAME_LENGTH,
   MEETING_FILE_CHUNK_SIZE_BYTES,
   OTHER_EMAIL,
   THIRD_EMAIL,
   meetingFileChunkUrl,
+  meetingFileCompleteUrl,
   meetingFileUploadUrl,
   meetingFileUploadsUrl,
   meetingFilesDir,
@@ -27,10 +30,22 @@ import {
   findMeetingFileUploadRow,
   setMeetingFileUploadState,
 } from './utils/meeting-file-uploads-table';
-import { countMeetingFiles, insertMeetingFileRow } from './utils/meeting-files-table';
+import {
+  countMeetingFiles,
+  findMeetingFileRow,
+  insertMeetingFileRow,
+} from './utils/meeting-files-table';
 import { createMeeting, putBytes, registerUser } from './utils/meeting-files-suite';
 
 const CHUNK = MEETING_FILE_CHUNK_SIZE_BYTES;
+const FIXTURES = path.join(__dirname, 'fixtures');
+
+/** The one handle the spec needs, reached by token, as the worker spec does. */
+interface WorkerHandle {
+  drain(): Promise<number>;
+}
+
+const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const NAME_MESSAGE = 'The file name must be 1–255 characters and contain no path separators';
 const SIZE_MESSAGE = 'The file size must be a positive number of bytes';
@@ -508,6 +523,323 @@ describe('chunked upload sessions', () => {
       const { meetingId, uploadId } = await openSession();
 
       await suite.get(meetingFileUploadUrl(meetingId, uploadId)).expect(401);
+    });
+  });
+
+  describe('completing a session', () => {
+    /** A real PDF, padded to `size`, so the assembled file sniffs as a type the API stores. */
+    const paddedPdf = (size: number): Buffer => {
+      const pdf = fs.readFileSync(path.join(FIXTURES, 'sample.pdf'));
+
+      return Buffer.concat([pdf, Buffer.alloc(size - pdf.length, 0x20)]);
+    };
+
+    /** Opens a session for `bytes` and sends every chunk of it. */
+    const sendWholeFile = async (
+      token: string,
+      meetingId: string,
+      bytes: Buffer,
+      name = 'recording.pdf',
+    ): Promise<string> => {
+      const created = await createSession(token, meetingId, {
+        name,
+        size: bytes.length,
+      }).expect(201);
+      const { id, chunkCount } = created.body as MeetingFileUpload;
+
+      // Sequentially, in index order, as a client would — and as a reduce rather than a loop
+      // with an await in it, which the workspace's lint rules steer away from.
+      await Array.from({ length: chunkCount }, (_, index) => index).reduce(
+        async (previous, index) => {
+          await previous;
+          await sendChunk(
+            token,
+            meetingId,
+            id,
+            index,
+            bytes.subarray(index * CHUNK, Math.min((index + 1) * CHUNK, bytes.length)),
+          );
+        },
+        Promise.resolve(),
+      );
+
+      return id;
+    };
+
+    it('turns three chunks into one file, byte-identical, and purges the session', async () => {
+      const host = await registerUser(suite, EMAIL);
+      const meeting = await createMeeting(suite, host);
+      const bytes = paddedPdf(2 * CHUNK + 5);
+      const uploadId = await sendWholeFile(host.token, meeting.id, bytes);
+
+      const response = await suite
+        .post(meetingFileCompleteUrl(meeting.id, uploadId), {})
+        .set('Authorization', `Bearer ${host.token}`)
+        .expect(201);
+      const file = response.body as MeetingFile;
+
+      // Indistinguishable from a single-request upload: same shape, same sniffed type, same
+      // starting status.
+      expect(file).toEqual({
+        id: expect.any(String),
+        meetingId: meeting.id,
+        uploaderId: host.id,
+        name: 'recording.pdf',
+        contentType: 'application/pdf',
+        size: bytes.length,
+        status: 'uploaded',
+        createdAt: expect.stringMatching(ISO_INSTANT),
+      });
+
+      const stored = path.join(meetingFilesDir(), meeting.id, file.id);
+      expect(sha256(fs.readFileSync(stored))).toBe(sha256(bytes));
+
+      // The session is gone: its chunks removed and the row marked purged, in that order.
+      expect(fs.existsSync(chunkDirOf(uploadId))).toBe(false);
+      await expect(findMeetingFileUploadRow(suite.prisma(), uploadId)).resolves.toMatchObject({
+        purged_at: expect.any(String),
+      });
+      expect(tempDirEntries()).toEqual([]);
+
+      // And it is an ordinary file from here on: the worker takes it to ready with a checksum.
+      const worker = suite.app().get<WorkerHandle>(MEETING_FILE_WORKER_TOKEN);
+      await worker.drain();
+
+      await expect(findMeetingFileRow(suite.prisma(), file.id)).resolves.toMatchObject({
+        status: 'ready',
+        checksum: sha256(bytes),
+      });
+    }, 120_000);
+
+    it('the completed session is over: a second complete is a 404', async () => {
+      const host = await registerUser(suite, EMAIL);
+      const meeting = await createMeeting(suite, host);
+      const bytes = paddedPdf(1_000);
+      const uploadId = await sendWholeFile(host.token, meeting.id, bytes);
+
+      await suite
+        .post(meetingFileCompleteUrl(meeting.id, uploadId), {})
+        .set('Authorization', `Bearer ${host.token}`)
+        .expect(201);
+      const response = await suite
+        .post(meetingFileCompleteUrl(meeting.id, uploadId), {})
+        .set('Authorization', `Bearer ${host.token}`)
+        .expect(404);
+
+      expect(messageOf(response)).toBe('Upload not found');
+      await expect(countMeetingFiles(suite.prisma())).resolves.toBe(1);
+    });
+
+    it('409 with a chunk missing, creating nothing and keeping the session', async () => {
+      const host = await registerUser(suite, EMAIL);
+      const meeting = await createMeeting(suite, host);
+      const created = await createSession(host.token, meeting.id, {
+        name: 'recording.pdf',
+        size: CHUNK + 4,
+      }).expect(201);
+      const { id } = created.body as MeetingFileUpload;
+      await sendChunk(host.token, meeting.id, id, 1, filled(4, 0x01)).expect(204);
+
+      const response = await suite
+        .post(meetingFileCompleteUrl(meeting.id, id), {})
+        .set('Authorization', `Bearer ${host.token}`)
+        .expect(409);
+
+      expect(messageOf(response)).toBe('The upload is incomplete');
+      await expect(countMeetingFiles(suite.prisma())).resolves.toBe(0);
+      expect(chunksOnDisk(id)).toEqual(['1']);
+      await expect(findMeetingFileUploadRow(suite.prisma(), id)).resolves.toMatchObject({
+        purged_at: null,
+      });
+      expect(tempDirEntries()).toEqual([]);
+    }, 30_000);
+
+    it('415 for an HTML file named .pdf, leaving every chunk in place to retry', async () => {
+      const host = await registerUser(suite, EMAIL);
+      const meeting = await createMeeting(suite, host);
+      const bytes = fs.readFileSync(path.join(FIXTURES, 'page.html'));
+      const uploadId = await sendWholeFile(host.token, meeting.id, bytes, 'page.pdf');
+
+      const response = await suite
+        .post(meetingFileCompleteUrl(meeting.id, uploadId), {})
+        .set('Authorization', `Bearer ${host.token}`)
+        .expect(415);
+
+      expect(messageOf(response)).toBe('That file type is not supported.');
+      await expect(countMeetingFiles(suite.prisma())).resolves.toBe(0);
+      // The session survives, so a client that picked the wrong file has not lost the upload.
+      expect(chunksOnDisk(uploadId)).toEqual(['0']);
+      await expect(findMeetingFileUploadRow(suite.prisma(), uploadId)).resolves.toMatchObject({
+        purged_at: null,
+      });
+      expect(tempDirEntries()).toEqual([]);
+    });
+
+    it('409 when the meeting reached the file cap between create and complete', async () => {
+      const host = await registerUser(suite, EMAIL);
+      const meeting = await createMeeting(suite, host);
+      const uploadId = await sendWholeFile(host.token, meeting.id, paddedPdf(1_000));
+
+      // The cap is reached after the session was opened — which is exactly why complete
+      // checks again rather than trusting the check create made.
+      await Promise.all(
+        Array.from({ length: MAX_MEETING_FILES }, () =>
+          insertMeetingFileRow(suite.prisma(), {
+            meeting_id: meeting.id,
+            uploader_id: host.id,
+          }),
+        ),
+      );
+
+      const response = await suite
+        .post(meetingFileCompleteUrl(meeting.id, uploadId), {})
+        .set('Authorization', `Bearer ${host.token}`)
+        .expect(409);
+
+      expect(messageOf(response)).toBe(
+        `This meeting already has ${String(MAX_MEETING_FILES)} files.`,
+      );
+      await expect(countMeetingFiles(suite.prisma())).resolves.toBe(MAX_MEETING_FILES);
+      expect(chunksOnDisk(uploadId)).toEqual(['0']);
+      expect(tempDirEntries()).toEqual([]);
+    });
+
+    it('404 when someone else completes another user\u2019s session', async () => {
+      const host = await registerUser(suite, EMAIL);
+      const other = await registerUser(suite, OTHER_EMAIL);
+      const meeting = await createMeeting(suite, host, [other.id]);
+      const uploadId = await sendWholeFile(host.token, meeting.id, paddedPdf(1_000));
+
+      const response = await suite
+        .post(meetingFileCompleteUrl(meeting.id, uploadId), {})
+        .set('Authorization', `Bearer ${other.token}`)
+        .expect(404);
+
+      expect(messageOf(response)).toBe('Upload not found');
+      await expect(countMeetingFiles(suite.prisma())).resolves.toBe(0);
+    });
+  });
+
+  describe('aborting a session', () => {
+    const abort = (token: string, meetingId: string, uploadId: string) =>
+      suite
+        .delete(meetingFileUploadUrl(meetingId, uploadId))
+        .set('Authorization', `Bearer ${token}`);
+
+    it('204, and the session is immediately gone for every route', async () => {
+      const host = await registerUser(suite, EMAIL);
+      const meeting = await createMeeting(suite, host);
+      const created = await createSession(host.token, meeting.id, {
+        name: 'clip.mp4',
+        size: 4,
+      }).expect(201);
+      const { id } = created.body as MeetingFileUpload;
+      await sendChunk(host.token, meeting.id, id, 0, filled(4, 0x01)).expect(204);
+
+      await abort(host.token, meeting.id, id).expect(204);
+
+      await readSession(host.token, meeting.id, id).expect(404);
+      await sendChunk(host.token, meeting.id, id, 0, filled(4, 0x01)).expect(404);
+      await suite
+        .post(meetingFileCompleteUrl(meeting.id, id), {})
+        .set('Authorization', `Bearer ${host.token}`)
+        .expect(404);
+      // The chunks are the worker's to remove, not the request's.
+      expect(chunksOnDisk(id)).toEqual(['0']);
+    });
+
+    it('404 on a second abort', async () => {
+      const host = await registerUser(suite, EMAIL);
+      const meeting = await createMeeting(suite, host);
+      const created = await createSession(host.token, meeting.id, {
+        name: 'clip.mp4',
+        size: 4,
+      }).expect(201);
+      const { id } = created.body as MeetingFileUpload;
+
+      await abort(host.token, meeting.id, id).expect(204);
+      const response = await abort(host.token, meeting.id, id).expect(404);
+
+      expect(messageOf(response)).toBe('Upload not found');
+    });
+
+    it('404 when another participant aborts, leaving the session usable', async () => {
+      const host = await registerUser(suite, EMAIL);
+      const other = await registerUser(suite, OTHER_EMAIL);
+      const meeting = await createMeeting(suite, host, [other.id]);
+      const created = await createSession(host.token, meeting.id, {
+        name: 'clip.mp4',
+        size: 4,
+      }).expect(201);
+      const { id } = created.body as MeetingFileUpload;
+
+      await abort(other.token, meeting.id, id).expect(404);
+
+      await readSession(host.token, meeting.id, id).expect(200);
+    });
+  });
+
+  describe('the worker collects what a session leaves behind', () => {
+    const drain = (): Promise<number> =>
+      suite.app().get<WorkerHandle>(MEETING_FILE_WORKER_TOKEN).drain();
+
+    it('removes an expired session\u2019s chunks and marks it purged', async () => {
+      const host = await registerUser(suite, EMAIL);
+      const meeting = await createMeeting(suite, host);
+      const created = await createSession(host.token, meeting.id, {
+        name: 'clip.mp4',
+        size: 4,
+      }).expect(201);
+      const { id } = created.body as MeetingFileUpload;
+      await sendChunk(host.token, meeting.id, id, 0, filled(4, 0x01)).expect(204);
+      await setMeetingFileUploadState(suite.prisma(), id, {
+        expires_at: new Date(Date.now() - 1_000),
+      });
+
+      await expect(drain()).resolves.toBe(1);
+
+      expect(fs.existsSync(chunkDirOf(id))).toBe(false);
+      const row = await findMeetingFileUploadRow(suite.prisma(), id);
+      expect(row.purged_at).not.toBeNull();
+      expect(row.leased_until).toBeNull();
+      expect(row.attempts).toBe(1);
+    });
+
+    it('collects an aborted session the same way, and only once', async () => {
+      const host = await registerUser(suite, EMAIL);
+      const meeting = await createMeeting(suite, host);
+      const created = await createSession(host.token, meeting.id, {
+        name: 'clip.mp4',
+        size: 4,
+      }).expect(201);
+      const { id } = created.body as MeetingFileUpload;
+      await sendChunk(host.token, meeting.id, id, 0, filled(4, 0x01)).expect(204);
+
+      await suite
+        .delete(meetingFileUploadUrl(meeting.id, id))
+        .set('Authorization', `Bearer ${host.token}`)
+        .expect(204);
+
+      await expect(drain()).resolves.toBe(1);
+      expect(fs.existsSync(chunkDirOf(id))).toBe(false);
+      // A purged session is never claimed again.
+      await expect(drain()).resolves.toBe(0);
+    });
+
+    it('leaves a live session alone', async () => {
+      const host = await registerUser(suite, EMAIL);
+      const meeting = await createMeeting(suite, host);
+      const created = await createSession(host.token, meeting.id, {
+        name: 'clip.mp4',
+        size: 4,
+      }).expect(201);
+      const { id } = created.body as MeetingFileUpload;
+      await sendChunk(host.token, meeting.id, id, 0, filled(4, 0x01)).expect(204);
+
+      await expect(drain()).resolves.toBe(0);
+
+      expect(chunksOnDisk(id)).toEqual(['0']);
+      await readSession(host.token, meeting.id, id).expect(200);
     });
   });
 
