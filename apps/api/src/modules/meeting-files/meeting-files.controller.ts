@@ -1,7 +1,9 @@
 import {
   BadRequestException,
   Controller,
+  Delete,
   Get,
+  HttpCode,
   Param,
   ParseUUIDPipe,
   Post,
@@ -18,6 +20,7 @@ import type { Response } from 'express';
 
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { DeleteMeetingFileCommand } from './commands/delete-meeting-file.command';
 import { UploadMeetingFileCommand } from './commands/upload-meeting-file.command';
 import { MeetingFilesService } from './services/meeting-files.service';
 import type { OpenedFile } from './services/meeting-files.service';
@@ -85,6 +88,19 @@ export class MeetingFilesController {
     const opened = await this.files.openThumbnail(user.id, meetingId, fileId);
 
     return stream(response, opened, 'inline');
+  }
+
+  /** Soft delete by the uploader or the host; the worker purges the bytes later. */
+  @Delete(':fileId')
+  @HttpCode(204)
+  remove(
+    @CurrentUser() user: User,
+    @Param('id', UUID_V4) meetingId: string,
+    @Param('fileId', UUID_V4) fileId: string,
+  ): Promise<void> {
+    return this.commandBus.execute<DeleteMeetingFileCommand, void>(
+      new DeleteMeetingFileCommand(user.id, meetingId, fileId),
+    );
   }
 
   /** Reads go straight to the service — no `QueryBus`, by design. */
