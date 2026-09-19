@@ -131,6 +131,7 @@ cp .env.example .env
 cp apps/api/.env.example apps/api/.env
 cp apps/web/.env.example apps/web/.env.local
 docker compose up -d postgres
+pnpm --filter=@repo/api prisma:generate  # required: the client is gitignored, and `dev` does not generate it
 pnpm --filter=@repo/api prisma:migrate   # required: the API's tables do not exist yet
 pnpm dev
 ```

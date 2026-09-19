@@ -30,6 +30,7 @@ cp apps/api/.env.example apps/api/.env
 cp apps/web/.env.example apps/web/.env.local
 
 docker compose up -d postgres   # PostgreSQL on :5433
+pnpm --filter=@repo/api prisma:generate  # generate the client (gitignored; `dev` does not do it)
 pnpm --filter=@repo/api prisma:migrate   # create the schema
 pnpm dev                        # web on :3000, api on :3001
 ```
