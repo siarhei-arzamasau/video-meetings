@@ -295,6 +295,21 @@ the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-p
   keeps throwing is eventually given up on rather than reclaimed for ever. `expires_at` is
   the whole lifecycle: aborting a session sets it to `now()`, so abort and expiry are one
   path in the worker and the row needs no status column.
+- **Three things about the chunked routes are not visible in the controller.** The chunk body
+  is parsed by a raw middleware declared in `MeetingFilesModule.configure`, scoped to
+  `MeetingFileUploadsController` and to `PUT` — scoped to the controller rather than a path
+  string so it cannot drift from the route or miss the global `api` prefix, and to `PUT` so the
+  sibling `POST` keeps the global JSON parser. Its limit is one chunk, which is what rejects an
+  oversized body before it is buffered. `MeetingFileUploadsController` is listed **before**
+  `MeetingFilesController`, so `files/uploads/…` is matched as a session and never as a file id
+  by the routes one segment shorter. And a session is private to the person who opened it: the
+  host may delete anyone's file but has no business resuming anyone's upload, so
+  `requireOwnedUpload` matches on `uploaderId` and answers the same 404 for expired, purged,
+  another meeting's, and another user's.
+- **A chunk's length is derived from the session, never believed from the request.** Every
+  chunk but the last must be exactly `chunk_size`; the last is the remainder. That is what
+  makes a truncated chunk a 400 instead of a hole in the assembled file that only the checksum
+  would catch — and it is why the client never chooses the chunk size.
 - **The worker is in-process, behind `MEETING_FILES_WORKER_ENABLED` (default on).** `pnpm dev`
   runs one API process and a second entry point would be a second thing to start everywhere,
   for two steps that take milliseconds. Every replica polls when it is on; switch it off per
