@@ -5,6 +5,8 @@ import { raw } from 'express';
 import type { NextFunction, Request, Response } from 'express';
 
 import { AuthModule } from '../auth/auth.module';
+import { AbortUploadHandler } from './commands/handlers/abort-upload.handler';
+import { CompleteUploadHandler } from './commands/handlers/complete-upload.handler';
 import { CreateUploadHandler } from './commands/handlers/create-upload.handler';
 import { DeleteMeetingFileHandler } from './commands/handlers/delete-meeting-file.handler';
 import { StoreChunkHandler } from './commands/handlers/store-chunk.handler';
@@ -41,6 +43,8 @@ import { MeetingFileUploadInterceptor } from './storage/meeting-file-upload.inte
     DeleteMeetingFileHandler,
     CreateUploadHandler,
     StoreChunkHandler,
+    CompleteUploadHandler,
+    AbortUploadHandler,
     MeetingFilesService,
     MeetingFileUploadsService,
     MeetingFileRepository,

@@ -79,6 +79,76 @@ export class MeetingFileUploadRepository {
   }
 
   /**
+   * Brings a live session's expiry forward to now, which is the whole of abort. Returns
+   * whether this call was the one that did it, so a second abort can answer 404.
+   */
+  async expire(id: string): Promise<boolean> {
+    const { count } = await this.prisma.meetingFileUpload.updateMany({
+      where: { id, purgedAt: null, expiresAt: { gt: new Date() } },
+      data: { expiresAt: new Date() },
+    });
+
+    return count === 1;
+  }
+
+  /**
+   * Marks a session's chunks gone and releases its lease. Called after `removeTree`, never
+   * before: the row is what says there is still something to remove.
+   */
+  async markPurged(id: string): Promise<boolean> {
+    const { count } = await this.prisma.meetingFileUpload.updateMany({
+      where: { id, purgedAt: null },
+      data: { purgedAt: new Date(), leasedUntil: null },
+    });
+
+    return count === 1;
+  }
+
+  /**
+   * Claims the next expired, unpurged session for removal, in one statement and under a
+   * lease, exactly as `MeetingFileRepository.claimNext` claims a file.
+   *
+   * `FOR UPDATE SKIP LOCKED` is why two replicas cannot claim one session, and the lease is
+   * why a worker that dies mid-removal leaves a row another worker reclaims rather than a
+   * chunk tree nobody will ever collect. `attempts` is the bound on that retrying.
+   */
+  async claimExpired(leaseSeconds: number): Promise<MeetingFileUploadRecord | null> {
+    const rows = await this.prisma.$queryRaw<MeetingFileUploadRecord[]>`
+      WITH candidate AS (
+        SELECT id
+        FROM "meeting_file_uploads"
+        WHERE expires_at <= now()
+          AND purged_at IS NULL
+          AND (leased_until IS NULL OR leased_until < now())
+        ORDER BY expires_at, id
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+      )
+      UPDATE "meeting_file_uploads" u
+      SET leased_until = now() + make_interval(secs => ${leaseSeconds}),
+          attempts = u.attempts + 1
+      FROM candidate c
+      WHERE u.id = c.id
+      RETURNING
+        u.id,
+        u.meeting_id AS "meetingId",
+        u.uploader_id AS "uploaderId",
+        u.name,
+        u.size,
+        u.chunk_size AS "chunkSize",
+        u.chunk_count AS "chunkCount",
+        u.received_chunks AS "receivedChunks",
+        u.attempts,
+        u.leased_until AS "leasedUntil",
+        u.created_at AS "createdAt",
+        u.expires_at AS "expiresAt",
+        u.purged_at AS "purgedAt"
+    `;
+
+    return rows[0] ?? null;
+  }
+
+  /**
    * Records that the chunk at `index` is on disk, and returns the whole set as it now stands,
    * or `null` if the session lapsed while the bytes were being written.
    *

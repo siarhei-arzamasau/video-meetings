@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Param,
@@ -11,10 +12,12 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CommandBus } from '@nestjs/cqrs';
-import type { MeetingFileUpload, User } from '@repo/shared';
+import type { MeetingFile, MeetingFileUpload, User } from '@repo/shared';
 
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { AbortUploadCommand } from './commands/abort-upload.command';
+import { CompleteUploadCommand } from './commands/complete-upload.command';
 import { CreateUploadCommand } from './commands/create-upload.command';
 import { CHUNK_INDEX_MESSAGE } from './commands/handlers/store-chunk.handler';
 import { StoreChunkCommand } from './commands/store-chunk.command';
@@ -88,6 +91,37 @@ export class MeetingFileUploadsController {
 
     return this.commandBus.execute<StoreChunkCommand, void>(
       new StoreChunkCommand(user.id, meetingId, uploadId, Number(index), asBuffer(body)),
+    );
+  }
+
+  /**
+   * The last call of a chunked upload, and the only one that creates anything: 201 with the
+   * `MeetingFile`, in `uploaded` status, exactly as the single-request route answers.
+   *
+   * Safe to retry. A failure here leaves every chunk where it is, so a client that got a 415
+   * or lost the connection calls this again rather than the upload again.
+   */
+  @Post(':uploadId/complete')
+  complete(
+    @CurrentUser() user: User,
+    @Param('id', UUID_V4) meetingId: string,
+    @Param('uploadId', UUID_V4) uploadId: string,
+  ): Promise<MeetingFile> {
+    return this.commandBus.execute<CompleteUploadCommand, MeetingFile>(
+      new CompleteUploadCommand(user.id, meetingId, uploadId),
+    );
+  }
+
+  /** Gives up on a session. The worker removes the chunks; a second call is a 404. */
+  @Delete(':uploadId')
+  @HttpCode(204)
+  abort(
+    @CurrentUser() user: User,
+    @Param('id', UUID_V4) meetingId: string,
+    @Param('uploadId', UUID_V4) uploadId: string,
+  ): Promise<void> {
+    return this.commandBus.execute<AbortUploadCommand, void>(
+      new AbortUploadCommand(user.id, meetingId, uploadId),
     );
   }
 }
