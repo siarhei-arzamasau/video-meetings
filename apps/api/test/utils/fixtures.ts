@@ -18,6 +18,10 @@ export function meetingFileUrl(meetingId: string, fileId: string): string {
   return `${meetingFilesUrl(meetingId)}/${fileId}`;
 }
 
+export function meetingFileRetryUrl(meetingId: string, fileId: string): string {
+  return `${meetingFileUrl(meetingId, fileId)}/retry`;
+}
+
 export function meetingFileContentUrl(meetingId: string, fileId: string): string {
   return `${meetingFileUrl(meetingId, fileId)}/content`;
 }

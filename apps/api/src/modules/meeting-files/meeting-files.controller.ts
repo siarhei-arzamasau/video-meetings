@@ -21,6 +21,7 @@ import type { Response } from 'express';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { DeleteMeetingFileCommand } from './commands/delete-meeting-file.command';
+import { RetryMeetingFileCommand } from './commands/retry-meeting-file.command';
 import { UploadMeetingFileCommand } from './commands/upload-meeting-file.command';
 import { MeetingFilesService } from './services/meeting-files.service';
 import type { OpenedFile } from './services/meeting-files.service';
@@ -88,6 +89,23 @@ export class MeetingFilesController {
     const opened = await this.files.openThumbnail(user.id, meetingId, fileId);
 
     return stream(response, opened, 'inline');
+  }
+
+  /**
+   * Sends a `failed` file back through the pipeline, by the uploader or the host. The row
+   * returns to `uploaded` and the worker claims it on its next tick; 200 rather than 201,
+   * because nothing was created.
+   */
+  @Post(':fileId/retry')
+  @HttpCode(200)
+  retry(
+    @CurrentUser() user: User,
+    @Param('id', UUID_V4) meetingId: string,
+    @Param('fileId', UUID_V4) fileId: string,
+  ): Promise<MeetingFile> {
+    return this.commandBus.execute<RetryMeetingFileCommand, MeetingFile>(
+      new RetryMeetingFileCommand(user.id, meetingId, fileId),
+    );
   }
 
   /** Soft delete by the uploader or the host; the worker purges the bytes later. */

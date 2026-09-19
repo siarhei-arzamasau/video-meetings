@@ -341,6 +341,15 @@ the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-p
   `failureReason`; anything else stores `Processing failed. You can still download the file.`
   and logs the real error with its stack. Every transition logs file id, meeting id, from, to,
   and duration.
+- **Retry is the one caller of `failed → uploaded`.** `POST :fileId/retry`
+  (`RetryMeetingFileHandler`) is a state transition, not a re-upload: a conditional
+  `transition(id, 'failed', 'uploaded', …)` that resets `attempts` to 0 and clears
+  `failureReason` and `processedAt`, after which the worker claims the row like any other
+  `uploaded` file. Nothing re-runs the pipeline by hand. Zero rows changed means the file is
+  no longer `failed` — the worker or another retry moved it — and that is the 409; who may
+  retry is the uploader or the host, the delete rule, with the same 404 for everyone else.
+  `attempts` going back to 0 is deliberate: a retry is a fresh chance, not a fourth attempt
+  against the cap of three.
 - **Downloads declare the object's real length.** `Content-Length` is the `stat` size, not the
   record's; they differ only for a truncated object, which is already `failed` with a reason,
   and declaring the record's length would turn that download into an aborted transfer instead

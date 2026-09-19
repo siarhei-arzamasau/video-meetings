@@ -9,6 +9,7 @@ import { AbortUploadHandler } from './commands/handlers/abort-upload.handler';
 import { CompleteUploadHandler } from './commands/handlers/complete-upload.handler';
 import { CreateUploadHandler } from './commands/handlers/create-upload.handler';
 import { DeleteMeetingFileHandler } from './commands/handlers/delete-meeting-file.handler';
+import { RetryMeetingFileHandler } from './commands/handlers/retry-meeting-file.handler';
 import { StoreChunkHandler } from './commands/handlers/store-chunk.handler';
 import { UploadMeetingFileHandler } from './commands/handlers/upload-meeting-file.handler';
 import { MeetingFileUploadsController } from './meeting-file-uploads.controller';
@@ -41,6 +42,7 @@ import { MeetingFileUploadInterceptor } from './storage/meeting-file-upload.inte
   providers: [
     UploadMeetingFileHandler,
     DeleteMeetingFileHandler,
+    RetryMeetingFileHandler,
     CreateUploadHandler,
     StoreChunkHandler,
     CompleteUploadHandler,

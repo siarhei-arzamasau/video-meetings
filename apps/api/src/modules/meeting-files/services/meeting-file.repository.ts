@@ -8,6 +8,8 @@ import type { MeetingFileRecord } from './meeting-file.mapper';
 /** The columns a status change may set alongside the status itself. */
 export interface TransitionPatch {
   checksum?: string | null;
+  /** Only the retry sets this, back to 0; every other writer leaves the claim count alone. */
+  attempts?: number;
   thumbnailKey?: string | null;
   failureReason?: string | null;
   leasedUntil?: Date | null;
