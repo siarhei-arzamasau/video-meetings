@@ -65,6 +65,10 @@ test.describe('the files section', () => {
     await host.context.close();
   });
 
+  // The bound this pins moved in Phase 2.3: a file over 100 MB is now uploaded in chunks
+  // rather than refused, so the only size a client rejects outright is one over the chunked
+  // cap. The behaviour under test — rejected here, nothing sent, Dismiss clears the row — is
+  // unchanged.
   test('rejects an oversized file client-side without sending it, and Dismiss removes the row', async ({
     browser,
   }) => {
@@ -81,8 +85,10 @@ test.describe('the files section', () => {
 
     await pickFiles(page, [oversizedFile()]);
 
-    const row = rowFor(page, 'meeting-files-e2e-oversized.bin');
-    await expect(row.getByText('Files must be 100 MB or smaller.')).toBeVisible();
+    const row = rowFor(page, 'meeting-files-e2e-oversized.pdf');
+    await expect(row.getByText('Files must be 1 GB or smaller.')).toBeVisible();
+    // No Retry either: this app rejected it, and asking the server would get the same answer.
+    await expect(row.getByRole('button', { name: 'Retry' })).toHaveCount(0);
     expect(uploads).toHaveLength(0);
 
     await row.getByRole('button', { name: 'Dismiss' }).click();
