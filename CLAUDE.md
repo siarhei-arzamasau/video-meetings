@@ -152,6 +152,12 @@ Uploaded meeting files land under `apps/api/storage/` (`MEETING_FILES_DIR`, giti
 which the API creates and checks for writability at boot. In `docker compose`, the `api`
 service mounts a named volume there instead, so a rebuilt container keeps its files.
 
+A file of 100 MB or less is one request. A larger one — up to 1 GiB — is sent in 8 MiB chunks
+through an upload session, which lives under `storage/uploads/<uploadId>/` and stays open for
+`MEETING_FILE_UPLOAD_TTL_HOURS` (default 24). An abandoned session's chunks are removed by the
+same worker that purges deleted files, so the only cost of walking away from an upload is disk
+until it lapses.
+
 `JWT_SECRET` must be at least 32 characters or the API refuses to boot. The `.env.example`
 placeholder satisfies that for local work only.
 

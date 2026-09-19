@@ -78,6 +78,16 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(100)
   MEETING_FILES_POLL_MS: number = 1000;
+
+  /**
+   * How long a chunked upload session stays open. Past it the session answers 404 and the
+   * worker removes its chunks, so this is also the longest an abandoned upload holds disk.
+   * At least an hour: a session shorter than the upload it exists to carry is a session that
+   * expires under a slow connection.
+   */
+  @IsInt()
+  @Min(1)
+  MEETING_FILE_UPLOAD_TTL_HOURS: number = 24;
 }
 
 function parseBoolean(value: unknown): unknown {
