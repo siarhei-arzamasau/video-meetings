@@ -29,6 +29,9 @@ apps/api/storage/
 
 # tests & coverage
 coverage/
+# playwright run output (apps/web e2e)
+apps/web/test-results/
+apps/web/playwright-report/
 
 # logs
 *.log

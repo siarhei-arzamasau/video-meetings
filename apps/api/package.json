@@ -6,6 +6,7 @@
     "dev": "nest start --watch",
     "build": "prisma generate && nest build",
     "start": "node dist/main",
+    "start:e2e-web": "PORT=3101 MEETING_FILES_WORKER_ENABLED=true MEETING_FILES_POLL_MS=250 MEETING_FILES_DIR=${TMPDIR:-/tmp}/meeting-files-e2e-web nest start",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "jest",
     "test:watch": "jest --watch",
