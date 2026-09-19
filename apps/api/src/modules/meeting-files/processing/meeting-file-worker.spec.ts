@@ -1,6 +1,8 @@
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 
+import { MeetingFileUploadRepository } from '../services/meeting-file-upload.repository';
+import type { MeetingFileUploadRecord } from '../services/meeting-file-upload.mapper';
 import { MeetingFileRepository } from '../services/meeting-file.repository';
 import type { ClaimedFile } from '../services/meeting-file.repository';
 import { MeetingFileStorage } from '../storage/meeting-file-storage';
@@ -33,12 +35,34 @@ const CLAIMED: ClaimedFile = {
   purgedAt: null,
 };
 
+const UPLOAD_ID = '66666666-6666-4666-8666-666666666666';
+
+/** An expired session the worker has just claimed: its lease set, its attempt counted. */
+const EXPIRED_UPLOAD: MeetingFileUploadRecord = {
+  id: UPLOAD_ID,
+  meetingId: MEETING_ID,
+  uploaderId: '11111111-1111-4111-8111-111111111111',
+  name: 'recording.mp4',
+  size: 20,
+  chunkSize: 8,
+  chunkCount: 3,
+  receivedChunks: [0, 1],
+  attempts: 1,
+  leasedUntil: LEASE,
+  createdAt: new Date(),
+  expiresAt: new Date(Date.now() - 1_000),
+  purgedAt: null,
+};
+
 const noop = (): void => {};
 
 describe('MeetingFileWorker', () => {
   const claimNext = jest.fn();
   const transition = jest.fn();
   const markPurged = jest.fn();
+  const claimExpired = jest.fn();
+  const markUploadPurged = jest.fn();
+  const removeTree = jest.fn();
   const remove = jest.fn();
   const first = jest.fn();
   const second = jest.fn();
@@ -66,7 +90,14 @@ describe('MeetingFileWorker', () => {
           useValue: { get: (key: string, fallback: unknown) => values[key] ?? fallback },
         },
         { provide: MeetingFileRepository, useValue: { claimNext, transition, markPurged } },
-        { provide: MeetingFileStorage, useValue: { remove, pathOf: (key: string) => key } },
+        {
+          provide: MeetingFileUploadRepository,
+          useValue: { claimExpired, markPurged: markUploadPurged },
+        },
+        {
+          provide: MeetingFileStorage,
+          useValue: { remove, removeTree, pathOf: (key: string) => key },
+        },
         { provide: PIPELINE_STEPS, useValue: steps },
       ],
     }).compile();
@@ -78,6 +109,9 @@ describe('MeetingFileWorker', () => {
     claimNext.mockReset().mockResolvedValueOnce(CLAIMED).mockResolvedValue(null);
     transition.mockReset().mockResolvedValue(true);
     markPurged.mockReset().mockResolvedValue(true);
+    claimExpired.mockReset().mockResolvedValue(null);
+    markUploadPurged.mockReset().mockResolvedValue(true);
+    removeTree.mockReset().mockResolvedValue(undefined);
     remove.mockReset().mockResolvedValue(undefined);
     first.mockReset().mockResolvedValue({ checksum: 'abc' });
     second.mockReset().mockResolvedValue({ thumbnailKey: 'thumb' });
@@ -94,6 +128,7 @@ describe('MeetingFileWorker', () => {
           useValue: { get: (_key: string, fallback: unknown) => fallback },
         },
         { provide: MeetingFileRepository, useValue: {} },
+        { provide: MeetingFileUploadRepository, useValue: {} },
         { provide: MeetingFileStorage, useValue: {} },
       ],
     }).compile();
@@ -248,6 +283,68 @@ describe('MeetingFileWorker', () => {
     await expect(worker.drain()).rejects.toThrow('EACCES');
 
     expect(markPurged).not.toHaveBeenCalled();
+  });
+
+  describe('expired upload sessions', () => {
+    it('removes the chunk tree and only then marks the session purged', async () => {
+      claimNext.mockReset().mockResolvedValue(null);
+      claimExpired.mockResolvedValueOnce(EXPIRED_UPLOAD).mockResolvedValue(null);
+      const order: string[] = [];
+      removeTree.mockImplementation(() => {
+        order.push('removeTree');
+
+        return Promise.resolve();
+      });
+      markUploadPurged.mockImplementation(() => {
+        order.push('markPurged');
+
+        return Promise.resolve(true);
+      });
+
+      await expect(worker.drain()).resolves.toBe(1);
+
+      expect(removeTree).toHaveBeenCalledWith(UPLOAD_ID);
+      expect(order).toEqual(['removeTree', 'markPurged']);
+    });
+
+    it('counts sessions in drain() alongside files', async () => {
+      claimExpired.mockResolvedValueOnce(EXPIRED_UPLOAD).mockResolvedValue(null);
+
+      // One file (the default claim) and one session.
+      await expect(worker.drain()).resolves.toBe(2);
+    });
+
+    it('looks for a session only once no file is claimable', async () => {
+      claimExpired.mockResolvedValue(null);
+
+      await worker.drain();
+
+      // The file claim that returned a row did not also go looking for a session.
+      expect(claimExpired).toHaveBeenCalledTimes(1);
+      expect(claimNext).toHaveBeenCalledTimes(2);
+    });
+
+    it('gives up after MAX_ATTEMPTS claims, marking it purged with the directory logged', async () => {
+      claimNext.mockReset().mockResolvedValue(null);
+      claimExpired
+        .mockResolvedValueOnce({ ...EXPIRED_UPLOAD, attempts: 4 })
+        .mockResolvedValue(null);
+
+      await expect(worker.drain()).resolves.toBe(1);
+
+      expect(removeTree).not.toHaveBeenCalled();
+      expect(markUploadPurged).toHaveBeenCalledWith(UPLOAD_ID);
+    });
+
+    it('leaves the row unpurged when the removal throws, so the lease brings it back', async () => {
+      claimNext.mockReset().mockResolvedValue(null);
+      claimExpired.mockResolvedValueOnce(EXPIRED_UPLOAD).mockResolvedValue(null);
+      removeTree.mockRejectedValue(new Error('EACCES'));
+
+      await expect(worker.drain()).rejects.toThrow('EACCES');
+
+      expect(markUploadPurged).not.toHaveBeenCalled();
+    });
   });
 
   it('does not start the loop when disabled', () => {

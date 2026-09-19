@@ -313,6 +313,12 @@ the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-p
   chunk but the last must be exactly `chunk_size`; the last is the remainder. That is what
   makes a truncated chunk a 400 instead of a hole in the assembled file that only the checksum
   would catch — and it is why the client never chooses the chunk size.
+- **The worker claims two kinds of row, files first.** An expired or aborted session is looked
+  for only when no file is claimable, because a file someone is waiting on outranks a chunk
+  tree nobody will read again. `claimExpired` is the sessions' `claimNext`: the same
+  `FOR UPDATE SKIP LOCKED` under the same lease, so two replicas cannot claim one session and
+  a worker that dies mid-removal leaves a row another reclaims. The tree goes first and
+  `purged_at` second, so a crash between them is retried rather than forgotten.
 - **The worker is in-process, behind `MEETING_FILES_WORKER_ENABLED` (default on).** `pnpm dev`
   runs one API process and a second entry point would be a second thing to start everywhere,
   for two steps that take milliseconds. Every replica polls when it is on; switch it off per
