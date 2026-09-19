@@ -295,6 +295,17 @@ the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-p
   keeps throwing is eventually given up on rather than reclaimed for ever. `expires_at` is
   the whole lifecycle: aborting a session sets it to `now()`, so abort and expiry are one
   path in the worker and the row needs no status column.
+- **Completing a session claims it first, and expires it the moment the file exists.**
+  `CompleteUploadHandler` takes the row's `leased_until` in one conditional statement
+  (`claimForCompletion`) before it reads a chunk, so of two completions racing for one
+  session — a client whose connection dropped mid-completion and retried, as it is told it
+  may — exactly one assembles and the other is a 409 `The upload is already being completed`.
+  The lease is the completion's own five minutes, not the worker's, because it has to outlast
+  a gigabyte copy on a slow disk. A failure before the file exists releases it, so the retry
+  needs no waiting; once `UploadMeetingFileCommand` has answered, `expires_at` is set to
+  `now()` **before** the chunk tree is removed, so a retry from then on is a 404 and never a
+  second file. Assembly writes to `tmp/assemble-<uuid>`, never `tmp/<uploadId>` — two
+  completions must not write into or remove one another's file, whatever the lease is doing.
 - **Three things about the chunked routes are not visible in the controller.** The chunk body
   is parsed by a raw middleware declared in `MeetingFilesModule.configure` — which is why
   `express` is a direct dependency of this package and not only a transitive one through

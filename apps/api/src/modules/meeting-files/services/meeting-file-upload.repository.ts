@@ -149,6 +149,66 @@ export class MeetingFileUploadRepository {
   }
 
   /**
+   * Claims a live session for one completion, under a lease, in one statement — or `null`
+   * when it is not live or another completion already holds it.
+   *
+   * The same `leased_until` the worker takes before removing an expired session's chunks, and
+   * for the same reason: two completions racing for one session must not both assemble it,
+   * and the worker must not collect a tree that is being read. `attempts` is left alone — it
+   * counts the worker's purge claims, and a completion is not one of those.
+   */
+  async claimForCompletion(
+    id: string,
+    leaseSeconds: number,
+  ): Promise<MeetingFileUploadRecord | null> {
+    const rows = await this.prisma.$queryRaw<MeetingFileUploadRecord[]>`
+      UPDATE "meeting_file_uploads" u
+      SET leased_until = now() + make_interval(secs => ${leaseSeconds})
+      WHERE u.id = ${id}::uuid
+        AND u.purged_at IS NULL
+        AND u.expires_at > now()
+        AND (u.leased_until IS NULL OR u.leased_until < now())
+      RETURNING
+        u.id,
+        u.meeting_id AS "meetingId",
+        u.uploader_id AS "uploaderId",
+        u.name,
+        u.size,
+        u.chunk_size AS "chunkSize",
+        u.chunk_count AS "chunkCount",
+        u.received_chunks AS "receivedChunks",
+        u.attempts,
+        u.leased_until AS "leasedUntil",
+        u.created_at AS "createdAt",
+        u.expires_at AS "expiresAt",
+        u.purged_at AS "purgedAt"
+    `;
+
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Gives back the lease a completion was given and did not use — a failure before the file
+   * existed — so a retry can claim the session at once instead of waiting the lease out.
+   *
+   * Conditional on the lease being the one this caller holds: a loser whose lease lapsed and
+   * went to a later completion must not release that one's.
+   */
+  async releaseLease({
+    id,
+    leasedUntil,
+  }: Pick<MeetingFileUploadRecord, 'id' | 'leasedUntil'>): Promise<void> {
+    if (leasedUntil === null) {
+      return;
+    }
+
+    await this.prisma.meetingFileUpload.updateMany({
+      where: { id, leasedUntil },
+      data: { leasedUntil: null },
+    });
+  }
+
+  /**
    * Records that the chunk at `index` is on disk, and returns the whole set as it now stands,
    * or `null` if the session lapsed while the bytes were being written.
    *

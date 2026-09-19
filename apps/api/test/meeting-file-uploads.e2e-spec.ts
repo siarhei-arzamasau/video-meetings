@@ -667,12 +667,51 @@ describe('chunked upload sessions', () => {
 
       expect(messageOf(response)).toBe('That file type is not supported.');
       await expect(countMeetingFiles(suite.prisma())).resolves.toBe(0);
-      // The session survives, so a client that picked the wrong file has not lost the upload.
+      // The session survives, so a client that picked the wrong file has not lost the upload —
+      // and the lease the completion took is given back, so the retry needs no waiting.
       expect(chunksOnDisk(uploadId)).toEqual(['0']);
       await expect(findMeetingFileUploadRow(suite.prisma(), uploadId)).resolves.toMatchObject({
         purged_at: null,
+        leased_until: null,
       });
       expect(tempDirEntries()).toEqual([]);
+    });
+
+    it('409 while another completion holds the session, and 201 once its lease has lapsed', async () => {
+      const host = await registerUser(suite, EMAIL);
+      const meeting = await createMeeting(suite, host);
+      const bytes = paddedPdf(1_000);
+      const uploadId = await sendWholeFile(host.token, meeting.id, bytes);
+
+      // The state a completion in flight leaves: the row under a lease. A retry that arrives
+      // while it runs — a client whose connection dropped mid-completion — must not assemble
+      // a second copy alongside it.
+      await setMeetingFileUploadState(suite.prisma(), uploadId, {
+        leased_until: new Date(Date.now() + 5 * 60 * 1_000),
+      });
+
+      const response = await suite
+        .post(meetingFileCompleteUrl(meeting.id, uploadId), {})
+        .set('Authorization', `Bearer ${host.token}`)
+        .expect(409);
+
+      expect(messageOf(response)).toBe('The upload is already being completed');
+      await expect(countMeetingFiles(suite.prisma())).resolves.toBe(0);
+      expect(chunksOnDisk(uploadId)).toEqual(['0']);
+      expect(tempDirEntries()).toEqual([]);
+
+      // A lease that lapsed — the holder died — is claimable again, exactly as for the worker.
+      await setMeetingFileUploadState(suite.prisma(), uploadId, {
+        leased_until: new Date(Date.now() - 1_000),
+      });
+
+      await suite
+        .post(meetingFileCompleteUrl(meeting.id, uploadId), {})
+        .set('Authorization', `Bearer ${host.token}`)
+        .expect(201);
+
+      await expect(countMeetingFiles(suite.prisma())).resolves.toBe(1);
+      expect(chunksOnDisk(uploadId)).toEqual([]);
     });
 
     it('409 when the meeting reached the file cap between create and complete', async () => {
