@@ -50,8 +50,10 @@ indistinguishable from a skipped one.
 ```
 src/
   app/            App Router: layout, page, error, not-found, providers, globals.css
+    meetings/[id] The meeting page; files/ under it is the files section
   components/     Shared React components
-  lib/            Non-React helpers, including the API client
+  lib/            Non-React helpers, including the API client and the signed-in gate
+e2e/              Playwright browser suite (see Tests)
 ```
 
 `@/*` maps to `./src/*` in both `tsconfig.json` and `vitest.config.ts` — keep the two
@@ -96,6 +98,12 @@ aliases in sync if either changes.
   keep the reader's locale, because showing `7/30/2026` to someone who reads `30/07/2026` is a
   misread date rather than a cosmetic difference.
 
+- **An authenticated image needs an object URL.** The token lives in `localStorage`, so an
+  `<img src="/api/…/thumbnail">` would arrive with no credentials and a 401. `FileRow` fetches
+  the thumbnail with the bearer header, turns the blob into `URL.createObjectURL`, and revokes
+  it on unmount. Downloads work the same way: a blob, an object URL, a programmatic
+  `<a download>`. Both collapse into plain URLs once the token is an `HttpOnly` cookie.
+
 ## API access
 
 All calls to the backend go through `src/lib/api-client.ts` — it is the single boundary
@@ -112,6 +120,12 @@ one. A rejection that is not an `ApiError` means the request never reached the A
 The base URL comes from `NEXT_PUBLIC_API_URL`, defaulting to `http://localhost:3001/api`
 (origin _and_ the API's `/api` global prefix). Response shapes are imported as types from
 `@repo/shared`.
+
+**One call in that file is an `XMLHttpRequest`, not `fetch`: `uploadMeetingFile`.** `fetch`
+cannot report upload progress and the PRD asks for a percentage when the browser can give one.
+Everything else about it matches `apiFetch` — token first, `ApiError` with the API's message
+on a non-2xx, `AbortSignal` support — and it is tested with a small fake `XMLHttpRequest`. It
+is the only exception and should stay the only one.
 
 **Next inlines that value into the client bundle at boot, which is why the root `pnpm dev`
 resolves ports before starting anything** — see
@@ -179,10 +193,13 @@ briefly visible to anyone** — nothing secret may go in it — and it is the _d
 protected, never the URL. All of this collapses into a middleware redirect the moment the token
 becomes an `HttpOnly` cookie, the same migration that deletes `auth-token.ts`.
 
-**A page reading the token in one effect is not session machinery.** There is no provider, no
-context, no `useSession`, no refresh, no interceptor, and there should not be — the cookie
-migration throws every one of those away. If a second protected page arrives, extract the gate,
-and ask first whether the cookie should land before it.
+**The gate is `src/lib/use-signed-in.ts`, and it is still not session machinery.** It was
+extracted when `/meetings/[id]` became the second protected page (the cookie migration was
+weighed first and left as its own change): one hook holding the token-after-mount read, `getMe`,
+the 401 clear-and-redirect, and a local `signOut`. There is no provider, no context, no refresh,
+no interceptor, and there should not be — the cookie migration deletes this hook along with
+`auth-token.ts`. A page adds only the requests that are its own (`listMeetings`, `getMeeting`)
+and hands a mid-page 401 back to the hook's `signOut`.
 
 **Signing out is local**: clear the token, `replace` to `/auth/login`. There is no logout
 endpoint because the JWT is stateless and stays valid until it expires. That is a property of
@@ -202,6 +219,24 @@ none, and explicit `afterEach(cleanup)` because `globals` is off), so it is a ch
 its own rather than inside a feature. What it would mostly assert here is that a component calls
 the `useRouter`/`localStorage`/`fetch` mocks it was written to call; the browser inspection above
 is the stronger check on everything else.
+
+### The browser suite
+
+`pnpm --filter=@repo/web test:e2e` runs Playwright (Chromium only) over `e2e/*.spec.ts`.
+`playwright.config.ts` starts both servers itself — the API through the API's `start:e2e-web`
+script on **3101** (worker on, fast poll, temp storage) and this app on **3100** — with
+`reuseExistingServer` off, one worker, and no retries. It needs `docker compose up -d postgres`
+and a migrated schema, and `pnpm exec playwright install chromium` once. It is not in
+`turbo.json` and not in CI for the same reason the API's `test:e2e` is not. Its
+`globalTeardown` truncates `users` through `pg`, so **it must never run alongside the API's
+e2e suite**: they share the database. A running `next dev` from this directory also blocks it,
+because Next locks `.next`.
+
+This suite is what the argument against React Testing Library above defers to: a real page
+against the real API is the stronger check, made repeatable. The house convention it sets is
+that **a new page starts as a red Playwright spec** — written against the routes, copy, and
+roles the page will have, run and seen failing, and then made green by the implementation.
+The two specs here were written that way.
 
 ## Keeping this guide current
 
