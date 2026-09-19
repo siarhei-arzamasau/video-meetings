@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatMeetingTime } from './date-time';
+import { formatMeetingTime, formatRelativeTime } from './date-time';
 
 /**
  * Formatters are injected rather than stubbed: the production default deliberately follows the
@@ -48,5 +48,32 @@ describe('formatMeetingTime', () => {
     // Nothing to assert about the output — that is the point of the default. What matters is
     // that the default path exists and does not throw.
     expect(formatMeetingTime('2026-08-05T14:30:00.000Z')).not.toBe('');
+  });
+});
+
+describe('formatRelativeTime', () => {
+  const english = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+  const now = Date.parse('2026-09-20T12:00:00.000Z');
+  const at = (iso: string) => formatRelativeTime(iso, now, english);
+
+  it('says "now" for anything under a minute', () => {
+    expect(at('2026-09-20T11:59:30.000Z')).toBe('now');
+  });
+
+  it('picks the largest unit that fits', () => {
+    expect(at('2026-09-20T11:55:00.000Z')).toBe('5 minutes ago');
+    expect(at('2026-09-20T09:00:00.000Z')).toBe('3 hours ago');
+    expect(at('2026-09-19T12:00:00.000Z')).toBe('yesterday');
+    expect(at('2026-09-06T12:00:00.000Z')).toBe('2 weeks ago');
+    expect(at('2026-07-20T12:00:00.000Z')).toBe('2 months ago');
+    expect(at('2024-09-20T12:00:00.000Z')).toBe('2 years ago');
+  });
+
+  it('handles an instant in the future the same way', () => {
+    expect(at('2026-09-20T14:00:00.000Z')).toBe('in 2 hours');
+  });
+
+  it('returns the raw value for an unparseable instant rather than throwing', () => {
+    expect(at('not a date')).toBe('not a date');
   });
 });

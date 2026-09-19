@@ -6,13 +6,14 @@ import Link from 'next/link';
 import { notFound, useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
-import { ArrowLeftIcon, PlusIcon, SignOutIcon, WarningIcon } from '@/components/icons';
+import { ArrowLeftIcon, SignOutIcon, WarningIcon } from '@/components/icons';
 import { MeetingStatusChip } from '@/components/meeting-status-chip';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Wordmark } from '@/components/wordmark';
 import { ApiError, getMeeting } from '@/lib/api-client';
 import { formatMeetingTime } from '@/lib/date-time';
 import { describeFailure, useSignedIn } from '@/lib/use-signed-in';
+import { FilesSection } from './files/files-section';
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -141,7 +142,12 @@ export function MeetingPage() {
       ) : session.state === 'ready' && meeting.state === 'ready' ? (
         <>
           <MeetingHeader meeting={meeting.meeting} user={session.user} />
-          <FilesPlaceholder />
+          <FilesSection
+            token={session.token}
+            meeting={meeting.meeting}
+            user={session.user}
+            onUnauthorized={signOut}
+          />
         </>
       ) : (
         <LoadingShell />
@@ -178,24 +184,6 @@ function MeetingHeader({ meeting, user }: { meeting: Meeting; user: User }) {
         <span>{participants}</span>
       </p>
     </section>
-  );
-}
-
-/** The section's empty shell. The real files section replaces this in the next change. */
-function FilesPlaceholder() {
-  return (
-    <Card className="gap-0 p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold tracking-tight">Files</h2>
-        <Button variant="primary">
-          <PlusIcon />
-          Add file
-        </Button>
-      </div>
-      <p className="text-muted mt-6 text-sm text-pretty">
-        No files yet. Add an agenda, a deck, or a recording.
-      </p>
-    </Card>
   );
 }
 

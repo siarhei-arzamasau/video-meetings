@@ -38,3 +38,45 @@ export function formatMeetingTime(
 
   return format.format(at);
 }
+
+const RELATIVE_TIME_FORMAT = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+
+/** Unit boundaries, largest first. Anything under a minute is "just now" territory. */
+const RELATIVE_UNITS: ReadonlyArray<[unit: Intl.RelativeTimeFormatUnit, ms: number]> = [
+  ['year', 365 * 24 * 60 * 60 * 1_000],
+  ['month', 30 * 24 * 60 * 60 * 1_000],
+  ['week', 7 * 24 * 60 * 60 * 1_000],
+  ['day', 24 * 60 * 60 * 1_000],
+  ['hour', 60 * 60 * 1_000],
+  ['minute', 60 * 1_000],
+];
+
+/**
+ * An instant as "5 minutes ago" or "yesterday", in the reader's locale.
+ *
+ * `now` and the formatter are injectable for tests only, for the same reason `formatMeetingTime`
+ * takes a formatter: determinism is the test's problem, not a reason to pin a locale. An
+ * invalid instant renders as the raw value rather than throwing inside a row.
+ */
+export function formatRelativeTime(
+  iso: string,
+  now: number = Date.now(),
+  format: Intl.RelativeTimeFormat = RELATIVE_TIME_FORMAT,
+): string {
+  const at = Date.parse(iso);
+
+  if (Number.isNaN(at)) {
+    return iso;
+  }
+
+  const elapsed = at - now;
+  const magnitude = Math.abs(elapsed);
+
+  for (const [unit, ms] of RELATIVE_UNITS) {
+    if (magnitude >= ms) {
+      return format.format(Math.round(elapsed / ms), unit);
+    }
+  }
+
+  return format.format(0, 'second').replace(/^in 0 seconds$|^0 seconds ago$/, 'just now');
+}
