@@ -1,3 +1,4 @@
+import { DISPLAY_NAME_MESSAGE } from '@repo/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -9,6 +10,7 @@ import {
   listMeetings,
   login,
   register,
+  updateDisplayName,
 } from './api-client';
 
 afterEach(() => {
@@ -223,6 +225,85 @@ describe('getMe', () => {
     await expect(getMe('an-expired-jwt')).rejects.toMatchObject({
       status: 401,
       message: 'Unauthorized',
+    });
+  });
+});
+
+describe('updateDisplayName', () => {
+  it('patches /users/me with the name as JSON and returns the updated user', async () => {
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com/api');
+    const updated = {
+      id: '11111111-1111-4111-8111-111111111111',
+      email: 'ada@example.com',
+      displayName: 'Ada Lovelace',
+      createdAt: '2026-07-30T00:00:00.000Z',
+    };
+    const fetchMock = stubFetch(jsonResponse(200, updated));
+
+    await expect(updateDisplayName('a-signed-jwt', 'Ada Lovelace')).resolves.toEqual(updated);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    // No user id anywhere in the URL: the endpoint acts on whoever the token names, and one
+    // that took an id would be one that could be pointed at somebody else.
+    expect(url).toBe('https://api.example.com/api/users/me');
+    expect(init.method).toBe('PATCH');
+    expect(init.headers).toMatchObject({
+      'content-type': 'application/json',
+      authorization: 'Bearer a-signed-jwt',
+    });
+    // The whole body, not a subset: an extra field here would be one the DTO's whitelist
+    // strips in silence, and the test that only checked `displayName` would not see it.
+    expect(JSON.parse(String(init.body))).toEqual({ displayName: 'Ada Lovelace' });
+  });
+
+  it('sends the name as typed, leaving the trimming to the API', async () => {
+    const fetchMock = stubFetch(
+      jsonResponse(200, {
+        id: '11111111-1111-4111-8111-111111111111',
+        email: 'ada@example.com',
+        displayName: 'Ada Lovelace',
+        createdAt: '2026-07-30T00:00:00.000Z',
+      }),
+    );
+
+    // The answer carries the trimmed name, which is what the caller stores — so trimming here
+    // as well would be a second rule that could one day disagree with the server's.
+    await expect(updateDisplayName('a-signed-jwt', '  Ada Lovelace  ')).resolves.toMatchObject({
+      displayName: 'Ada Lovelace',
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    expect(JSON.parse(String(init.body))).toEqual({ displayName: '  Ada Lovelace  ' });
+  });
+
+  it('surfaces the 400 message, which is the sentence the field already shows', async () => {
+    stubFetch(jsonResponse(400, { statusCode: 400, message: [DISPLAY_NAME_MESSAGE] }));
+
+    // The edit page puts a 400 under the input rather than above the form, so this message has
+    // to be the one the field renders for a name it rejected itself.
+    await expect(updateDisplayName('a-signed-jwt', ' ')).rejects.toMatchObject({
+      status: 400,
+      message: DISPLAY_NAME_MESSAGE,
+    });
+  });
+
+  it('rejects with a 401 ApiError, so the caller can sign the user out', async () => {
+    stubFetch(jsonResponse(401, { statusCode: 401, message: 'Unauthorized' }));
+
+    await expect(updateDisplayName('an-expired-jwt', 'Ada Lovelace')).rejects.toMatchObject({
+      status: 401,
+    });
+  });
+
+  it('keeps a 500 off the field by leaving it the status message', async () => {
+    // Nothing about the name is wrong here, and `describeSaveFailure` tells the two apart by
+    // the status alone — so what matters is that a 500 arrives as a 500.
+    stubFetch(new Response('upstream exploded', { status: 500 }));
+
+    await expect(updateDisplayName('a-signed-jwt', 'Ada Lovelace')).rejects.toMatchObject({
+      status: 500,
     });
   });
 });

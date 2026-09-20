@@ -12,6 +12,7 @@ import {
   oversizedFile,
   signUp,
 } from './fixtures';
+import { scaled } from './timeouts';
 
 /** The row for a file, by name. Rows are list items inside the Files list. */
 const rowFor = (page: Page, name: string): Locator =>
@@ -40,7 +41,7 @@ test.describe('the files section', () => {
     await expect(row.getByText('added by you')).toBeVisible();
     await expect(row.getByText('Processing')).toBeVisible();
     // The worker polls every 250 ms in this suite and the list refetches every 3 s.
-    await expect(row.getByText('Processing')).toBeHidden({ timeout: 10_000 });
+    await expect(row.getByText('Processing')).toBeHidden({ timeout: scaled(10_000) });
     await expect(page.getByText('No files yet', { exact: false })).toHaveCount(0);
 
     await host.context.close();
@@ -55,7 +56,7 @@ test.describe('the files section', () => {
     await pickFiles(page, [SAMPLE_PNG]);
 
     const row = rowFor(page, 'sample.png');
-    await expect(row.getByText('Processing')).toBeHidden({ timeout: 10_000 });
+    await expect(row.getByText('Processing')).toBeHidden({ timeout: scaled(10_000) });
     const image = row.locator('img');
     await expect(image).toBeVisible();
     await expect
@@ -125,7 +126,7 @@ test.describe('the files section', () => {
     await page.goto(`/meetings/${meeting.id}`);
     await pickFiles(page, [NOTES_TXT]);
     const row = rowFor(page, 'notes.txt');
-    await expect(row.getByText('Processing')).toBeHidden({ timeout: 10_000 });
+    await expect(row.getByText('Processing')).toBeHidden({ timeout: scaled(10_000) });
 
     const downloadPromise = page.waitForEvent('download');
     await row.getByRole('button', { name: 'Download' }).click();
@@ -222,7 +223,7 @@ test.describe('the files section', () => {
 
     await expect(rowFor(page, 'dropped.pdf')).toBeVisible();
     await expect(rowFor(page, 'dropped.pdf').getByText('Processing')).toBeHidden({
-      timeout: 10_000,
+      timeout: scaled(10_000),
     });
 
     await host.context.close();

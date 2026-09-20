@@ -10,6 +10,7 @@
 export { ApiError, buildApiUrl, getApiBaseUrl, apiFetch } from './core';
 export type { UploadOptions } from './core';
 export { getHealth, register, login, getMe } from './auth';
+export { updateDisplayName } from './user';
 export { listMeetings, getMeeting } from './meetings';
 export {
   NOT_AN_EVENT_STREAM_MESSAGE,

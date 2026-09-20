@@ -17,6 +17,7 @@ import { useEffect, useState } from 'react';
 import { CalendarIcon, PlusIcon, SignOutIcon, WarningIcon } from '@/components/icons';
 import { MeetingStatusChip } from '@/components/meeting-status-chip';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { UserInitials } from '@/components/user-initials';
 import { Wordmark } from '@/components/wordmark';
 import { ApiError, listMeetings } from '@/lib/api-client';
 import { formatMeetingTime } from '@/lib/date-time';
@@ -117,7 +118,33 @@ export function HomeDashboard() {
     <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-8 px-6 py-10">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <Wordmark />
-        <div className="flex items-center gap-2">
+        {/* `flex-wrap` and `justify-end`: this row grew a third control, and on a 375 px screen
+            the three of them are wider than the viewport — without wrapping, Log out goes off
+            the right edge and the page scrolls sideways. */}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {/* Only once the gate knows who this is: the link's whole content is the user, and a
+              placeholder for it would be a second loading treatment for the same fact. */}
+          {session.state === 'ready' && (
+            <Link
+              href="/profile"
+              className="text-muted hover:text-foreground hover:bg-surface-secondary focus-visible:ring-focus flex items-center gap-2 rounded-full p-1 transition-colors outline-none focus-visible:ring-2 sm:pr-3"
+            >
+              <UserInitials displayName={session.user.displayName} />
+              {/* The visible text is the name, so the accessible name has to contain it —
+                  `aria-label="Your profile"` would replace it and break "label in name". It is
+                  also what labels the link on a phone, where the name itself does not fit. */}
+              <span className="sr-only">Your profile</span>
+              {/* Truncated here, unlike on the profile: the header has a fixed budget, and
+                  `title` keeps the whole name one hover away. The profile page wraps it
+                  instead, which is where a reader goes to read it in full. */}
+              <span
+                className="hidden max-w-32 truncate text-sm font-medium sm:inline"
+                title={session.user.displayName}
+              >
+                {session.user.displayName}
+              </span>
+            </Link>
+          )}
           <ThemeToggle />
           <Button variant="secondary" isDisabled={dashboard.state === 'loading'} onPress={signOut}>
             <SignOutIcon />

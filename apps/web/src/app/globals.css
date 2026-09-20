@@ -5,3 +5,20 @@
 /* next-themes toggles a `dark` class on <html>; point Tailwind's dark variant at it
    instead of the default prefers-color-scheme media query. */
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* HeroUI's light `--muted` is oklch(55.17% .0138 285.94), which is 4.43:1 against
+   `--background` (#f5f5f5) — under the 4.5:1 WCAG AA needs for normal-size text. It passes on
+   a card (4.83:1) and fails everywhere secondary text sits straight on the page, which is the
+   greeting's email address, the "Back to your meetings" links, and every spinner caption.
+
+   Darkened here rather than at the call sites: the pairing is the token's, not any one page's,
+   and a per-page class would leave the next `text-muted` on a page background failing again.
+   53% is the smallest step that clears the threshold with room to spare — 4.86:1 on the page,
+   5.30:1 on a card — and it keeps the token visibly muted against `--foreground`.
+
+   `:not([data-theme='dark'])` rather than `:root`: this rule follows the import, so a bare
+   `:root` at the same specificity would win over HeroUI's dark block too and put light-theme
+   grey on a dark page. Dark's own `--muted` already measures 7.72:1 and is left alone. */
+:root:not([data-theme='dark']) {
+  --muted: oklch(53% 0.0138 285.94);
+}

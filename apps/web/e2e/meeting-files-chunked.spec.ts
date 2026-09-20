@@ -8,6 +8,7 @@ import {
   signUp,
   sparsePdf,
 } from './fixtures';
+import { scaled } from './timeouts';
 
 const LARGE_NAME = 'meeting-files-e2e-large.pdf';
 const CHUNKS = Math.ceil(LARGE_FILE_BYTES / MEETING_FILE_CHUNK_SIZE_BYTES);
@@ -83,7 +84,7 @@ test.describe('uploading a file too large for one request', () => {
     // from the event stream within milliseconds of the worker finishing, so waiting for
     // that chip is waiting for a state the row may never be seen in.
     await expect(uploading.getByRole('button', { name: 'Download' })).toBeVisible({
-      timeout: 90_000,
+      timeout: scaled(90_000),
     });
     await expect(uploading.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
 
@@ -108,7 +109,9 @@ test.describe('uploading a file too large for one request', () => {
     await pickFiles(page, [sparsePdf(LARGE_NAME, LARGE_FILE_BYTES)]);
 
     // Cut the connection once the server has some chunks, then give it back.
-    await expect.poll(() => acknowledged.length, { timeout: 60_000 }).toBeGreaterThanOrEqual(2);
+    await expect
+      .poll(() => acknowledged.length, { timeout: scaled(60_000) })
+      .toBeGreaterThanOrEqual(2);
     await context.setOffline(true);
     await page.waitForTimeout(1_000);
     await context.setOffline(false);
@@ -116,7 +119,9 @@ test.describe('uploading a file too large for one request', () => {
     const row = rowFor(page, LARGE_NAME);
     // Download rather than the Processing chip, for the reason above: the stream can move
     // the row past `processing` faster than an assertion can catch it.
-    await expect(row.getByRole('button', { name: 'Download' })).toBeVisible({ timeout: 90_000 });
+    await expect(row.getByRole('button', { name: 'Download' })).toBeVisible({
+      timeout: scaled(90_000),
+    });
 
     // Every chunk exactly once: the retry re-sent the chunk that was in flight when the
     // connection went, and nothing the server had already acknowledged.
@@ -137,7 +142,9 @@ test.describe('uploading a file too large for one request', () => {
 
     await page.goto(`/meetings/${meeting.id}`);
     await pickFiles(page, [sparsePdf(LARGE_NAME, LARGE_FILE_BYTES)]);
-    await expect.poll(() => acknowledged.length, { timeout: 60_000 }).toBeGreaterThanOrEqual(2);
+    await expect
+      .poll(() => acknowledged.length, { timeout: scaled(60_000) })
+      .toBeGreaterThanOrEqual(2);
 
     await page.reload();
     const sentBeforeReload = requested.length;
@@ -146,8 +153,10 @@ test.describe('uploading a file too large for one request', () => {
     await pickFiles(page, [sparsePdf(LARGE_NAME, LARGE_FILE_BYTES)]);
 
     const row = rowFor(page, LARGE_NAME);
-    await expect(row.getByText(/Resuming/)).toBeVisible({ timeout: 60_000 });
-    await expect(row.getByRole('button', { name: 'Download' })).toBeVisible({ timeout: 90_000 });
+    await expect(row.getByText(/Resuming/)).toBeVisible({ timeout: scaled(60_000) });
+    await expect(row.getByRole('button', { name: 'Download' })).toBeVisible({
+      timeout: scaled(90_000),
+    });
 
     // The run after the reload sent fewer chunks than the file has: the ones the server
     // already held were not sent again.
@@ -177,13 +186,15 @@ test.describe('uploading a file too large for one request', () => {
 
     await page.goto(`/meetings/${meeting.id}`);
     await pickFiles(page, [sparsePdf(LARGE_NAME, LARGE_FILE_BYTES)]);
-    await expect.poll(() => acknowledged.length, { timeout: 60_000 }).toBeGreaterThanOrEqual(1);
+    await expect
+      .poll(() => acknowledged.length, { timeout: scaled(60_000) })
+      .toBeGreaterThanOrEqual(1);
 
     const row = rowFor(page, LARGE_NAME);
     await row.getByRole('button', { name: 'Cancel' }).click();
 
     await expect(row).toHaveCount(0);
-    await expect.poll(() => aborted.length, { timeout: 10_000 }).toBe(1);
+    await expect.poll(() => aborted.length, { timeout: scaled(10_000) }).toBe(1);
     // Nothing was created: the file only exists once `complete` says so.
     await expect(page.getByText('No files yet', { exact: false })).toBeVisible();
 

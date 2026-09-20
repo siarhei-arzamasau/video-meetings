@@ -32,8 +32,19 @@ export type SignedIn =
  *
  * `signOut` is local: clear the token and replace to sign-in. The JWT is stateless and there
  * is no logout endpoint to call.
+ *
+ * `updateUser` is the one way the user held here changes after it is loaded, and it exists
+ * for the edit page: `PATCH /users/me` answers with the whole updated record, so the page
+ * that saved a new name puts it back here instead of refetching. It is **not** a shared
+ * store — each page mounts its own copy of this hook — and nothing about that needs fixing:
+ * every page loads the user at mount, so a page navigated to after a save reads the new value
+ * from the API for itself.
  */
-export function useSignedIn(): { session: SignedIn; signOut(): void } {
+export function useSignedIn(): {
+  session: SignedIn;
+  signOut(): void;
+  updateUser(user: User): void;
+} {
   const router = useRouter();
   const [session, setSession] = useState<SignedIn>({ state: 'loading' });
   // Bumped by "Try again". The effect owns the whole load, so a retry re-runs it rather than
@@ -47,6 +58,12 @@ export function useSignedIn(): { session: SignedIn; signOut(): void } {
     setSession({ state: 'signedOut' });
     router.replace('/auth/login');
   }, [router]);
+
+  // Updater form, and only over a `ready` session: a save that resolves after the token went
+  // bad must not put a signed-out page back on screen holding a user.
+  const updateUser = useCallback((user: User): void => {
+    setSession((current) => (current.state === 'ready' ? { ...current, user } : current));
+  }, []);
 
   useEffect(() => {
     const token = readAccessToken();
@@ -110,7 +127,7 @@ export function useSignedIn(): { session: SignedIn; signOut(): void } {
     // `router` and `signOut` are stable across renders, so they do not re-run this.
   }, [router, signOut, reloadCount]);
 
-  return { session, signOut };
+  return { session, signOut, updateUser };
 }
 
 /**

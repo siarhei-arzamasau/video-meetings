@@ -11,6 +11,7 @@ import {
   objectPathOf,
   signUp,
 } from './fixtures';
+import { scaled } from './timeouts';
 
 const rowFor = (page: Page, name: string): Locator =>
   page.getByRole('list', { name: 'Files' }).getByRole('listitem').filter({ hasText: name });
@@ -34,7 +35,7 @@ async function uploadBrokenImage(page: Page): Promise<Locator> {
   });
 
   const row = rowFor(page, BROKEN_NAME);
-  await expect(failedChip(row)).toBeVisible({ timeout: 15_000 });
+  await expect(failedChip(row)).toBeVisible({ timeout: scaled(15_000) });
 
   return row;
 }
@@ -62,7 +63,7 @@ test.describe('retrying a failed file', () => {
     // comes back failed. That is what proves the file really re-ran the pipeline.
     await row.getByRole('button', { name: 'Retry' }).click();
     await expect(processingChip(row)).toBeVisible();
-    await expect(failedChip(row)).toBeVisible({ timeout: 15_000 });
+    await expect(failedChip(row)).toBeVisible({ timeout: scaled(15_000) });
 
     // Repair the object, then retry again: no chip at all, and a thumbnail the preview step
     // could only have written from readable bytes.
@@ -71,8 +72,8 @@ test.describe('retrying a failed file', () => {
     fs.writeFileSync(objectPathOf(meeting.id, file?.id ?? ''), fs.readFileSync(SAMPLE_PNG));
 
     await row.getByRole('button', { name: 'Retry' }).click();
-    await expect(failedChip(row)).toBeHidden({ timeout: 15_000 });
-    await expect(processingChip(row)).toBeHidden({ timeout: 15_000 });
+    await expect(failedChip(row)).toBeHidden({ timeout: scaled(15_000) });
+    await expect(processingChip(row)).toBeHidden({ timeout: scaled(15_000) });
 
     const image = row.locator('img');
     await expect(image).toBeVisible();
@@ -120,7 +121,7 @@ test.describe('retrying a failed file', () => {
 
     await other.page.goto(`/meetings/${meeting.id}`);
     const row = rowFor(other.page, BROKEN_NAME);
-    await expect(failedChip(row)).toBeVisible({ timeout: 15_000 });
+    await expect(failedChip(row)).toBeVisible({ timeout: scaled(15_000) });
     // Someone else's failed file: they can still download it, but not retry or delete it.
     await expect(row.getByRole('button', { name: 'Download' })).toBeVisible();
     await expect(row.getByRole('button', { name: 'Retry' })).toHaveCount(0);
@@ -129,7 +130,9 @@ test.describe('retrying a failed file', () => {
     // The host may retry a participant's file, the same rule as Delete.
     await host.page.goto(`/meetings/${meeting.id}`);
     const hostRow = rowFor(host.page, BROKEN_NAME);
-    await expect(hostRow.getByRole('button', { name: 'Retry' })).toBeVisible({ timeout: 15_000 });
+    await expect(hostRow.getByRole('button', { name: 'Retry' })).toBeVisible({
+      timeout: scaled(15_000),
+    });
 
     await Promise.all([host.context.close(), guest.context.close(), other.context.close()]);
   });

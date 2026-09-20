@@ -61,3 +61,9 @@ skills-lock.json
 
 # Ralph loop run state, written by .claude/hooks/stop.js
 .claude/ralph.iterations.json
+
+# Personal Claude Code settings: the permission mode is one person's decision about their
+# own machine, and `bypassPermissions` committed here would silently disarm the confirmation
+# prompts for everyone who clones the repository. The shared settings live in
+# .claude/settings.json; anything personal belongs in this file and stays out of git.
+.claude/settings.local.json

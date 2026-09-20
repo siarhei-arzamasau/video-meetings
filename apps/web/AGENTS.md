@@ -39,6 +39,7 @@ indistinguishable from a skipped one.
 src/
   app/            App Router: layout, page, error, not-found, providers, globals.css
     meetings/[id] The meeting page; files/ under it is the files section
+    profile/      The account, with edit/ under it (see The profile)
   components/     Shared React components
   lib/            Non-React helpers, including the API client and the signed-in gate
 e2e/              Playwright browser suite (see Tests)
@@ -53,6 +54,16 @@ aliases in sync if either changes.
   `@import '@heroui/styles'`. The `@custom-variant dark (&:where(.dark, .dark *))` line
   points Tailwind's `dark:` variant at the class next-themes sets, instead of the default
   `prefers-color-scheme` media query. Changing either breaks theming.
+- **`globals.css` overrides HeroUI's light `--muted`, and that override is a fix, not a taste.**
+  The shipped value is 4.43:1 against `--background` in light mode — under the 4.5:1 WCAG AA
+  needs for normal-size text. It passes on a card (4.83:1), so the failure only shows where
+  secondary text sits straight on the page: the greeting's email address, the "Back to your
+  meetings" links, every spinner caption. Darkening to `oklch(53% …)` puts those at 4.86:1 and
+  the card at 5.30:1. It is scoped `:root:not([data-theme='dark'])` because the rule follows
+  the import — a bare `:root` at equal specificity would beat HeroUI's dark block as well and
+  paint light-theme grey onto a dark page. Dark's own `--muted` is 7.72:1 and is left alone.
+  Measure before changing either: the numbers above are from a real browser, and HeroUI
+  bumping its palette is what would silently undo this.
 - **`src/app/providers.tsx`.** HeroUI v3 needs no provider of its own; this file exists for
   next-themes, which must set both `class` and `data-theme` because HeroUI reads the two
   together.
@@ -157,8 +168,11 @@ bug once:
 All calls to the backend go through `src/lib/api-client/` — the single boundary between the
 web app and the API, imported as `@/lib/api-client` whichever file inside it a wrapper lives
 in. `core.ts` holds the transport every wrapper shares (`apiFetch`, `ApiError`, the bearer
-header, `sendWithProgress`); `auth.ts`, `meetings.ts`, `meeting-files.ts` and `uploads.ts`
-group the wrappers by the part of the API they call, and `index.ts` re-exports all of them.
+header, `sendWithProgress`); `auth.ts`, `user.ts`, `meetings.ts`, `meeting-files.ts` and
+`uploads.ts` group the wrappers by the part of the API they call, and `index.ts` re-exports
+all of them. `auth.ts` and `user.ts` split where the API splits — credentials and tokens
+against the account record — which is why `getMe` sits in `auth.ts` under `/auth/me` while
+`updateDisplayName` sits in `user.ts` under `/users/me`.
 **Only `index.ts` is imported from outside** — a component reaching for `api-client/core`
 has stepped around the boundary. Add endpoint wrappers to the matching file (`apiFetch<T>`
 plus a named function, then one line in `index.ts`) rather than calling `fetch` from
@@ -252,16 +266,54 @@ hands a mid-page 401 back to `signOut`.
 endpoint because the JWT is stateless and stays valid until it expires. That is a property of
 bearer tokens, not a gap to fill.
 
+### The profile
+
+Two routes, `/profile` to read the account and `/profile/edit` to change it, both gated like
+every other protected page and both adding **no request of their own** — `getMe` inside the
+gate is the whole of what they render.
+
+**Everything the user can change goes in a section on `/profile/edit`, not in a route of its
+own.** The page owns the gate; each section owns its request and its own state. That is why
+the display name's save state lives inside `DisplayNameSection` rather than on the page, and
+it is where the password and avatar sections belong when their phases arrive.
+
+**A save replaces the gate's user through `updateUser`.** `PATCH /users/me` answers with the
+whole updated record, so the page that saved puts it straight back into the hook instead of
+refetching. The hook is not a shared store — every page mounts its own copy — and nothing
+about that needs fixing: a page navigated to afterwards loads the user for itself.
+
+**`UserInitials` is the avatar.** One or two letters from the display name, and the component
+exists rather than a `<span>` per page so the header and the profile cannot disagree about a
+person's circle. It stays as the fallback once phase 6 uploads real ones. Two things in
+`initialsOf` look like fussiness and are not: characters come out with `Array.from` because a
+letter outside the BMP is two code units, and each initial is uppercased **separately**
+because uppercasing can lengthen (`'ß'` becomes `'SS'`), which would put three glyphs in a
+circle sized for two. A name with nothing renderable in it falls back to `?`.
+
 ## Tests
 
 Vitest with the jsdom environment, files matching `src/**/*.test.{ts,tsx}` next to the code
 they cover. Not Jest — that's the API app.
 
-**There are no component render tests**: `@testing-library/react` is not a dependency, and the
-logic worth pinning is pushed into `src/lib` for that reason. Adding RTL is not one dependency
-(it is RTL, jest-dom, a `setupFiles` entry in a config that deliberately has none, and explicit
-`afterEach(cleanup)` because `globals` is off), so it is a change to argue on its own rather
-than inside a feature. The browser suite below is the stronger check it defers to.
+**Component render tests exist, and they are the exception rather than the default.** Logic
+worth pinning still belongs in `src/lib`, where a test needs no DOM at all; reach for a render
+test when what you are checking _is_ the rendering — which branch of a gate is on screen, that
+a form refuses a value without sending a request, where a failure is shown.
+
+`@testing-library/react` and `@testing-library/user-event` are the whole of the setup. There is
+no `setupFiles` and no jest-dom: `globals` is off in `vitest.config.ts`, so each file calls
+`cleanup()` in its own `afterEach`, and `getBy*` throwing when an element is absent is
+assertion enough without extra matchers.
+
+**Mock the gate, not the token under it.** `vi.mock('@/lib/use-signed-in')` and hand the page
+each `SignedIn` state directly. The states are the contract the pages are written against, and
+`signedOut` in particular is only reachable that way — it is the window in which the page is
+still mounted while Next navigates away, which is exactly where you want to assert nothing
+about the account is on screen. Mock `api-client` **partially**, with `importOriginal`: pages
+tell a 400 from a 401 with `instanceof ApiError`, and a replaced constructor sends every
+branch to the network case and passes for the wrong reason.
+
+The browser suite below is still the stronger check, and the one a flow belongs in.
 
 ### The browser suite
 
@@ -274,6 +326,20 @@ raises the two-minute wait per server; a wait that times out even at several min
 corrupt-cache symptom above, not a slow machine. Its `globalTeardown` truncates `users`, so **it
 must never run alongside the API's e2e suite** — they share the database. A running `next dev`
 from this directory also blocks it, because Next locks `.next`.
+
+**Every wait in the suite goes through `e2e/timeouts.ts`, and `E2E_TIMEOUT_SCALE` is the dial
+for a busy machine.** Most specs wait on one chain — upload lands, the worker claims the row
+on its next 250 ms poll, a step runs, the transition commits, an event is published, the page
+renders it. Instrumenting the API during failing runs showed that chain finishing in about a
+second, with the worker never idle while a row was claimable and every transition published to
+a subscriber, while the page's fifteen-second assertion still timed out. What differed was the
+machine, not the code: the same suite passes in 47 seconds and fails two or three of those
+waits in 1.4 minutes, and a failing spec passes alone every time. So `E2E_TIMEOUT_SCALE=2`
+doubles every ceiling — the `expect` default, each explicit `timeout:`, and the server wait —
+and costs nothing when the page is quick, because they are ceilings and not sleeps. **Raise it
+to get a signal out of a loaded machine, never to quiet a red suite**: a wait that only passes
+at a high scale has found something. Add a new wait through `scaled()` rather than a literal,
+or it will be the one that cannot be stretched with the others.
 
 The house convention it sets: **a new page starts as a red Playwright spec**, written against
 the routes, copy, and roles the page will have, run and seen failing, then made green by the

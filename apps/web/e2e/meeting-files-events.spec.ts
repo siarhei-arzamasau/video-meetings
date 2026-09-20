@@ -2,6 +2,7 @@ import type { Locator, Page, Request } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 
 import { SAMPLE_PDF, SAMPLE_PNG, createMeetingViaApi, signUp } from './fixtures';
+import { scaled } from './timeouts';
 
 /** The row for a file, by name. Rows are list items inside the Files list. */
 const rowFor = (page: Page, name: string): Locator =>
@@ -39,7 +40,7 @@ async function untilQuiet(read: () => number, quietMs: number): Promise<number> 
 
         return Date.now() - since >= quietMs;
       },
-      { timeout: 30_000 },
+      { timeout: scaled(30_000) },
     )
     .toBe(true);
 
@@ -99,7 +100,7 @@ test.describe('live file updates', () => {
 
     // Five seconds, not the ten the Phase 1 spec allows: the chip goes when the worker says
     // so, not at the next poll.
-    await expect(row.getByText('Processing')).toBeHidden({ timeout: 5_000 });
+    await expect(row.getByText('Processing')).toBeHidden({ timeout: scaled(5_000) });
     const settledAt = Date.now();
 
     expect(openedStream).toBe(true);
@@ -124,9 +125,9 @@ test.describe('live file updates', () => {
 
     // The second tab never reloads and never uploads: the row arrives because the API
     // announced somebody else's upload on the stream it is holding open.
-    await expect(rowFor(watcher, 'sample.png')).toBeVisible({ timeout: 10_000 });
+    await expect(rowFor(watcher, 'sample.png')).toBeVisible({ timeout: scaled(10_000) });
     await expect(rowFor(watcher, 'sample.png').getByText('Processing')).toBeHidden({
-      timeout: 10_000,
+      timeout: scaled(10_000),
     });
 
     await watcher.close();
@@ -161,7 +162,7 @@ test.describe('live file updates', () => {
     // count is not asserted exactly: the dev server's double mount adds one attempt the
     // page aborts itself. What the give-up rule promises is that the attempts *stop*, and
     // with backoffs of one and two seconds, five quiet seconds is that.
-    await expect.poll(() => attempts, { timeout: 15_000 }).toBeGreaterThanOrEqual(3);
+    await expect.poll(() => attempts, { timeout: scaled(15_000) }).toBeGreaterThanOrEqual(3);
     const givenUpAt = await untilQuiet(() => attempts, 5_000);
 
     await pickFiles(page, [SAMPLE_PDF]);
@@ -172,7 +173,7 @@ test.describe('live file updates', () => {
     const beforeSettling = listRequests.length;
     // Ten seconds rather than the stream path's five: a poll costs up to three more, and
     // "slower but still correct" is the whole point of keeping it.
-    await expect(row.getByText('Processing')).toBeHidden({ timeout: 10_000 });
+    await expect(row.getByText('Processing')).toBeHidden({ timeout: scaled(10_000) });
 
     // The list was refetched while the row was processing — that is the poll, and nothing
     // else could have moved the chip.
@@ -214,7 +215,7 @@ test.describe('live file updates', () => {
 
     // Nothing is left pending. A stream nobody is reading is a connection the API holds
     // open until its TTL, and one per visit adds up.
-    await expect.poll(() => open, { timeout: 10_000 }).toBe(0);
+    await expect.poll(() => open, { timeout: scaled(10_000) }).toBe(0);
 
     await host.context.close();
   });
