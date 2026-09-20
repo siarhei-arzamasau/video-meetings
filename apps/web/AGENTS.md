@@ -178,6 +178,15 @@ place where that exception lives. Everything else about them matches `apiFetch` 
 `undefined` — and both are tested with a small fake `XMLHttpRequest`. A third caller belongs in
 `sendWithProgress` too, or in `apiFetch`; nothing else in the app may open an `XMLHttpRequest`.
 
+**One more call is neither `apiFetch` nor an `XMLHttpRequest`: `openMeetingFileEvents`.** It
+hands back the `Response` unread, because the body is a `text/event-stream` the caller reads
+with `readEventStream` rather than something to parse. It is still the same boundary —
+`buildApiUrl`, the bearer header, a non-2xx as an `ApiError` carrying the API's own message,
+so a 401 there reaches `onUnauthorized` exactly as every other call's does. It also checks
+the content type, which no other wrapper needs to: a proxy or a misconfigured dev server can
+answer 200 with HTML, and read as a stream that is a connection which opened and closed at
+once — a reconnect loop rather than a visible failure.
+
 **Next inlines that value into the client bundle at boot, which is why the root `pnpm dev`
 resolves ports before starting anything** — see
 [the root guide](../../CLAUDE.md#pnpm-dev-picks-the-ports-before-turborepo-starts). Reading it
