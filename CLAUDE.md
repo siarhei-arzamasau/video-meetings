@@ -24,8 +24,8 @@ Guidance for coding agents working in this repository.
 | `@repo/tsconfig` | `packages/tsconfig` | Shared TypeScript base configs                              |
 
 Email-and-password authentication and the authorized meetings API are implemented in
-`apps/api` (`register`, `login`, `me`, meeting creation, current-user listing, and detail
-lookup). `apps/web` calls four of them. `/auth/register` and `/auth/login` sign up and sign in,
+`apps/api` (`register`, `login`, `me`, a display name update, meeting creation, current-user
+listing, and detail lookup). `apps/web` calls four of them. `/auth/register` and `/auth/login` sign up and sign in,
 sharing a `src/app/auth/layout.tsx` shell — they are the worked examples of a form talking to
 the API. `/` is the signed-in home: it reads `me` and the meeting list after mount, and it is
 the worked example of an authorized page, gated on the client because the token lives in

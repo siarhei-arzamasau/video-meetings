@@ -1,4 +1,9 @@
-export type { User } from './types/user';
+export type { UpdateDisplayNameRequest, User } from './types/user';
+export {
+  DISPLAY_NAME_MESSAGE,
+  MAX_DISPLAY_NAME_LENGTH,
+  MIN_DISPLAY_NAME_LENGTH,
+} from './types/user';
 export type { AuthResponse, Credentials } from './types/auth';
 export { MAX_EMAIL_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from './types/auth';
 export type { CreateMeetingRequest, Meeting, MeetingStatus } from './types/meeting';

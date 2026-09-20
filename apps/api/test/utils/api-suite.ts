@@ -12,6 +12,7 @@ export interface ApiSuite {
   /** The running application, for the rare spec that needs a provider by token. */
   app(): INestApplication;
   post(url: string, body: object): request.Test;
+  patch(url: string, body: object): request.Test;
   /** A multipart request with one file part. `fieldName` defaults to the API's `file`. */
   postFile(
     url: string,
@@ -68,6 +69,7 @@ export function useApiSuite(options: TestAppOptions = {}): ApiSuite {
     prisma: () => assigned(prisma, 'prisma'),
     app: () => assigned(app, 'app'),
     post: (url, body) => request(assigned(app, 'app').getHttpServer()).post(url).send(body),
+    patch: (url, body) => request(assigned(app, 'app').getHttpServer()).patch(url).send(body),
     postFile: (url, token, file, { fieldName = 'file', filename } = {}) =>
       request(assigned(app, 'app').getHttpServer())
         .post(url)

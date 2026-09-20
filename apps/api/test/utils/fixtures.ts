@@ -10,6 +10,13 @@ export const LOGIN_URL = '/api/auth/login';
 export const ME_URL = '/api/auth/me';
 export const MEETINGS_URL = '/api/meetings';
 
+/**
+ * The user's own record. A literal `me`, never an id: a route that took one would be a
+ * route that could be pointed at somebody else, and `users-me.e2e-spec.ts` asserts that no
+ * such route answers at all.
+ */
+export const USERS_ME_URL = '/api/users/me';
+
 export function meetingFilesUrl(meetingId: string): string {
   return `${MEETINGS_URL}/${meetingId}/files`;
 }
@@ -100,6 +107,15 @@ export function meetingFilesDir(): string {
 
   return dir;
 }
+
+/**
+ * The display name contract in `@repo/shared`, restated for the same reason as
+ * `MAX_TITLE_LENGTH`: importing it would make the test agree with whatever the constant
+ * becomes, so relaxing a bound or rewording the message would quietly stay green. The
+ * dash is an en dash, as the shared string has it.
+ */
+export const MAX_DISPLAY_NAME_LENGTH = 80;
+export const DISPLAY_NAME_MESSAGE = 'Your display name must be 1\u201380 characters.';
 
 /** The shortest password the API accepts. One character less must be a 400. */
 export const MIN_PASSWORD_LENGTH = 8;
