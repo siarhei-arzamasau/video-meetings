@@ -355,3 +355,8 @@ Revisit it when:
 
 Adding an ordinary component, route, or endpoint wrapper that follows the existing patterns
 needs no update here. Document the pattern, not each instance of it.
+
+## Test user (create if not exist)
+
+email: test@example.com
+password: test@example.com
