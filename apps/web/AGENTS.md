@@ -39,6 +39,7 @@ indistinguishable from a skipped one.
 src/
   app/            App Router: layout, page, error, not-found, providers, globals.css
     meetings/[id] The meeting page; files/ under it is the files section
+    profile/      The account, with edit/ under it (see The profile)
   components/     Shared React components
   lib/            Non-React helpers, including the API client and the signed-in gate
 e2e/              Playwright browser suite (see Tests)
@@ -253,16 +254,54 @@ hands a mid-page 401 back to `signOut`.
 endpoint because the JWT is stateless and stays valid until it expires. That is a property of
 bearer tokens, not a gap to fill.
 
+### The profile
+
+Two routes, `/profile` to read the account and `/profile/edit` to change it, both gated like
+every other protected page and both adding **no request of their own** — `getMe` inside the
+gate is the whole of what they render.
+
+**Everything the user can change goes in a section on `/profile/edit`, not in a route of its
+own.** The page owns the gate; each section owns its request and its own state. That is why
+the display name's save state lives inside `DisplayNameSection` rather than on the page, and
+it is where the password and avatar sections belong when their phases arrive.
+
+**A save replaces the gate's user through `updateUser`.** `PATCH /users/me` answers with the
+whole updated record, so the page that saved puts it straight back into the hook instead of
+refetching. The hook is not a shared store — every page mounts its own copy — and nothing
+about that needs fixing: a page navigated to afterwards loads the user for itself.
+
+**`UserInitials` is the avatar.** One or two letters from the display name, and the component
+exists rather than a `<span>` per page so the header and the profile cannot disagree about a
+person's circle. It stays as the fallback once phase 6 uploads real ones. Two things in
+`initialsOf` look like fussiness and are not: characters come out with `Array.from` because a
+letter outside the BMP is two code units, and each initial is uppercased **separately**
+because uppercasing can lengthen (`'ß'` becomes `'SS'`), which would put three glyphs in a
+circle sized for two. A name with nothing renderable in it falls back to `?`.
+
 ## Tests
 
 Vitest with the jsdom environment, files matching `src/**/*.test.{ts,tsx}` next to the code
 they cover. Not Jest — that's the API app.
 
-**There are no component render tests**: `@testing-library/react` is not a dependency, and the
-logic worth pinning is pushed into `src/lib` for that reason. Adding RTL is not one dependency
-(it is RTL, jest-dom, a `setupFiles` entry in a config that deliberately has none, and explicit
-`afterEach(cleanup)` because `globals` is off), so it is a change to argue on its own rather
-than inside a feature. The browser suite below is the stronger check it defers to.
+**Component render tests exist, and they are the exception rather than the default.** Logic
+worth pinning still belongs in `src/lib`, where a test needs no DOM at all; reach for a render
+test when what you are checking _is_ the rendering — which branch of a gate is on screen, that
+a form refuses a value without sending a request, where a failure is shown.
+
+`@testing-library/react` and `@testing-library/user-event` are the whole of the setup. There is
+no `setupFiles` and no jest-dom: `globals` is off in `vitest.config.ts`, so each file calls
+`cleanup()` in its own `afterEach`, and `getBy*` throwing when an element is absent is
+assertion enough without extra matchers.
+
+**Mock the gate, not the token under it.** `vi.mock('@/lib/use-signed-in')` and hand the page
+each `SignedIn` state directly. The states are the contract the pages are written against, and
+`signedOut` in particular is only reachable that way — it is the window in which the page is
+still mounted while Next navigates away, which is exactly where you want to assert nothing
+about the account is on screen. Mock `api-client` **partially**, with `importOriginal`: pages
+tell a 400 from a 401 with `instanceof ApiError`, and a replaced constructor sends every
+branch to the network case and passes for the wrong reason.
+
+The browser suite below is still the stronger check, and the one a flow belongs in.
 
 ### The browser suite
 
