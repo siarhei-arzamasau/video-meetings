@@ -1,8 +1,28 @@
 {
   "active": true,
-  "milestone": "User profile phase 1: Display name — API",
   "maxIterations": 15,
   "maxTurns": 500,
-  "branch": "feature/phase-5",
+  "phases": [
+    {
+      "milestone": "User profile phase 2: Profile page and display name — web",
+      "branch": "feature/user-profile-phase-2"
+    },
+    {
+      "milestone": "User profile phase 3: Change password — API",
+      "branch": "feature/user-profile-phase-3"
+    },
+    {
+      "milestone": "User profile phase 4: Change password — web",
+      "branch": "feature/user-profile-phase-4"
+    },
+    {
+      "milestone": "User profile phase 5: Avatar — API",
+      "branch": "feature/user-profile-phase-5"
+    },
+    {
+      "milestone": "User profile phase 6: Avatar — web",
+      "branch": "feature/user-profile-phase-6"
+    }
+  ],
   "prompt": "Read ./claude/ralph.md and follow rules from it. Take the next opened Issue from '{milestone}' and implement it in '{branch}'."
 }
