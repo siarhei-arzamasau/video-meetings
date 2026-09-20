@@ -65,6 +65,16 @@ aliases in sync if either changes.
   `@import '@heroui/styles'`. The `@custom-variant dark (&:where(.dark, .dark *))` line
   points Tailwind's `dark:` variant at the class next-themes sets, instead of the default
   `prefers-color-scheme` media query. Changing either breaks theming.
+- **`globals.css` overrides HeroUI's light `--muted`, and that override is a fix, not a taste.**
+  The shipped value is 4.43:1 against `--background` in light mode — under the 4.5:1 WCAG AA
+  needs for normal-size text. It passes on a card (4.83:1), so the failure only shows where
+  secondary text sits straight on the page: the greeting's email address, the "Back to your
+  meetings" links, every spinner caption. Darkening to `oklch(53% …)` puts those at 4.86:1 and
+  the card at 5.30:1. It is scoped `:root:not([data-theme='dark'])` because the rule follows
+  the import — a bare `:root` at equal specificity would beat HeroUI's dark block as well and
+  paint light-theme grey onto a dark page. Dark's own `--muted` is 7.72:1 and is left alone.
+  Measure before changing either: the numbers above are from a real browser, and HeroUI
+  bumping its palette is what would silently undo this.
 - **`src/app/providers.tsx`.** HeroUI v3 needs no provider of its own; this file exists for
   next-themes, which must set both `class` and `data-theme` because HeroUI reads the two
   together.
