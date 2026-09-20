@@ -13,10 +13,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     include: ['src/**/*.test.{ts,tsx}'],
-    // Four, not one per core: a test run is something a developer starts on a machine that is
-    // doing other things, and nine jsdom forks on an 18-core laptop are a noticeable stall for
-    // no gain on a suite that finishes in under a second. Jest in the API is capped the same
-    // way; both are raised per run with `--maxWorkers` when a CI box has the cores to spare.
-    maxWorkers: 4,
+    // Every core, not the default of one fewer: the suite is short enough that process
+    // start-up dominates, so the win is small, but so is the cost of asking for it. Jest in
+    // the API is set the same way. Lower it per run with `--maxWorkers=4` on a machine that
+    // is busy with something else — the pre-commit hook runs this suite too.
+    maxWorkers: '100%',
   },
 });

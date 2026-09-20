@@ -9,11 +9,11 @@ Monorepo holding the video meetings frontend and backend.
 | `@repo/shared`   | `packages/shared`   | Cross-app types and API contracts                           |
 | `@repo/tsconfig` | `packages/tsconfig` | Shared TypeScript base configs                              |
 
-Email-and-password authentication is in place (`POST /api/auth/register`,
-`POST /api/auth/login`, `GET /api/auth/me`), along with the authorized meetings API
-(`POST /api/meetings`, `GET /api/meetings`, `GET /api/meetings/:id`). See
-[`docs/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/specs/2026-07-29-video-meetings-monorepo-design.md)
-for the design it implements.
+The API covers email-and-password authentication, user profiles, meetings, and meeting files
+(upload, chunked upload, processing, transcription, and a live status stream). The design it
+implements is
+[`docs/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/specs/2026-07-29-video-meetings-monorepo-design.md);
+later specs and plans under `docs/` build on it.
 
 ## Requirements
 
@@ -116,6 +116,10 @@ packages/
   tsconfig/  Base TypeScript configs
 scripts/
   dev.mjs    Resolves dev ports, then runs Turborepo
+  start.mjs  Postgres, Prisma client, migrations, then dev.mjs
+docs/
+  specs/     Dated design documents (historical records)
+  plans/     Implementation plans per spec
 ```
 
 ## Tooling
@@ -129,9 +133,8 @@ scripts/
 
 ## Database
 
-Prisma owns the schema at `apps/api/prisma/schema.prisma`. Users, meetings, meeting
-participants, and meeting files are mapped to `users`, `meetings`, `meeting_participants`, and
-`meeting_files` tables.
+Prisma owns the schema at `apps/api/prisma/schema.prisma`; models are camelCase and map to
+snake_case tables.
 
 ```bash
 pnpm --filter=@repo/api prisma:generate

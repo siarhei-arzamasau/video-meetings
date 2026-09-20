@@ -1,45 +1,45 @@
 ---
 name: prd
-description: Создаю PRD-документ для фичи по стандартной структуре проекта, использую, когда нужно описать требования к новой фиче перед реализацией.
+description: Writes a PRD for a feature in the project's standard structure. Use when a new feature's requirements need to be described before implementation.
 ---
 
-# PRD генератор
+# PRD generator
 
-Создай PRD (Product Requirements Document) для следующей фичи: $ARGUMENTS
+Write a PRD (Product Requirements Document) for the following feature: $ARGUMENTS
 
-Сохрани результат в файл 'docs/prd-$ARGUMENTS.md' (используй перевод на английский и kebab-case)
+Save the result to 'docs/prd-$ARGUMENTS.md' (translate the name into English and use kebab-case)
 
-Если нет папки /docs - создай
+If there is no /docs directory, create one
 
-## Структура документа
+## Document structure
 
-# PRD: {название фичи}
+# PRD: {feature name}
 
-**Дата**: {текущая дата}
-**Статус**: Draft
+**Date**: {today's date}
+**Status**: Draft
 
-## Цель
-Одно-два предложения, что и зачем это нужно пользователю.
+## Goal
+One or two sentences: what this is and why the user needs it.
 
-## Пользовательские сценарии
-- Пользователь {действие} > {Результат}
+## User scenarios
+- The user {action} > {result}
 - 
-## В скоупе
-Что входит в фичу - конкретный список
+## In scope
+What the feature includes — a concrete list
 
-## Не в скоупе
-Что явно не делаем в этой итерации
+## Out of scope
+What this iteration explicitly does not do
 
-## Технические ограничения
-Известное ограничение, которое нужно учесть
+## Technical constraints
+Known constraints that have to be accounted for
 
-## Критерии готовности
-- [ ] Критерий 1
-- [ ] Критерий 2
+## Acceptance criteria
+- [ ] Criterion 1
+- [ ] Criterion 2
 
-## Правила
+## Rules
 
-- Пиши конкретно - никакой воды
-- Критерии готовности должны быть проверяемые
-- Не описывай как реализовывать - только что и зачем
-- Если описание короткое - задавай уточняющие вопросы до полного понимания до создания файла
+- Be concrete — no filler
+- Acceptance criteria must be verifiable
+- Do not describe how to implement it — only what and why
+- If the description is thin, ask clarifying questions until you understand it fully, before creating the file

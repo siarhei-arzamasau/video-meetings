@@ -1,37 +1,37 @@
-# Ralph Loop - правила автономной работы
+# Ralph Loop — rules for autonomous work
 
-## Как брать Issues
+## How to pick up issues
 
-- Читай title, body и критерий готовности
-- Проверяй что указанная ветка уже существует (если нет, создай)
-- Работой только в этой ветке - не создавай новых
+- Read the title, the body and the acceptance criteria
+- Check that the branch named there already exists (create it if it does not)
+- Work only in that branch — do not create new ones
 
-## Именоваяние коммитов
+## Commit naming
 
-- По правилам в skill commit
+- Follow the rules in the commit skill
 
-## Правила реализауции
+## Implementation rules
 
-- Сначала тесты - потом реализация (TDD)
-- После каждого финального изменения запускай тесты
-- Браузерный сюит на этой машине запускай с `E2E_TIMEOUT_SCALE=2`:
-  `E2E_TIMEOUT_SCALE=2 pnpm --filter=@repo/web test:e2e`. Машина загружена, и на дефолтном
-  масштабе один-три теста падают по таймауту без дефекта в коде — см. `apps/web/e2e/timeouts.ts`.
-  Если тест красный и на масштабе 2 — это настоящая поломка, её и чини
-- Если тесты красные после 5 попыток - остановись и напиши в Issue комментарий с описание проблемы
+- Tests first, implementation second (TDD)
+- Run the tests after every finished change
+- Run the browser suite on this machine with `E2E_TIMEOUT_SCALE=2`:
+  `E2E_TIMEOUT_SCALE=2 pnpm --filter=@repo/web test:e2e`. The machine is busy, and at the
+  default scale one to three tests fail on timeouts with nothing wrong in the code — see
+  `apps/web/e2e/timeouts.ts`. A test still red at scale 2 is a real break; fix that one
+- If the tests are still red after 5 attempts, stop and comment on the issue describing the problem
 
-## Правила завершения
+## Finishing rules
 
-- Убедись что все тесты зелёные
-- Убедись что все требования выполнены
-- Запусти skill /code-review для код ревью
-- Закрой Issue
-- В конце сессии `git status --porcelain` пуст: нужное закоммить, **временное удалить**.
-  Черновые спеки для отладки не оставляй в `apps/web/e2e/` — их подхватит каждый следующий
-  прогон сюита; держи их вне репозитория или удаляй за собой
-- Запушь ветку (`git push -u origin <branch>`) — PR в конце создаёт Stop Hook, и он ждёт,
-  что ветка уже на remote
-- Не создавай PR это сделает Stop Hook
-- После закрытия одного Issue — немедленно завершай сессию
-- Не берй следующий Issue самостоятельно
-- Stop Hook сам запустит новую сессию для следующего Issue
+- Make sure every test is green
+- Make sure every requirement is met
+- Run the /code-review skill for a code review
+- Close the issue
+- Leave `git status --porcelain` empty: commit what belongs in the repository and **delete
+  what does not**. Do not leave scratch specs in `apps/web/e2e/` — every later run of the
+  suite executes them; keep them outside the repository or remove them on your way out
+- Push the branch (`git push -u origin <branch>`) — the Stop hook opens the PR at the end and
+  expects the branch to be on the remote already
+- Do not open a PR — the Stop hook does that
+- End the session immediately after closing one issue
+- Do not pick up the next issue yourself
+- The Stop hook starts a new session for the next issue
