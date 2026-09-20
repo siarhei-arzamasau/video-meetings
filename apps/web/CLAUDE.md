@@ -122,6 +122,22 @@ aliases in sync if either changes.
   the thumbnail with the bearer header, turns the blob into `URL.createObjectURL`, and revokes
   it on unmount. Downloads work the same way: a blob, an object URL, a programmatic
   `<a download>`. Both collapse into plain URLs once the token is an `HttpOnly` cookie.
+- **The meeting page follows its files over Server-Sent Events, and the three second poll is
+  the fallback that must not be deleted.** `useMeetingFiles` fetches the list, then opens
+  `GET /meetings/:id/files/events` and applies what arrives — `applyFileEvent`: replace a
+  known id **where it is**, re-sort an unknown one in, remove a `deleted` one — so the
+  Processing chip disappears the moment the worker finishes rather than up to three seconds
+  later. **`EventSource` is not used**, and cannot be while the token is in `localStorage`:
+  it cannot send an `Authorization` header, and a token in the URL is logged by every proxy.
+  The stream is opened with `fetch` and `src/lib/sse.ts` parses the format; the `HttpOnly`
+  cookie migration is what deletes that file. `watchMeetingFiles` reopens a dropped stream
+  (1, 2, 4 seconds) and refetches the list each time, because a drop means events happened
+  with nobody listening — the TTL close is an ordinary drop, not an error. After three drops
+  inside a minute it gives up for good and the poll takes over for the rest of the page's
+  life. Nothing turns the stream back on: a page that has proved it cannot hold one is not
+  improved by asking again, and a reload is the user's own retry. **The poll is still there
+  because a stream is the first thing a corporate proxy or a captive portal breaks**, and
+  removing it would make those pages stop updating altogether.
 - **Retry on a failed row is gated exactly like Delete.** `FileRow` takes one `canManage`
   flag — the uploader or the host — because the API applies one rule to both actions and two
   flags could only ever disagree with it. The retry itself needs no local state machine: the

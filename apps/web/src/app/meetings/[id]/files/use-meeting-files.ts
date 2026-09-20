@@ -145,8 +145,11 @@ export function useMeetingFiles(
     };
   }, [token, meetingId, listed, streamAvailable, applyChange, refresh, onUnauthorized]);
 
+  // The fallback, and only that: while a stream is open the list is already current, and a
+  // poll beside it would be three requests a second across an open meeting page for nothing.
+  // `isProcessing` still gates it, so the fallback stops when the worker is done.
   useEffect(() => {
-    if (list.state !== 'ready' || !isProcessing(list.files)) {
+    if (streamAvailable || list.state !== 'ready' || !isProcessing(list.files)) {
       return;
     }
 
@@ -155,7 +158,7 @@ export function useMeetingFiles(
     return () => {
       clearTimeout(timer);
     };
-  }, [list, refresh]);
+  }, [streamAvailable, list, refresh]);
 
   // While the list is loading or failed there is nothing to prepend to, and dropping the file
   // would make a successful upload vanish until the next refetch — so that case refetches now.
