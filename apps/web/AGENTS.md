@@ -335,6 +335,20 @@ slow machine. It is not in
 e2e suite**: they share the database. A running `next dev` from this directory also blocks it,
 because Next locks `.next`.
 
+**Every wait in the suite goes through `e2e/timeouts.ts`, and `E2E_TIMEOUT_SCALE` is the dial
+for a busy machine.** Most specs wait on one chain — upload lands, the worker claims the row
+on its next 250 ms poll, a step runs, the transition commits, an event is published, the page
+renders it. Instrumenting the API during failing runs showed that chain finishing in about a
+second, with the worker never idle while a row was claimable and every transition published to
+a subscriber, while the page's fifteen-second assertion still timed out. What differed was the
+machine, not the code: the same suite passes in 47 seconds and fails two or three of those
+waits in 1.4 minutes, and a failing spec passes alone every time. So `E2E_TIMEOUT_SCALE=2`
+doubles every ceiling — the `expect` default, each explicit `timeout:`, and the server wait —
+and costs nothing when the page is quick, because they are ceilings and not sleeps. **Raise it
+to get a signal out of a loaded machine, never to quiet a red suite**: a wait that only passes
+at a high scale has found something. Add a new wait through `scaled()` rather than a literal,
+or it will be the one that cannot be stretched with the others.
+
 This suite is what the argument against React Testing Library above defers to: a real page
 against the real API is the stronger check, made repeatable. The house convention it sets is
 that **a new page starts as a red Playwright spec** — written against the routes, copy, and

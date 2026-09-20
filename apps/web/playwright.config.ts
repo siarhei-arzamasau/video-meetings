@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+import { TIMEOUT_SCALE, scaled } from './e2e/timeouts';
+
 /**
  * The browser e2e suite: a real Chromium against the real API and a real database.
  *
@@ -20,7 +22,7 @@ import { defineConfig, devices } from '@playwright/test';
  * or loaded machine is a `E2E_SERVER_TIMEOUT_MS=300000` away from a usable run instead of a
  * config edit nobody wants in a commit.
  */
-const serverTimeout = Number(process.env['E2E_SERVER_TIMEOUT_MS'] ?? 120_000);
+const serverTimeout = Number(process.env['E2E_SERVER_TIMEOUT_MS'] ?? 120_000) * TIMEOUT_SCALE;
 
 export default defineConfig({
   testDir: './e2e',
@@ -29,8 +31,10 @@ export default defineConfig({
   retries: 0,
   forbidOnly: process.env['CI'] !== undefined,
   reporter: 'list',
-  timeout: 60_000,
-  expect: { timeout: 10_000 },
+  // Both stretched by `E2E_TIMEOUT_SCALE`, like every explicit wait in the specs — see
+  // `e2e/timeouts.ts` for why a loaded machine needs one dial rather than twenty-five edits.
+  timeout: scaled(60_000),
+  expect: { timeout: scaled(10_000) },
   globalTeardown: './e2e/global-teardown.ts',
   use: {
     baseURL: 'http://localhost:3100',
