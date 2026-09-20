@@ -35,6 +35,9 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:3100',
     trace: 'off',
+    // `E2E_SLOW_MO_MS=500 pnpm --filter=@repo/web test:e2e -- --headed` is how to watch the
+    // suite drive the page at human speed; unset, it runs as fast as it can.
+    launchOptions: { slowMo: Number(process.env['E2E_SLOW_MO_MS'] ?? 0) },
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: [

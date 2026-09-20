@@ -68,6 +68,13 @@ aliases in sync if either changes.
 - **`src/app/providers.tsx`.** HeroUI v3 needs no provider of its own; this file exists for
   next-themes, which must set both `class` and `data-theme` because HeroUI reads the two
   together.
+- **`<body>` paints its own background: `bg-background text-foreground` in `layout.tsx`.**
+  Without them `html`, `body` and `main` are all transparent and the page colour is the
+  browser's root canvas following `color-scheme` — which matches the theme in a plain Chrome
+  window and did not in an embedded one, where light mode rendered as a dark page behind a
+  white card. Both are HeroUI tokens (`--background`/`--foreground`, redefined per
+  `data-theme`), so the two themes stay paired. Do not move the background onto a page
+  wrapper: every route would then have to remember it.
 - **`suppressHydrationWarning` on `<html>`** in `layout.tsx` — next-themes writes theme
   attributes before React hydrates. Leave it.
 - **`next.config.ts`** sets `output: 'standalone'` (the Dockerfile copies `.next/standalone`
