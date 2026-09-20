@@ -200,3 +200,24 @@ export async function listMeetingFilesViaApi(
 
   return (await response.json()) as ListedFile[];
 }
+
+/**
+ * Sets the display name through the API the browser will use for it.
+ *
+ * The edit page does not exist yet, and a spec about the profile should not be the thing that
+ * waits for it: a name the user chose is what separates the rendered profile from the one
+ * registration derived, and it is one request away.
+ */
+export async function setDisplayNameViaApi(token: string, displayName: string): Promise<void> {
+  const response = await fetch(`${API_URL}/users/me`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ displayName }),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Setting the display name failed with ${String(response.status)}: ${await response.text()}`,
+    );
+  }
+}

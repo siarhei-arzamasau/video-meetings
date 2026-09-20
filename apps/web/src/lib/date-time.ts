@@ -81,3 +81,33 @@ export function formatRelativeTime(
   // `numeric: 'auto'` renders zero as the locale's word for the present ("now" in English).
   return format.format(0, 'second');
 }
+
+/**
+ * A day, with no time on it: `dateStyle: 'long'` in the reader's locale and zone.
+ *
+ * Its own formatter rather than a parameter on `formatMeetingTime`, because the two answer
+ * different questions. A meeting needs the hour — that is the whole point of it — and the day
+ * an account was created does not, so putting one on a profile would print a precision the
+ * reader has no use for and invite them to wonder what happened at that minute.
+ */
+const JOIN_DATE_FORMAT = new Intl.DateTimeFormat(undefined, { dateStyle: 'long' });
+
+/**
+ * The day an account was created, in the reader's locale and zone.
+ *
+ * Injectable for tests for the same reason `formatMeetingTime` is, and safe in the reader's
+ * zone for the same reason: the profile fetches after mount, so no server string exists for
+ * this one to disagree with.
+ */
+export function formatJoinDate(
+  iso: string,
+  format: Intl.DateTimeFormat = JOIN_DATE_FORMAT,
+): string {
+  const at = new Date(iso);
+
+  if (Number.isNaN(at.getTime())) {
+    return iso;
+  }
+
+  return format.format(at);
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatMeetingTime, formatRelativeTime } from './date-time';
+import { formatJoinDate, formatMeetingTime, formatRelativeTime } from './date-time';
 
 /**
  * Formatters are injected rather than stubbed: the production default deliberately follows the
@@ -75,5 +75,31 @@ describe('formatRelativeTime', () => {
 
   it('returns the raw value for an unparseable instant rather than throwing', () => {
     expect(at('not a date')).toBe('not a date');
+  });
+});
+
+describe('formatJoinDate', () => {
+  const dayInUtc = new Intl.DateTimeFormat('en-GB', { dateStyle: 'long', timeZone: 'UTC' });
+
+  it('renders an instant as a date, with no time on it', () => {
+    // The hour an account was created is noise on a profile; the day is the fact.
+    expect(formatJoinDate('2026-08-05T14:30:00.000Z', dayInUtc)).toBe('5 August 2026');
+  });
+
+  it('resolves the instant into the formatter zone', () => {
+    const dayInAuckland = new Intl.DateTimeFormat('en-GB', {
+      dateStyle: 'long',
+      timeZone: 'Pacific/Auckland',
+    });
+
+    expect(formatJoinDate('2026-08-05T14:30:00.000Z', dayInAuckland)).toBe('6 August 2026');
+  });
+
+  it('shows a malformed value verbatim instead of throwing', () => {
+    expect(formatJoinDate('not-a-date', dayInUtc)).toBe('not-a-date');
+  });
+
+  it('formats in the reader own locale and zone when no formatter is given', () => {
+    expect(formatJoinDate('2026-08-05T14:30:00.000Z')).not.toBe('');
   });
 });
