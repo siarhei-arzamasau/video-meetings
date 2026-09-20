@@ -98,12 +98,12 @@ export class MeetingFileEventsService implements OnModuleInit, OnApplicationShut
   /**
    * The changes to one meeting's files, merged with the heartbeat, until the TTL.
    *
-   * **The first heartbeat is immediate, and that is load-bearing.** Nest defers the response
-   * headers until the first message so that an observable which errors straight away can
-   * still be turned into a status code by the exception filter — which means a client's
-   * `fetch` would not resolve, and could not check `content-type: text/event-stream`, until
-   * something happened to this meeting. A ping on subscribe is what makes opening the stream
-   * an event in itself.
+   * **The first heartbeat is immediate**, so "the stream is open" is something the client is
+   * told rather than something it infers from silence. Nest defers the response headers
+   * until the first message — so that an observable which errors straight away can still be
+   * turned into a status code by the exception filter — and commits them itself one
+   * macrotask later if nothing was emitted; the opening ping means a reader sees the same
+   * thing whether or not that fallback fires.
    *
    * **It completes after `MEETING_FILES_STREAM_TTL_SECONDS` rather than running for ever.** A
    * tab left open overnight then reconnects — and a reconnect refetches the list, which is
@@ -163,10 +163,9 @@ function fileMessage(file: MeetingFile): MessageEvent {
 }
 
 /**
- * `startWith` rather than `timer(0, …)`: the opening beat is emitted during `subscribe`, in
- * the same turn as the request, so the response headers are written before the handler
- * returns. A beat one macrotask later would work too, but "the stream is open" would then be
- * something the client learns by waiting.
+ * `startWith` rather than `timer(0, …)`, so the opening beat is emitted during `subscribe`
+ * rather than a macrotask later: the stream's first bytes then do not depend on how the
+ * runtime happens to order the response's own header write against a zero-delay timer.
  */
 function heartbeat(): Observable<MessageEvent> {
   return interval(HEARTBEAT_INTERVAL_MS).pipe(

@@ -8,23 +8,28 @@ import {
   ParseUUIDPipe,
   Post,
   Res,
+  Sse,
   StreamableFile,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { CommandBus } from '@nestjs/cqrs';
+import type { MessageEvent } from '@nestjs/common';
+import { CommandBus, QueryBus } from '@nestjs/cqrs';
 import type { MeetingFile, User } from '@repo/shared';
 import contentDisposition from 'content-disposition';
 import type { Response } from 'express';
+import type { Observable } from 'rxjs';
 
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { DeleteMeetingFileCommand } from './commands/delete-meeting-file.command';
 import { RetryMeetingFileCommand } from './commands/retry-meeting-file.command';
 import { UploadMeetingFileCommand } from './commands/upload-meeting-file.command';
+import { MeetingFileEventsService } from './services/meeting-file-events.service';
 import { MeetingFilesService } from './services/meeting-files.service';
 import type { OpenedFile } from './services/meeting-files.service';
+import { requireVisibleMeeting } from './services/visible-meeting';
 import { MeetingFileUploadInterceptor } from './storage/meeting-file-upload.interceptor';
 
 export const FILE_REQUIRED_MESSAGE = 'A file is required';
@@ -36,8 +41,37 @@ const UUID_V4 = new ParseUUIDPipe({ version: '4' });
 export class MeetingFilesController {
   constructor(
     private readonly commandBus: CommandBus,
+    private readonly queryBus: QueryBus,
     private readonly files: MeetingFilesService,
+    private readonly fileEvents: MeetingFileEventsService,
   ) {}
+
+  /**
+   * This meeting's file changes as they happen: `event: file`, `data: <MeetingFile JSON>`,
+   * `id: <ISO instant>`, with an `event: ping` every fifteen seconds so an idle stream is
+   * not closed by a proxy and a dead one is detectable.
+   *
+   * Declared **before** the parameterised routes below so `files/events` is read as this
+   * route and never as a file id — the same reason `MeetingFileUploadsController` is listed
+   * first in the module.
+   *
+   * Visibility is resolved before the observable is returned, so a stranger gets the same
+   * 404 and the same error body as every other route here rather than an open stream that
+   * never carries anything. Nest turns a rejection from an `@Sse` handler into an ordinary
+   * response, which is what makes that possible.
+   *
+   * The stream closes itself after `MEETING_FILES_STREAM_TTL_SECONDS`; reconnecting is the
+   * client's job, and it refetches the list when it does.
+   */
+  @Sse('events')
+  async events(
+    @CurrentUser() user: User,
+    @Param('id', UUID_V4) meetingId: string,
+  ): Promise<Observable<MessageEvent>> {
+    await requireVisibleMeeting(this.queryBus, user.id, meetingId);
+
+    return this.fileEvents.stream(meetingId);
+  }
 
   /**
    * One file per request as `multipart/form-data`, field `file`. The interceptor has already
@@ -138,7 +172,11 @@ export class MeetingFilesController {
     );
   }
 
-  /** Reads go straight to the service — no `QueryBus`, by design. */
+  /**
+   * Reads go straight to the service — no `QueryBus`, by design. The bus this controller
+   * does inject is for `FindVisibleMeetingQuery` above, which crosses a module boundary;
+   * this one does not.
+   */
   @Get()
   findAll(
     @CurrentUser() user: User,

@@ -83,6 +83,18 @@ export class EnvironmentVariables {
   MEETING_FILES_POLL_MS: number = 1000;
 
   /**
+   * How long one file event stream stays open before it completes and a client reconnects.
+   *
+   * Bounded rather than unlimited so a tab left open overnight does not hold a connection
+   * for ever, and because the reconnect is what repairs a stream that silently stopped
+   * carrying events: the client refetches the list when it reopens. At least thirty seconds,
+   * which is two heartbeats — a TTL shorter than that is a reconnect loop.
+   */
+  @IsInt()
+  @Min(30)
+  MEETING_FILES_STREAM_TTL_SECONDS: number = 300;
+
+  /**
    * How long a chunked upload session stays open. Past it the session answers 404 and the
    * worker removes its chunks, so this is also the longest an abandoned upload holds disk.
    * At least an hour: a session shorter than the upload it exists to carry is a session that

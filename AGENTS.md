@@ -182,6 +182,12 @@ through an upload session, which lives under `storage/uploads/<uploadId>/` and s
 same worker that purges deleted files, so the only cost of walking away from an upload is disk
 until it lapses.
 
+The meeting page learns about a file's progress from `GET /api/meetings/:id/files/events`, a
+Server-Sent Events stream scoped to one meeting, and falls back to its 3 second poll when the
+stream cannot be opened. A stream closes itself after `MEETING_FILES_STREAM_TTL_SECONDS`
+(default 300, at least 30) so a tab left open reconnects — and refetches the list — rather
+than holding a connection for ever.
+
 Transcription of audio and video is **off by default**
 (`MEETING_FILES_TRANSCRIPTION_ENABLED`). Turning it on needs `TRANSCRIPTION_API_URL` — an
 OpenAI-compatible `audio/transcriptions` endpoint, hosted or a self-hosted Whisper server —
