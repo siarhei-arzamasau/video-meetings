@@ -58,3 +58,6 @@ pnpm-debug.log*
 # absolute home path, which is machine-local and must not be committed.
 .agents/skills/ui-ux-pro-max
 skills-lock.json
+
+# Ralph loop run state, written by .claude/hooks/stop.js
+.claude/ralph.iterations.json

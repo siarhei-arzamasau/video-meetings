@@ -1,0 +1,8 @@
+{
+  "active": false,
+  "milestone": "",
+  "maxIterations": 1,
+  "maxTurns": 50,
+  "branch": "feature/phase-5",
+  "prompt": "Read ./claude/ralph.md and follow rules from it. Take the next opened Issue from '{milestone}' and implement it in '{branch}'."
+}
