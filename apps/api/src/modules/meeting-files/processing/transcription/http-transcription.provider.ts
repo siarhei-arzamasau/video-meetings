@@ -60,6 +60,7 @@ export class HttpTranscriptionProvider implements TranscriptionProvider {
     const filename = FILENAMES[contentType] ?? FALLBACK_FILENAME;
 
     let response: Response;
+    let body: string;
 
     try {
       response = await fetch(url, {
@@ -76,9 +77,13 @@ export class HttpTranscriptionProvider implements TranscriptionProvider {
         duplex: 'half',
         signal,
       } as RequestInit);
+      // Read inside the same guard as the request: a timeout that strikes while the body is
+      // still arriving, or a connection dropped halfway through it, rejects this call rather
+      // than the `fetch` above, and has to become the same StepError.
+      body = await response.text();
     } catch (error) {
-      // An abort lands here too — the step's timeout, or a shutdown — and is not distinguished
-      // on purpose: the user's answer is the same either way.
+      // An abort lands here too — the step's timeout, or the worker's shutdown — and is not
+      // distinguished on purpose: the user's answer is the same either way.
       stream.destroy();
       this.logger.error(
         `Transcription request failed for ${contentType}`,
@@ -87,8 +92,6 @@ export class HttpTranscriptionProvider implements TranscriptionProvider {
 
       throw new StepError(TRANSCRIPTION_FAILED_MESSAGE, { cause: error });
     }
-
-    const body = await response.text();
 
     if (!response.ok) {
       this.logger.error(

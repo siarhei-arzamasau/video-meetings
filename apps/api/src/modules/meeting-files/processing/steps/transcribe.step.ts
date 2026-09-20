@@ -14,8 +14,11 @@ const TRANSCRIBABLE = ['audio/', 'video/'];
  *
  * Three things about it are deliberate.
  *
- * **The flag is read per tick, not at boot.** Turning transcription on is a configuration
- * change, not a deployment, so this asks `ConfigService` every time it runs.
+ * **The flag is one more validated environment variable.** `ConfigService` answers with the
+ * value the process booted with, so turning transcription on is a restart, like every other
+ * setting here. The step still asks for it when it runs rather than once in the constructor:
+ * that is what lets the e2e suite flip it through `ConfigService.set` between tests without
+ * rebuilding the application.
  *
  * **A skip is not a failure.** A PDF, or any file uploaded while the flag was off, reaches
  * `ready` with no transcript and no reason — the pipeline's contract is that a step which has
@@ -35,7 +38,7 @@ export class TranscribeStep implements ProcessingStep {
     @Inject(TRANSCRIPTION_PROVIDER) private readonly provider: TranscriptionProvider,
   ) {}
 
-  async run({ record, storage, logger }: StepContext): Promise<StepPatch> {
+  async run({ record, storage, logger, signal }: StepContext): Promise<StepPatch> {
     if (!this.config.get<boolean>('MEETING_FILES_TRANSCRIPTION_ENABLED', false)) {
       return {};
     }
@@ -56,13 +59,14 @@ export class TranscribeStep implements ProcessingStep {
     let text: string;
 
     try {
-      // The provider's own bound. A request that outruns it is aborted and becomes a
-      // StepError with a specific reason, rather than a worker holding a lease it keeps
-      // renewing.
+      // Two ways out. The provider's own bound: a request that outruns it is aborted and
+      // becomes a StepError with a specific reason, rather than a worker holding a lease it
+      // keeps renewing. And the worker's shutdown: a stopping process lets go of a third
+      // party at once, and the worker hands the row back instead of failing it.
       text = await this.provider.transcribe(
         stream,
         record.contentType,
-        AbortSignal.timeout(seconds * 1_000),
+        AbortSignal.any([signal, AbortSignal.timeout(seconds * 1_000)]),
       );
     } finally {
       // The step opened it, so the step closes it — idempotent, and it costs nothing when the

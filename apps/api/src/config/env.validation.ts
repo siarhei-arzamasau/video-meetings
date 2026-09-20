@@ -97,9 +97,8 @@ export class EnvironmentVariables {
    * calls a third party, and a deployment that has not chosen one must still process files.
    * Parsed like the worker flag, for the same reason.
    *
-   * The step reads this through `ConfigService` when it runs rather than at boot, so turning
-   * it on does not need a restart — but the URL below is still validated here, so a process
-   * cannot start in a state where turning the flag on would fail every file.
+   * The URL below is validated here whenever this is on, so a process cannot start in a
+   * state where every recording would fail.
    */
   @Transform(({ obj, key }) => parseBoolean((obj as Record<string, unknown>)[key]))
   @IsBoolean()

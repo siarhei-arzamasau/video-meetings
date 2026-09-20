@@ -352,11 +352,13 @@ the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-p
   against the cap of three.
 - **Transcription is one more `PIPELINE` entry, and that was the point of the list.** Adding
   `TranscribeStep` changed no status, no route, and nothing in the worker except the
-  heartbeat below. It is behind `MEETING_FILES_TRANSCRIPTION_ENABLED`, **off by default**, and
-  the flag is read from `ConfigService` **when the step runs, not at boot** — turning
-  transcription on is a configuration change, not a deployment. `TRANSCRIPTION_API_URL` is
-  still validated at boot when the flag is on, so a process cannot start in a state where
-  turning it on would fail every file. A file the step does not apply to — a PDF, or anything
+  heartbeat and the shutdown abort below. It is behind `MEETING_FILES_TRANSCRIPTION_ENABLED`,
+  **off by default**, and turning it on is a restart like any other environment change:
+  `ConfigService` answers with the validated boot-time value whenever the step asks. (The step
+  asks when it runs rather than once in its constructor only so the e2e suite can flip the
+  flag with `ConfigService.set` between tests.) `TRANSCRIPTION_API_URL` is validated at boot
+  when the flag is on, so a process cannot start in a state where every recording would
+  fail. A file the step does not apply to — a PDF, or anything
   uploaded while the flag was off — is **skipped, not failed**: it reaches `ready` with no
   transcript and no reason. Turning the flag on later does not reprocess those files; retry
   does, one file at a time.
@@ -381,7 +383,18 @@ the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-p
   the _last renewal_ set, not the one the claim did. A renewal that updates zero rows means
   the row is no longer ours; the heartbeat then reports `null`, both conditional updates miss
   on purpose, and the patch — thumbnail and transcript alike — is discarded and its bytes
-  removed.
+  removed. Renewals never overlap, and `stop()` waits for the one in flight: each is
+  conditional on the lease the previous one set, so a stale value in either place would make
+  the worker discard its own result as a lost race.
+- **Shutdown aborts a step, and an aborted step is released, not failed.** A step can now
+  take minutes, so `onApplicationShutdown` aborts the `signal` every step gets in its
+  `StepContext` before waiting for the tick — otherwise a deploy would wait on a third party
+  for up to `TRANSCRIPTION_TIMEOUT_SECONDS`, outlive any orchestrator's grace period, and end
+  in a SIGKILL and a lapsed lease anyway. A throw after that abort is not the file's fault:
+  the worker takes `processing → uploaded` (the lease-expiry edge, early and on purpose),
+  removes whatever the earlier steps wrote, and leaves the row for the next claim. A step
+  that waits on anything outside the process must honour the signal; the two stateless steps
+  finish in milliseconds and ignore it.
 - **Downloads declare the object's real length.** `Content-Length` is the `stat` size, not the
   record's; they differ only for a truncated object, which is already `failed` with a reason,
   and declaring the record's length would turn that download into an aborted transfer instead

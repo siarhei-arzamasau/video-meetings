@@ -515,5 +515,110 @@ describe('MeetingFileWorker', () => {
 
       expect(renewLease).not.toHaveBeenCalled();
     });
+
+    it('waits for a renewal still in flight, so the result is recorded against the lease it set', async () => {
+      // The beat fires at one second and its UPDATE takes another 400 ms to come back; the
+      // step finishes in between. Stopping the heartbeat without waiting would hand the
+      // transition the claim's lease while the row already holds the renewed one.
+      const renewed = new Date(Date.now() + 3_000);
+      renewLease.mockImplementation(() => settle(400).then(() => renewed));
+      const slow = await build({ MEETING_FILES_LEASE_SECONDS: 3 });
+      const step = slowStep();
+
+      const drained = slow.drain();
+      await settle(1_100);
+      step.release({ thumbnailKey: 'thumb' });
+      await drained;
+
+      expect(transition).toHaveBeenCalledWith(
+        FILE_ID,
+        'processing',
+        'ready',
+        expect.objectContaining({ thumbnailKey: 'thumb' }),
+        renewed,
+      );
+      expect(remove).not.toHaveBeenCalled();
+    });
+
+    it('never overlaps renewals: a beat that fires while one is in flight is skipped', async () => {
+      // Each renewal outlasts the interval. Without the guard the second beat would match
+      // the lease the first is replacing, find zero rows, and declare the row lost.
+      renewLease.mockImplementation(() => settle(1_400).then(() => new Date(Date.now() + 3_000)));
+      const slow = await build({ MEETING_FILES_LEASE_SECONDS: 3 });
+      const step = slowStep();
+
+      const drained = slow.drain();
+      await settle(2_200);
+      step.release({});
+      await drained;
+
+      expect(renewLease).toHaveBeenCalledTimes(1);
+      expect(transition).toHaveBeenCalledWith(
+        FILE_ID,
+        'processing',
+        'ready',
+        expect.anything(),
+        expect.any(Date),
+      );
+      expect(transition).not.toHaveBeenCalledWith(
+        FILE_ID,
+        'processing',
+        'ready',
+        expect.anything(),
+        null,
+      );
+    });
+  });
+
+  describe('shutdown while a step is running', () => {
+    it('aborts the step through its context signal and hands the row back rather than failing it', async () => {
+      // A step that behaves like the transcription: it waits on something outside the
+      // process and lets go when told to.
+      second.mockImplementationOnce(
+        ({ signal }: { signal: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+          }),
+      );
+      const running = worker.drain();
+      await settle(20);
+
+      await worker.onApplicationShutdown();
+      await running;
+
+      // `processing → uploaded`, conditional on the lease as every transition is; the first
+      // step's checksum is dropped with the rest of the patch and nothing is marked failed.
+      expect(transition).toHaveBeenCalledWith(
+        FILE_ID,
+        'processing',
+        'uploaded',
+        { leasedUntil: null },
+        LEASE,
+      );
+      expect(transition).not.toHaveBeenCalledWith(
+        FILE_ID,
+        'processing',
+        'failed',
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('removes what the earlier steps wrote when it releases the row', async () => {
+      first.mockResolvedValueOnce({ thumbnailKey: 'thumb' });
+      second.mockImplementationOnce(
+        ({ signal }: { signal: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+          }),
+      );
+      const running = worker.drain();
+      await settle(20);
+
+      await worker.onApplicationShutdown();
+      await running;
+
+      expect(remove).toHaveBeenCalledWith('thumb');
+    });
   });
 });

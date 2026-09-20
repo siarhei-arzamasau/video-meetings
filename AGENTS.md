@@ -186,9 +186,9 @@ Transcription of audio and video is **off by default**
 (`MEETING_FILES_TRANSCRIPTION_ENABLED`). Turning it on needs `TRANSCRIPTION_API_URL` — an
 OpenAI-compatible `audio/transcriptions` endpoint, hosted or a self-hosted Whisper server —
 optionally `TRANSCRIPTION_API_KEY`, and it bounds each request with
-`TRANSCRIPTION_TIMEOUT_SECONDS` (default 600). The flag is read per tick, so it can be turned
-on without a restart; the URL is validated at boot, so a process cannot start in a state where
-turning it on would fail every file.
+`TRANSCRIPTION_TIMEOUT_SECONDS` (default 600). Changing the flag is a restart, like any other
+environment change; the URL is validated at boot whenever the flag is on, so the API refuses
+to start rather than fail every recording.
 
 `JWT_SECRET` must be at least 32 characters or the API refuses to boot. The `.env.example`
 placeholder satisfies that for local work only.

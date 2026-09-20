@@ -62,6 +62,8 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
   private timer: NodeJS.Timeout | undefined;
   private inFlight: Promise<void> | undefined;
   private stopped = false;
+  /** Aborted on shutdown; every step receives its signal, and a step waiting on a third party lets go. */
+  private readonly shutdown = new AbortController();
 
   constructor(
     config: ConfigService,
@@ -89,10 +91,18 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     this.schedule(0);
   }
 
-  /** Stops the loop and waits for a tick in progress, so shutdown never abandons a claim. */
+  /**
+   * Stops the loop, tells a step in flight to let go, and waits for the tick to finish, so
+   * shutdown never abandons a claim. The abort matters now that a step can take minutes: a
+   * transcription in progress is dropped and its row handed back (see `release`), rather
+   * than the process waiting on a third party for up to `TRANSCRIPTION_TIMEOUT_SECONDS` —
+   * which is longer than any orchestrator's grace period, so the wait would end in a
+   * SIGKILL and a lapsed lease anyway.
+   */
   async onApplicationShutdown(): Promise<void> {
     this.stopped = true;
     clearTimeout(this.timer);
+    this.shutdown.abort();
     await this.inFlight;
   }
 
@@ -189,13 +199,23 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     }
 
     // Stopped exactly once, whichever way the steps ended, and before anything is written:
-    // the lease it hands back is the one the row actually holds. A renewal that found the row
-    // was no longer ours leaves `null`, which makes both conditional updates below miss on
-    // purpose and the result be discarded.
-    const held = heartbeat.stop();
+    // the lease it hands back is the one the row actually holds, which is why `stop` waits
+    // for a renewal still in flight. A renewal that found the row was no longer ours leaves
+    // `null`, which makes both conditional updates below miss on purpose and the result be
+    // discarded.
+    const held = await heartbeat.stop();
 
     if ('error' in outcome) {
       const { error } = outcome;
+
+      // Not the file's fault: the process is stopping and the step let go because it was
+      // told to. Hand the row back rather than record a failure the user would have to retry.
+      if (this.shutdown.signal.aborted) {
+        await this.release(claimed, held, startedAt, patchBefore(error));
+
+        return;
+      }
+
       const cause = error instanceof StepFailure ? error.cause : error;
       const reason = cause instanceof StepError ? cause.userMessage : GENERIC_FAILURE;
 
@@ -246,13 +266,23 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
    * back the lease the row actually holds — `null` once a renewal has found the row is no
    * longer ours, which makes the caller's conditional update miss and its result be discarded.
    *
+   * One renewal at a time, and `stop()` waits for the one in flight. Both guard the same
+   * thing: each renewal is conditional on the lease the previous one set, so a renewal that
+   * overlaps a slow one — or a `stop()` that returns while one is still committing — would
+   * hand the caller a lease the database has already replaced, and the worker would discard
+   * its own result as a lost race.
+   *
    * A third of the lease, so two renewals may be lost before it expires. The timer is
    * `unref`ed: a heartbeat must never be the reason the process stays alive.
    */
-  private startHeartbeat(claimed: ClaimedFile, lease: Date | null): { stop(): Date | null } {
+  private startHeartbeat(
+    claimed: ClaimedFile,
+    lease: Date | null,
+  ): { stop(): Promise<Date | null> } {
     const everyMs = Math.max(1_000, Math.floor((this.leaseSeconds / 3) * 1_000));
     let current = lease;
     let running = true;
+    let inFlight: Promise<void> | undefined;
 
     const beat = async (): Promise<void> => {
       if (!running || current === null) {
@@ -284,13 +314,20 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
       }
     };
 
-    const timer = setInterval(() => void beat(), everyMs);
+    const timer = setInterval(() => {
+      if (inFlight === undefined) {
+        inFlight = beat().finally(() => {
+          inFlight = undefined;
+        });
+      }
+    }, everyMs);
     timer.unref();
 
     return {
-      stop: () => {
+      stop: async () => {
         running = false;
         clearInterval(timer);
+        await inFlight;
 
         return current;
       },
@@ -298,11 +335,46 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
   }
 
   /**
+   * The way out for a step cut short by shutdown: the row goes back to `uploaded` — the
+   * lease-expiry edge, taken early and on purpose — for the next worker to claim afresh, and
+   * whatever the earlier steps wrote is removed so that claim starts clean. The claim count
+   * stays as it is: a deploy that keeps landing on the same file is still a file that keeps
+   * not finishing.
+   */
+  private async release(
+    claimed: ClaimedFile,
+    lease: Date | null,
+    startedAt: number,
+    patch: StepPatch,
+  ): Promise<void> {
+    const changed = await this.files.transition(
+      claimed.id,
+      'processing',
+      'uploaded',
+      { leasedUntil: null },
+      lease,
+    );
+
+    if (changed) {
+      this.logTransition(claimed, 'processing', 'uploaded', startedAt);
+    } else {
+      this.logLost(claimed, 'uploaded');
+    }
+
+    await this.discard(patch);
+  }
+
+  /**
    * Runs the steps in order, accumulating the patch. A throw carries the patch so far on it,
    * so a later failure does not discard an earlier step's result.
    */
   private async runSteps(record: ClaimedFile): Promise<StepPatch> {
-    const context = { record, storage: this.storage, logger: this.logger };
+    const context = {
+      record,
+      storage: this.storage,
+      logger: this.logger,
+      signal: this.shutdown.signal,
+    };
 
     return this.steps.reduce<Promise<StepPatch>>(async (previous, step) => {
       const patch = await previous;

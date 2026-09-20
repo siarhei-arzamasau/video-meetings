@@ -176,6 +176,24 @@ describe('HttpTranscriptionProvider', () => {
     expect((failure as StepError).userMessage).toBe(TRANSCRIPTION_FAILED_MESSAGE);
   });
 
+  it('turns a timeout that strikes while the body is still arriving into the same StepError', async () => {
+    const server = await startServer((_received, response) => {
+      // Headers and half a transcript, then silence: the request has succeeded as far as
+      // `fetch` is concerned, and only the body read can notice the abort.
+      response.writeHead(200, { 'content-type': 'text/plain' });
+      response.write('Good morning, every');
+    });
+    stop = server.close;
+    const provider = new HttpTranscriptionProvider(config({ TRANSCRIPTION_API_URL: server.url }));
+
+    const failure = await provider
+      .transcribe(audio(), 'audio/mpeg', AbortSignal.timeout(150))
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(StepError);
+    expect((failure as StepError).userMessage).toBe(TRANSCRIPTION_FAILED_MESSAGE);
+  });
+
   it('fails with the same message when no endpoint is configured', async () => {
     const provider = new HttpTranscriptionProvider(config({}));
 

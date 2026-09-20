@@ -16,6 +16,9 @@ const MEETING_ID = '44444444-4444-4444-8444-444444444444';
 const FILE_ID = '55555555-5555-4555-8555-555555555555';
 const KEY = `${MEETING_ID}/${FILE_ID}`;
 
+/** A context signal nothing aborts: the step under test is the only thing that can end it. */
+const NEVER_ABORTED = new AbortController().signal;
+
 describe('TranscribeStep', () => {
   const logger = new Logger('test');
   const transcribe = jest.fn();
@@ -70,7 +73,9 @@ describe('TranscribeStep', () => {
   });
 
   it('writes the transcript beside the object and returns its key', async () => {
-    await expect(step(on).run({ record: record('audio/mpeg'), storage, logger })).resolves.toEqual({
+    await expect(
+      step(on).run({ record: record('audio/mpeg'), storage, logger, signal: NEVER_ABORTED }),
+    ).resolves.toEqual({
       transcriptKey: `${KEY}.transcript.txt`,
     });
 
@@ -90,7 +95,9 @@ describe('TranscribeStep', () => {
   });
 
   it('transcribes video as well as audio', async () => {
-    await expect(step(on).run({ record: record('video/mp4'), storage, logger })).resolves.toEqual({
+    await expect(
+      step(on).run({ record: record('video/mp4'), storage, logger, signal: NEVER_ABORTED }),
+    ).resolves.toEqual({
       transcriptKey: `${KEY}.transcript.txt`,
     });
   });
@@ -98,9 +105,9 @@ describe('TranscribeStep', () => {
   it.each([['application/pdf'], ['image/png'], ['text/plain']])(
     'skips %s without calling the provider',
     async (contentType) => {
-      await expect(step(on).run({ record: record(contentType), storage, logger })).resolves.toEqual(
-        {},
-      );
+      await expect(
+        step(on).run({ record: record(contentType), storage, logger, signal: NEVER_ABORTED }),
+      ).resolves.toEqual({});
 
       expect(transcribe).not.toHaveBeenCalled();
       expect(fs.existsSync(storage.pathOf(`${KEY}.transcript.txt`))).toBe(false);
@@ -108,24 +115,26 @@ describe('TranscribeStep', () => {
   );
 
   it('skips everything while the flag is off — a skip, never a failure', async () => {
-    await expect(step({}).run({ record: record('audio/mpeg'), storage, logger })).resolves.toEqual(
-      {},
-    );
+    await expect(
+      step({}).run({ record: record('audio/mpeg'), storage, logger, signal: NEVER_ABORTED }),
+    ).resolves.toEqual({});
 
     expect(transcribe).not.toHaveBeenCalled();
   });
 
-  it('reads the flag when it runs, so turning it on needs no restart', async () => {
+  it('reads the flag when it runs, which is what lets a spec flip it in place', async () => {
     const values: Record<string, unknown> = { MEETING_FILES_TRANSCRIPTION_ENABLED: false };
     const perTick = step(values);
 
-    await expect(perTick.run({ record: record('audio/mpeg'), storage, logger })).resolves.toEqual(
-      {},
-    );
+    await expect(
+      perTick.run({ record: record('audio/mpeg'), storage, logger, signal: NEVER_ABORTED }),
+    ).resolves.toEqual({});
 
     values['MEETING_FILES_TRANSCRIPTION_ENABLED'] = true;
 
-    await expect(perTick.run({ record: record('audio/mpeg'), storage, logger })).resolves.toEqual({
+    await expect(
+      perTick.run({ record: record('audio/mpeg'), storage, logger, signal: NEVER_ABORTED }),
+    ).resolves.toEqual({
       transcriptKey: `${KEY}.transcript.txt`,
     });
   });
@@ -133,9 +142,9 @@ describe('TranscribeStep', () => {
   it("lets the provider's StepError through, so the row carries its reason", async () => {
     transcribe.mockRejectedValue(new StepError('The recording could not be transcribed'));
 
-    await expect(step(on).run({ record: record('audio/mpeg'), storage, logger })).rejects.toThrow(
-      'The recording could not be transcribed',
-    );
+    await expect(
+      step(on).run({ record: record('audio/mpeg'), storage, logger, signal: NEVER_ABORTED }),
+    ).rejects.toThrow('The recording could not be transcribed');
 
     expect(fs.existsSync(storage.pathOf(`${KEY}.transcript.txt`))).toBe(false);
   });
@@ -158,9 +167,34 @@ describe('TranscribeStep', () => {
         record: record('audio/mpeg'),
         storage,
         logger,
+        signal: NEVER_ABORTED,
       }),
     ).rejects.toThrow('The recording could not be transcribed');
 
+    expect(fs.existsSync(storage.pathOf(`${KEY}.transcript.txt`))).toBe(false);
+  });
+
+  it("passes the worker's shutdown on to the provider, so a stopping process lets go at once", async () => {
+    const shutdown = new AbortController();
+    transcribe.mockImplementation(
+      (stream: Readable, _contentType: string, signal: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            stream.destroy();
+            reject(new StepError('The recording could not be transcribed'));
+          });
+        }),
+    );
+
+    const running = step(on).run({
+      record: record('audio/mpeg'),
+      storage,
+      logger,
+      signal: shutdown.signal,
+    });
+    shutdown.abort();
+
+    await expect(running).rejects.toThrow('The recording could not be transcribed');
     expect(fs.existsSync(storage.pathOf(`${KEY}.transcript.txt`))).toBe(false);
   });
 });

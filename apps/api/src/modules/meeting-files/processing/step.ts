@@ -7,6 +7,14 @@ export interface StepContext {
   record: MeetingFileRecord;
   storage: MeetingFileStorage;
   logger: Logger;
+  /**
+   * Aborted when the worker is shutting down. A step that waits on anything outside the
+   * process — a third party, most of all — must honour it, so a stopping process lets go at
+   * once instead of holding on for as long as the step's own timeout allows. The worker
+   * treats a throw after this fires as a release, not a failure: the row goes back to
+   * `uploaded` for the next claim.
+   */
+  signal: AbortSignal;
 }
 
 /** The subset of columns a step may set. Merged into the `ready` transition. */

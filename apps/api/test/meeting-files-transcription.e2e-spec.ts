@@ -85,7 +85,7 @@ describe('the transcription step', () => {
   const worker = (): WorkerHandle => suite.app().get<WorkerHandle>(MEETING_FILE_WORKER_TOKEN);
   const config = (): ConfigService => suite.app().get(ConfigService);
 
-  /** The flag is read per tick, which is exactly what makes this possible without a restart. */
+  /** The step asks `ConfigService` when it runs, which is what lets a spec flip the flag in place. */
   const enableTranscription = (seconds = 600): void => {
     config().set('MEETING_FILES_TRANSCRIPTION_ENABLED', true);
     config().set('TRANSCRIPTION_TIMEOUT_SECONDS', seconds);
