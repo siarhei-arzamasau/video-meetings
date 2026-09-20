@@ -1,9 +1,14 @@
-import { DISPLAY_NAME_MESSAGE } from '@repo/shared';
+import {
+  CURRENT_PASSWORD_MESSAGE,
+  DISPLAY_NAME_MESSAGE,
+  PASSWORD_UNCHANGED_MESSAGE,
+} from '@repo/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ApiError,
   buildApiUrl,
+  changePassword,
   getApiBaseUrl,
   getHealth,
   getMe,
@@ -305,6 +310,96 @@ describe('updateDisplayName', () => {
     await expect(updateDisplayName('a-signed-jwt', 'Ada Lovelace')).rejects.toMatchObject({
       status: 500,
     });
+  });
+});
+
+/** The call every case below varies, so each test states only what it changes about it. */
+const change = () => changePassword('a-signed-jwt', 'old-password', 'a-new-password');
+
+describe('changePassword', () => {
+  it('patches /auth/password with both passwords and resolves to nothing', async () => {
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com/api');
+    const fetchMock = stubFetch(new Response(null, { status: 204 }));
+
+    await expect(change()).resolves.toBeUndefined();
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    // No user id and no email: the endpoint acts on whoever the token names, and the current
+    // password is what authorises the change.
+    expect(url).toBe('https://api.example.com/api/auth/password');
+    expect(init.method).toBe('PATCH');
+    expect(init.headers).toMatchObject({
+      'content-type': 'application/json',
+      authorization: 'Bearer a-signed-jwt',
+    });
+    // The whole body: a confirmation field smuggled in here would be one the DTO's whitelist
+    // turns into a 400, and a test that only checked the two real fields would not see it.
+    expect(JSON.parse(String(init.body))).toEqual({
+      currentPassword: 'old-password',
+      newPassword: 'a-new-password',
+    });
+  });
+
+  it('sends both passwords verbatim, spaces and all', async () => {
+    const fetchMock = stubFetch(new Response(null, { status: 204 }));
+
+    await changePassword('a-signed-jwt', '  old  ', '  new password  ');
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    // A password is the bytes the user typed. Trimming one here would store a credential they
+    // did not choose, and then refuse the one they did.
+    expect(JSON.parse(String(init.body))).toEqual({
+      currentPassword: '  old  ',
+      newPassword: '  new password  ',
+    });
+  });
+
+  it('surfaces the shared sentence for a wrong current password', async () => {
+    stubFetch(jsonResponse(401, { statusCode: 401, message: CURRENT_PASSWORD_MESSAGE }));
+
+    // The form tells this 401 from an expired token by this exact message, so the wrapper has
+    // to hand it over unchanged rather than flattening it into a status.
+    await expect(change()).rejects.toMatchObject({
+      status: 401,
+      message: CURRENT_PASSWORD_MESSAGE,
+    });
+  });
+
+  it('leaves a guard 401 carrying its own message', async () => {
+    stubFetch(jsonResponse(401, { statusCode: 401, message: 'Unauthorized' }));
+
+    await expect(change()).rejects.toMatchObject({ status: 401, message: 'Unauthorized' });
+  });
+
+  it('surfaces the 400 for a new password the API refused', async () => {
+    stubFetch(jsonResponse(400, { statusCode: 400, message: PASSWORD_UNCHANGED_MESSAGE }));
+
+    await expect(change()).rejects.toMatchObject({
+      status: 400,
+      message: PASSWORD_UNCHANGED_MESSAGE,
+    });
+  });
+
+  it("joins the validation pipe's list into one readable sentence", async () => {
+    stubFetch(
+      jsonResponse(400, {
+        statusCode: 400,
+        message: ['newPassword must be longer than or equal to 8 characters'],
+      }),
+    );
+
+    await expect(change()).rejects.toMatchObject({
+      status: 400,
+      message: 'newPassword must be longer than or equal to 8 characters.',
+    });
+  });
+
+  it('keeps a 500 off both fields by leaving it the status', async () => {
+    stubFetch(new Response('upstream exploded', { status: 500 }));
+
+    await expect(change()).rejects.toMatchObject({ status: 500 });
   });
 });
 

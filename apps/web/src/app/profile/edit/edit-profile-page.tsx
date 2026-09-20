@@ -8,13 +8,14 @@ import { ThemeToggle } from '@/components/theme-toggle';
 import { Wordmark } from '@/components/wordmark';
 import { useSignedIn } from '@/lib/use-signed-in';
 
+import { ChangePasswordSection, ChangePasswordSkeleton } from './change-password-section';
 import { DisplayNameSection, DisplayNameSkeleton } from './display-name-section';
 
 /**
- * Everything about the account the user can change, one card per thing. Phases 4 and 6 add
- * their sections — password, avatar — to this page rather than to routes of their own, which
- * is why this file owns the gate and nothing else: each section is its own module, owning its
- * request, its state, and its skeleton, and this page only decides which ones exist.
+ * Everything about the account the user can change, one card per thing. Phase 6 adds the
+ * avatar to this page rather than to a route of its own, which is why this file owns the gate
+ * and nothing else: each section is its own module, owning its request, its state, and its
+ * skeleton, and this page only decides which ones exist.
  *
  * Gated on the client like every other protected route, and adding no request of its own:
  * `getMe` inside the gate is the whole of what the form starts from.
@@ -79,16 +80,23 @@ export function EditProfilePage() {
               gets — one for the page, however many skeletons the sections contribute. */}
           <output className="sr-only">Loading your profile</output>
           <DisplayNameSkeleton />
+          <ChangePasswordSkeleton />
         </>
       )}
 
       {session.state === 'ready' && (
-        <DisplayNameSection
-          user={session.user}
-          token={session.token}
-          onSaved={updateUser}
-          onUnauthorized={signOut}
-        />
+        <>
+          <DisplayNameSection
+            user={session.user}
+            token={session.token}
+            onSaved={updateUser}
+            onUnauthorized={signOut}
+          />
+          {/* Second, and deliberately not first: the name is what most visits to this page are
+              for, and a password form above it would put the rarest and most alarming thing on
+              the page at the top of it. */}
+          <ChangePasswordSection token={session.token} onUnauthorized={signOut} />
+        </>
       )}
     </main>
   );

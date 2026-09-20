@@ -275,7 +275,24 @@ gate is the whole of what they render.
 **Everything the user can change goes in a section on `/profile/edit`, not in a route of its
 own.** The page owns the gate; each section owns its request and its own state. That is why
 the display name's save state lives inside `DisplayNameSection` rather than on the page, and
-it is where the password and avatar sections belong when their phases arrive.
+why `ChangePasswordSection` beside it holds no user at all. It is where the avatar section
+belongs when its phase arrives.
+
+**A 401 from `PATCH /auth/password` does not always mean "signed out", and that is the one
+trap on this page.** The API answers a wrong current password with 401 — login's shape, so
+the endpoint reveals no more than login does — and the gate reads every other 401 as an
+expired token. The two are told apart by `CURRENT_PASSWORD_MESSAGE`, which both sides import
+from `@repo/shared` precisely so neither spells the sentence out. `isExpiredToken` in
+`change-password-failure.ts` is the whole of that decision, and getting it backwards signs a
+user out of the app because they mistyped one field. A Playwright test asserts they stay on
+the page.
+
+**The current-password field validates with `validateLoginPassword`, not `validatePassword`.**
+It holds whatever was accepted when the account was made; applying today's minimum to it would
+refuse an old password on the very form that exists to replace it. The new-password field gets
+the registration rule plus "not the one you have now", and the confirmation is checked in the
+browser and **never sent** — the API has nothing to compare it against that the form did not
+already have.
 
 **A save replaces the gate's user through `updateUser`.** `PATCH /users/me` answers with the
 whole updated record, so the page that saved puts it straight back into the hook instead of

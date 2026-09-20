@@ -9,7 +9,7 @@
  */
 export { ApiError, buildApiUrl, getApiBaseUrl, apiFetch } from './core';
 export type { UploadOptions } from './core';
-export { getHealth, register, login, getMe } from './auth';
+export { getHealth, register, login, getMe, changePassword } from './auth';
 export { updateDisplayName } from './user';
 export { listMeetings, getMeeting } from './meetings';
 export {
