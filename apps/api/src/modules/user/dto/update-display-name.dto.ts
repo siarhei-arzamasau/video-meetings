@@ -5,7 +5,7 @@ import {
   type UpdateDisplayNameRequest,
 } from '@repo/shared';
 import { Transform, TransformFnParams } from 'class-transformer';
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import { IsString, Length } from 'class-validator';
 
 export class UpdateDisplayNameDto implements UpdateDisplayNameRequest {
   /**
@@ -13,13 +13,14 @@ export class UpdateDisplayNameDto implements UpdateDisplayNameRequest {
    * needing a rule of its own, and a name padded past the maximum is accepted rather than
    * rejected for characters that were never going to be stored.
    *
-   * Both bounds answer with the one shared message. The browser shows the same string from
-   * the same constant, so a field that turns red says exactly what the server would.
+   * One shared message covers both bounds, and `@Length` rather than a `@MinLength` and a
+   * `@MaxLength` so it is reported once: paired decorators both fail on a value that is not
+   * a string at all, and the response would carry the same sentence twice. The browser shows
+   * that string from the same constant, so a field that turns red says what the server would.
    */
   @Transform(trimString)
   @IsString()
-  @MinLength(MIN_DISPLAY_NAME_LENGTH, { message: DISPLAY_NAME_MESSAGE })
-  @MaxLength(MAX_DISPLAY_NAME_LENGTH, { message: DISPLAY_NAME_MESSAGE })
+  @Length(MIN_DISPLAY_NAME_LENGTH, MAX_DISPLAY_NAME_LENGTH, { message: DISPLAY_NAME_MESSAGE })
   displayName: string;
 }
 
