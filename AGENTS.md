@@ -82,7 +82,8 @@ These outrank whatever the existing code happens to do.
   (`MeetingStatus.PENDING`, not `'pnd'`); constants over magic numbers (`MAX_FILE_SIZE_MB`).
 - **Size limits that trigger a refactor first:** a file over 250 lines is decomposed before
   code is added to it; a method over 40 lines loses a private method; nesting deeper than
-  three levels is flattened.
+  three levels is flattened. **The limits apply to logic:** a component's JSX return counts
+  as one statement, but the logic above it obeys the same 40 lines.
 - **Dependencies go through the module, never the service directly**, and never in a cycle —
   check before committing. Shared types come only from `@repo/shared`.
 
