@@ -1,7 +1,9 @@
 import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
-import { CommandHandler, ICommandHandler, QueryBus } from '@nestjs/cqrs';
+import { CommandHandler, EventBus, ICommandHandler, QueryBus } from '@nestjs/cqrs';
 
+import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
 import { MeetingFileRepository } from '../../services/meeting-file.repository';
+import { toMeetingFile } from '../../services/meeting-file.mapper';
 import type { MeetingFileRecord } from '../../services/meeting-file.mapper';
 import { FILE_NOT_FOUND, requireVisibleMeeting } from '../../services/visible-meeting';
 import { DeleteMeetingFileCommand } from '../delete-meeting-file.command';
@@ -24,6 +26,7 @@ export class DeleteMeetingFileHandler implements ICommandHandler<DeleteMeetingFi
   constructor(
     private readonly queryBus: QueryBus,
     private readonly files: MeetingFileRepository,
+    private readonly events: EventBus,
   ) {}
 
   async execute({ userId, meetingId, fileId }: DeleteMeetingFileCommand): Promise<void> {
@@ -60,11 +63,31 @@ export class DeleteMeetingFileHandler implements ICommandHandler<DeleteMeetingFi
     throw new ConflictException(CHANGED_MESSAGE);
   }
 
-  private softDelete(file: MeetingFileRecord): Promise<boolean> {
-    return this.files.transition(file.id, file.status, 'deleted', {
-      deletedAt: new Date(),
-      leasedUntil: null,
-    });
+  /**
+   * The conditional transition, and — only when it changed a row — the announcement. A
+   * delete that lost its race removed nothing, so there is nothing to tell a watching page;
+   * the attempt that wins publishes instead.
+   */
+  private async softDelete(file: MeetingFileRecord): Promise<boolean> {
+    const deletedAt = new Date();
+
+    if (
+      !(await this.files.transition(file.id, file.status, 'deleted', {
+        deletedAt,
+        leasedUntil: null,
+      }))
+    ) {
+      return false;
+    }
+
+    this.events.publish(
+      new MeetingFileChangedEvent(
+        file.meetingId,
+        toMeetingFile({ ...file, status: 'deleted', deletedAt, leasedUntil: null }),
+      ),
+    );
+
+    return true;
   }
 
   private async visibleFile(meetingId: string, fileId: string): Promise<MeetingFileRecord> {

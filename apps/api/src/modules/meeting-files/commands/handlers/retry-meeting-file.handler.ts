@@ -1,7 +1,8 @@
 import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
-import { CommandHandler, ICommandHandler, QueryBus } from '@nestjs/cqrs';
+import { CommandHandler, EventBus, ICommandHandler, QueryBus } from '@nestjs/cqrs';
 import type { MeetingFile } from '@repo/shared';
 
+import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
 import { MeetingFileRepository } from '../../services/meeting-file.repository';
 import { toMeetingFile } from '../../services/meeting-file.mapper';
 import { FILE_NOT_FOUND, requireVisibleMeeting } from '../../services/visible-meeting';
@@ -31,6 +32,7 @@ export class RetryMeetingFileHandler implements ICommandHandler<
   constructor(
     private readonly queryBus: QueryBus,
     private readonly files: MeetingFileRepository,
+    private readonly events: EventBus,
   ) {}
 
   async execute({ userId, meetingId, fileId }: RetryMeetingFileCommand): Promise<MeetingFile> {
@@ -66,6 +68,12 @@ export class RetryMeetingFileHandler implements ICommandHandler<
     // The row as the transition just left it, rather than a re-read: a worker may claim it
     // the same millisecond, and answering `processing` would tell the client its retry did
     // something other than what it did.
-    return toMeetingFile({ ...file, status: 'uploaded', ...patch });
+    const retried = toMeetingFile({ ...file, status: 'uploaded', ...patch });
+
+    // After the transition reported its one row, never before it: the 409 branch above
+    // changed nothing and must announce nothing.
+    this.events.publish(new MeetingFileChangedEvent(meetingId, retried));
+
+    return retried;
   }
 }
