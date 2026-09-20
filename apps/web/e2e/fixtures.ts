@@ -215,9 +215,10 @@ export async function listMeetingFilesViaApi(
 /**
  * Sets the display name through the API the browser will use for it.
  *
- * The edit page does not exist yet, and a spec about the profile should not be the thing that
- * waits for it: a name the user chose is what separates the rendered profile from the one
- * registration derived, and it is one request away.
+ * A spec about anything other than the edit form should not have to drive that form to get a
+ * name: what these specs need is an account whose name the user chose rather than the one
+ * registration derived from the email, and that is one request away. The edit page's own
+ * specs set the name through the page, which is the thing they are testing.
  */
 export async function setDisplayNameViaApi(token: string, displayName: string): Promise<void> {
   const response = await fetch(`${API_URL}/users/me`, {
