@@ -109,12 +109,27 @@ function extractMessage(body: unknown): string | undefined {
   if (Array.isArray(message)) {
     // Joined into sentences: the pipe emits fragments ("password must be longer …"), one per
     // rule, and a list rendered as a single line reads as one run-on without the separators.
-    const sentences = message.filter((entry) => typeof entry === 'string' && entry.trim() !== '');
+    const sentences = message
+      .filter((entry): entry is string => typeof entry === 'string' && entry.trim() !== '')
+      .map((entry) => terminate(entry.trim()));
 
-    return sentences.length === 0 ? undefined : `${sentences.join('. ')}.`;
+    return sentences.length === 0 ? undefined : sentences.join(' ');
   }
 
   return undefined;
+}
+
+/**
+ * A fragment gains a full stop; a sentence that brought its own keeps it.
+ *
+ * Terminated one entry at a time rather than once over the joined string, because the entries
+ * are not all fragments. class-validator's defaults are ("email must be an email"), but a rule
+ * carrying its own `message` sends a written sentence — `DISPLAY_NAME_MESSAGE` is one — and a
+ * full stop appended to that rendered "…must be 1–80 characters.." under the field that had
+ * just shown the same sentence correctly.
+ */
+function terminate(sentence: string): string {
+  return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
 }
 
 export function getHealth(): Promise<HealthResponse> {
