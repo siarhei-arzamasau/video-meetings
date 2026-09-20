@@ -74,6 +74,16 @@ function runPhases() {
   let lastIssueNumber;
   let attempts = 0;
 
+  /*
+   * A counter left past the last phase means the previous run finished. Falling through to the
+   * PR below would open one and run a full review having done no work — which is what someone
+   * gets for restarting the driver to check where it got to.
+   */
+  if (counter.phaseIndex >= phases.length) {
+    console.log('Every phase was already complete. Reset .claude/ralph.iterations.json to rerun.');
+    process.exit(0);
+  }
+
   while (counter.phaseIndex < phases.length) {
     const phase = phases[counter.phaseIndex];
     const issues = openIssuesOf(phase.milestone);

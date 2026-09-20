@@ -30,8 +30,6 @@ const scale = Number(process.env['E2E_TIMEOUT_SCALE'] ?? 1);
 /** Guards against a typo turning every ceiling into zero, or into an hour. */
 const SAFE_SCALE = Number.isFinite(scale) && scale >= 1 && scale <= 20 ? scale : 1;
 
-export const TIMEOUT_SCALE = SAFE_SCALE;
-
 /** A ceiling in milliseconds, stretched for the machine the suite is running on. */
 export function scaled(ms: number): number {
   return Math.round(ms * SAFE_SCALE);

@@ -114,9 +114,13 @@ function extractMessage(body: unknown): string | undefined {
  *
  * Terminated one entry at a time rather than once over the joined string, because the entries
  * are not all fragments. class-validator's defaults are ("email must be an email"), but a rule
- * carrying its own `message` sends a written sentence — `DISPLAY_NAME_MESSAGE` is one — and a
- * full stop appended to that rendered "…must be 1–80 characters.." under the field that had
- * just shown the same sentence correctly.
+ * carrying its own `message` sends a written sentence: `UpdateDisplayNameDto` passes
+ * `DISPLAY_NAME_MESSAGE`, and appending to that produced "…must be 1–80 characters..".
+ *
+ * No form shows that today — the client checks display names against the same shared bounds
+ * the DTO does, so the API never gets to reject one. It is the joiner that was wrong, and the
+ * joiner is shared by every endpoint, so the next constant written as a sentence would have
+ * surfaced it somewhere nobody was looking.
  */
 function terminate(sentence: string): string {
   return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;

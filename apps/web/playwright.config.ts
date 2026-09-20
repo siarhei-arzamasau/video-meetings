@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-import { TIMEOUT_SCALE, scaled } from './e2e/timeouts';
+import { scaled } from './e2e/timeouts';
 
 /**
  * The browser e2e suite: a real Chromium against the real API and a real database.
@@ -22,7 +22,16 @@ import { TIMEOUT_SCALE, scaled } from './e2e/timeouts';
  * or loaded machine is a `E2E_SERVER_TIMEOUT_MS=300000` away from a usable run instead of a
  * config edit nobody wants in a commit.
  */
-const serverTimeout = Number(process.env['E2E_SERVER_TIMEOUT_MS'] ?? 120_000) * TIMEOUT_SCALE;
+/*
+ * Scaled only when it is the default. A number someone typed is the ceiling they meant, and
+ * multiplying it would hand `E2E_SERVER_TIMEOUT_MS=300000 E2E_TIMEOUT_SCALE=2` ten minutes
+ * when it asked for five — the one case where the two dials are not independent.
+ */
+const configuredServerTimeout = process.env['E2E_SERVER_TIMEOUT_MS'];
+const serverTimeout =
+  configuredServerTimeout === undefined
+    ? scaled(120_000)
+    : Number(configuredServerTimeout) || scaled(120_000);
 
 export default defineConfig({
   testDir: './e2e',
