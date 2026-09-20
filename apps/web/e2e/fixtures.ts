@@ -147,3 +147,56 @@ export async function createMeetingViaApi(
 
   return { id, title, scheduledAt };
 }
+
+/**
+ * Where `@repo/api`'s `start:e2e-web` script puts uploads. Restated from that script rather
+ * than read from it — the two must agree, and a spec that reads the object it just uploaded
+ * is the thing that notices when they stop agreeing.
+ */
+export function meetingFilesDir(): string {
+  return path.join(process.env['TMPDIR'] ?? '/tmp', 'meeting-files-e2e-web');
+}
+
+/** The object of one file, at the key the API derives: `<meetingId>/<fileId>`. */
+export function objectPathOf(meetingId: string, fileId: string): string {
+  return path.join(meetingFilesDir(), meetingId, fileId);
+}
+
+/**
+ * A PNG the server stores and the preview step cannot read: header and trailer intact, so
+ * `file-type` still calls it `image/png` and it is exactly as long as the real thing, and
+ * everything between zeroed, so `sharp` fails on it.
+ *
+ * Same length as `SAMPLE_PNG` on purpose: the verify step compares the object against the
+ * size on the record, so writing the real bytes over this one later repairs the file rather
+ * than replacing it with one the record no longer describes. That is what lets a spec fail a
+ * file, retry it into failing again, and then retry it into `ready`.
+ */
+export function brokenPng(): Buffer {
+  const broken = Buffer.from(fs.readFileSync(SAMPLE_PNG));
+  broken.fill(0, 40, broken.length - 12);
+
+  return broken;
+}
+
+export interface ListedFile {
+  id: string;
+  name: string;
+  status: string;
+}
+
+/** The meeting's files as the API lists them, for the spec that needs a file's id on disk. */
+export async function listMeetingFilesViaApi(
+  token: string,
+  meetingId: string,
+): Promise<ListedFile[]> {
+  const response = await fetch(`${API_URL}/meetings/${meetingId}/files`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Listing files failed with ${String(response.status)}`);
+  }
+
+  return (await response.json()) as ListedFile[];
+}

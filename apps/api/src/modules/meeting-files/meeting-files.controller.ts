@@ -21,6 +21,7 @@ import type { Response } from 'express';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { DeleteMeetingFileCommand } from './commands/delete-meeting-file.command';
+import { RetryMeetingFileCommand } from './commands/retry-meeting-file.command';
 import { UploadMeetingFileCommand } from './commands/upload-meeting-file.command';
 import { MeetingFilesService } from './services/meeting-files.service';
 import type { OpenedFile } from './services/meeting-files.service';
@@ -86,6 +87,40 @@ export class MeetingFilesController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<StreamableFile> {
     const opened = await this.files.openThumbnail(user.id, meetingId, fileId);
+
+    return stream(response, opened, 'inline');
+  }
+
+  /**
+   * Sends a `failed` file back through the pipeline, by the uploader or the host. The row
+   * returns to `uploaded` and the worker claims it on its next tick; 200 rather than 201,
+   * because nothing was created.
+   */
+  @Post(':fileId/retry')
+  @HttpCode(200)
+  retry(
+    @CurrentUser() user: User,
+    @Param('id', UUID_V4) meetingId: string,
+    @Param('fileId', UUID_V4) fileId: string,
+  ): Promise<MeetingFile> {
+    return this.commandBus.execute<RetryMeetingFileCommand, MeetingFile>(
+      new RetryMeetingFileCommand(user.id, meetingId, fileId),
+    );
+  }
+
+  /**
+   * The transcript the pipeline wrote, inline as plain text. `nosniff` and `no-store` as for
+   * every other stream here: what is served is the output of a third party, and a browser
+   * must not be given the chance to decide it is something other than text.
+   */
+  @Get(':fileId/transcript')
+  async transcript(
+    @CurrentUser() user: User,
+    @Param('id', UUID_V4) meetingId: string,
+    @Param('fileId', UUID_V4) fileId: string,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<StreamableFile> {
+    const opened = await this.files.openTranscript(user.id, meetingId, fileId);
 
     return stream(response, opened, 'inline');
   }

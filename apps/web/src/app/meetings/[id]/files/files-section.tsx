@@ -47,7 +47,11 @@ interface FilesSectionProps {
  * fingerprint so a reload can resume it too once the user picks the same file again.
  */
 export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSectionProps) {
-  const { list, refresh, add, remove } = useMeetingFiles(token, meeting.id, onUnauthorized);
+  const { list, refresh, add, replace, remove } = useMeetingFiles(
+    token,
+    meeting.id,
+    onUnauthorized,
+  );
   const [uploads, setUploads] = useState<QueuedUpload[]>([]);
   const [deleting, setDeleting] = useState<MeetingFile | null>(null);
   const [dragDepth, setDragDepth] = useState(0);
@@ -304,8 +308,10 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
                 token={token}
                 file={file}
                 isMine={file.uploaderId === user.id}
-                canDelete={file.uploaderId === user.id || meeting.hostId === user.id}
+                canManage={file.uploaderId === user.id || meeting.hostId === user.id}
                 onDelete={setDeleting}
+                onRetried={replace}
+                onStale={refresh}
                 onUnauthorized={onUnauthorized}
               />
             </li>

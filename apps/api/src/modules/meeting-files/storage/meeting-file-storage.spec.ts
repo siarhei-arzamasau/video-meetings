@@ -80,6 +80,29 @@ describe('MeetingFileStorage', () => {
     expect(storage.pathOf(`${key}.thumb.webp`)).toBe(path.join(root, `${key}.thumb.webp`));
   });
 
+  it('accepts the transcript suffix on a key', () => {
+    expect(storage.pathOf(`${key}.transcript.txt`)).toBe(path.join(root, `${key}.transcript.txt`));
+  });
+
+  it('writeText writes UTF-8 beside the object, creating the directory', async () => {
+    await storage.writeText(`${key}.transcript.txt`, 'Привет, коллеги. Good morning.');
+
+    expect(fs.readFileSync(storage.pathOf(`${key}.transcript.txt`), 'utf8')).toBe(
+      'Привет, коллеги. Good morning.',
+    );
+  });
+
+  it('writeText overwrites rather than appending, so a retry leaves one transcript', async () => {
+    await storage.writeText(`${key}.transcript.txt`, 'first pass');
+    await storage.writeText(`${key}.transcript.txt`, 'second');
+
+    expect(fs.readFileSync(storage.pathOf(`${key}.transcript.txt`), 'utf8')).toBe('second');
+  });
+
+  it('writeText rejects a key outside the two shapes', async () => {
+    await expect(storage.writeText('../escape.txt', 'no')).rejects.toThrow(/Invalid storage key/);
+  });
+
   it.each([
     ['a parent reference', '../etc/passwd'],
     ['a leading slash', `/${randomUUID()}/${randomUUID()}`],

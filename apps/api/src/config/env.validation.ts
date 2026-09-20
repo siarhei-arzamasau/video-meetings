@@ -3,10 +3,13 @@ import {
   IsBoolean,
   IsEnum,
   IsInt,
+  IsOptional,
   IsString,
+  IsUrl,
   Max,
   Min,
   MinLength,
+  ValidateIf,
   validateSync,
 } from 'class-validator';
 
@@ -88,6 +91,52 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(1)
   MEETING_FILE_UPLOAD_TTL_HOURS: number = 24;
+
+  /**
+   * Whether the pipeline transcribes audio and video. Off by default: it is the one step that
+   * calls a third party, and a deployment that has not chosen one must still process files.
+   * Parsed like the worker flag, for the same reason.
+   *
+   * The URL below is validated here whenever this is on, so a process cannot start in a
+   * state where every recording would fail.
+   */
+  @Transform(({ obj, key }) => parseBoolean((obj as Record<string, unknown>)[key]))
+  @IsBoolean()
+  MEETING_FILES_TRANSCRIPTION_ENABLED: boolean = false;
+
+  /**
+   * An OpenAI-compatible `audio/transcriptions` endpoint — hosted or a self-hosted Whisper
+   * server, which is what makes the vendor configuration rather than code. Required when the
+   * flag is on, and unvalidated when it is off so a deployment that does not transcribe needs
+   * no placeholder.
+   */
+  @ValidateIf((env: EnvironmentVariables) => env.MEETING_FILES_TRANSCRIPTION_ENABLED)
+  @IsUrl({ require_tld: false, require_protocol: true, protocols: ['http', 'https'] })
+  TRANSCRIPTION_API_URL: string = '';
+
+  /** Sent as a bearer token when set. Optional: a server on a private network may want none. */
+  @IsOptional()
+  @IsString()
+  TRANSCRIPTION_API_KEY?: string;
+
+  /**
+   * The `model` field of the request. An OpenAI-compatible endpoint requires one; a
+   * self-hosted server usually ignores whatever it is sent, which is why this has a default
+   * rather than being required alongside the URL.
+   */
+  @IsString()
+  @MinLength(1)
+  TRANSCRIPTION_MODEL: string = 'whisper-1';
+
+  /**
+   * How long one transcription may take before it is aborted and the file fails with a
+   * specific reason rather than hanging on a lease that keeps being renewed. Ten minutes by
+   * default; at least thirty seconds, because a bound shorter than the request it bounds only
+   * fails files.
+   */
+  @IsInt()
+  @Min(30)
+  TRANSCRIPTION_TIMEOUT_SECONDS: number = 600;
 }
 
 function parseBoolean(value: unknown): unknown {

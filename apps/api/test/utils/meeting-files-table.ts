@@ -22,6 +22,7 @@ import { PrismaService } from '../../src/modules/prisma/prisma.service';
  *   storageKey    String            @unique @map("storage_key")
  *   checksum      String?
  *   thumbnailKey  String?           @map("thumbnail_key")
+ *   transcriptKey String?           @map("transcript_key")
  *   status        MeetingFileStatus @default(uploaded)
  *   failureReason String?           @map("failure_reason")
  *   attempts      Int               @default(0)
@@ -47,6 +48,7 @@ export interface MeetingFileRow {
   storage_key: string;
   checksum: string | null;
   thumbnail_key: string | null;
+  transcript_key: string | null;
   status: string;
   failure_reason: string | null;
   attempts: number;

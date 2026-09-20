@@ -14,6 +14,9 @@ import { VerifyStep } from './verify.step';
 const MEETING_ID = '44444444-4444-4444-8444-444444444444';
 const FILE_ID = '55555555-5555-4555-8555-555555555555';
 
+/** A context signal nothing aborts: the step under test is the only thing that can end it. */
+const NEVER_ABORTED = new AbortController().signal;
+
 describe('VerifyStep', () => {
   const step = new VerifyStep();
   const logger = new Logger('test');
@@ -31,6 +34,7 @@ describe('VerifyStep', () => {
     storageKey: `${MEETING_ID}/${FILE_ID}`,
     checksum: null,
     thumbnailKey: null,
+    transcriptKey: null,
     status: 'processing',
     failureReason: null,
     attempts: 1,
@@ -59,22 +63,24 @@ describe('VerifyStep', () => {
   });
 
   it('returns the SHA-256 of the stored bytes when the size matches', async () => {
-    await expect(step.run({ record: record(bytes.length), storage, logger })).resolves.toEqual({
+    await expect(
+      step.run({ record: record(bytes.length), storage, logger, signal: NEVER_ABORTED }),
+    ).resolves.toEqual({
       checksum: createHash('sha256').update(bytes).digest('hex'),
     });
   });
 
   it('throws the incomplete StepError on a size mismatch', async () => {
-    await expect(step.run({ record: record(bytes.length + 1), storage, logger })).rejects.toThrow(
-      new StepError('The stored file is incomplete'),
-    );
+    await expect(
+      step.run({ record: record(bytes.length + 1), storage, logger, signal: NEVER_ABORTED }),
+    ).rejects.toThrow(new StepError('The stored file is incomplete'));
   });
 
   it('lets a missing object surface as a plain error, not a user message', async () => {
     await storage.remove(`${MEETING_ID}/${FILE_ID}`);
 
     await expect(
-      step.run({ record: record(bytes.length), storage, logger }),
+      step.run({ record: record(bytes.length), storage, logger, signal: NEVER_ABORTED }),
     ).rejects.not.toBeInstanceOf(StepError);
   });
 });

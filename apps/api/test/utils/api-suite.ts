@@ -3,6 +3,7 @@ import request from 'supertest';
 
 import { PrismaService } from '../../src/modules/prisma/prisma.service';
 import { createTestApp } from './create-test-app';
+import type { TestAppOptions } from './create-test-app';
 import { truncateUsers } from './users-table';
 
 export interface ApiSuite {
@@ -33,12 +34,12 @@ export interface ApiSuite {
  * `truncateUsers` cascades, so this clears meetings and participants too — a spec for a table
  * with a foreign key to `users` inherits the cleanup instead of registering its own.
  */
-export function useApiSuite(): ApiSuite {
+export function useApiSuite(options: TestAppOptions = {}): ApiSuite {
   let app: INestApplication | undefined;
   let prisma: PrismaService | undefined;
 
   beforeAll(async () => {
-    app = await createTestApp();
+    app = await createTestApp(options);
     prisma = app.get(PrismaService);
   });
 

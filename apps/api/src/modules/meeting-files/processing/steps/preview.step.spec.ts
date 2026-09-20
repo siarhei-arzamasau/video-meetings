@@ -14,6 +14,9 @@ const MEETING_ID = '44444444-4444-4444-8444-444444444444';
 const FILE_ID = '55555555-5555-4555-8555-555555555555';
 const KEY = `${MEETING_ID}/${FILE_ID}`;
 
+/** A context signal nothing aborts: the step under test is the only thing that can end it. */
+const NEVER_ABORTED = new AbortController().signal;
+
 describe('PreviewStep', () => {
   const step = new PreviewStep();
   const logger = new Logger('test');
@@ -30,6 +33,7 @@ describe('PreviewStep', () => {
     storageKey: KEY,
     checksum: null,
     thumbnailKey: null,
+    transcriptKey: null,
     status: 'processing',
     failureReason: null,
     attempts: 1,
@@ -64,7 +68,7 @@ describe('PreviewStep', () => {
     await store(Buffer.from('%PDF-1.4'));
 
     await expect(
-      step.run({ record: record('application/pdf', 8), storage, logger }),
+      step.run({ record: record('application/pdf', 8), storage, logger, signal: NEVER_ABORTED }),
     ).resolves.toEqual({});
     expect(fs.existsSync(storage.pathOf(`${KEY}.thumb.webp`))).toBe(false);
   });
@@ -78,7 +82,7 @@ describe('PreviewStep', () => {
     await store(png);
 
     await expect(
-      step.run({ record: record('image/png', png.length), storage, logger }),
+      step.run({ record: record('image/png', png.length), storage, logger, signal: NEVER_ABORTED }),
     ).resolves.toEqual({
       thumbnailKey: `${KEY}.thumb.webp`,
     });
@@ -97,7 +101,12 @@ describe('PreviewStep', () => {
       .toBuffer();
     await store(png);
 
-    await step.run({ record: record('image/png', png.length), storage, logger });
+    await step.run({
+      record: record('image/png', png.length),
+      storage,
+      logger,
+      signal: NEVER_ABORTED,
+    });
 
     const thumbnail = await sharp(storage.pathOf(`${KEY}.thumb.webp`)).metadata();
     expect([thumbnail.width, thumbnail.height]).toEqual([40, 30]);
@@ -107,7 +116,7 @@ describe('PreviewStep', () => {
     await store(Buffer.from('not an image at all'));
 
     await expect(
-      step.run({ record: record('image/png', 19), storage, logger }),
+      step.run({ record: record('image/png', 19), storage, logger, signal: NEVER_ABORTED }),
     ).rejects.toMatchObject({
       name: 'StepError',
       userMessage: 'The image could not be read',

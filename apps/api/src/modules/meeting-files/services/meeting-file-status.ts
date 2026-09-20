@@ -3,7 +3,8 @@ import type { MeetingFileStatus } from '@repo/shared';
 /**
  * The PRD's F7 graph, plus two edges the worker relies on:
  *
- * - `failed → uploaded` is the explicit retry (no route calls it yet).
+ * - `failed → uploaded` is the explicit retry, whose one caller is
+ *   `POST /api/meetings/:id/files/:fileId/retry` (`RetryMeetingFileHandler`).
  * - `processing → uploaded` is lease expiry — the claim query performs it implicitly by
  *   re-claiming a `processing` row whose lease has passed, and it is modelled here so the
  *   spec pins that a lost worker's row goes back to the start rather than anywhere else.

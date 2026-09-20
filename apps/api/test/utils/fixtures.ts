@@ -18,6 +18,14 @@ export function meetingFileUrl(meetingId: string, fileId: string): string {
   return `${meetingFilesUrl(meetingId)}/${fileId}`;
 }
 
+export function meetingFileRetryUrl(meetingId: string, fileId: string): string {
+  return `${meetingFileUrl(meetingId, fileId)}/retry`;
+}
+
+export function meetingFileTranscriptUrl(meetingId: string, fileId: string): string {
+  return `${meetingFileUrl(meetingId, fileId)}/transcript`;
+}
+
 export function meetingFileContentUrl(meetingId: string, fileId: string): string {
   return `${meetingFileUrl(meetingId, fileId)}/content`;
 }
@@ -44,6 +52,12 @@ export function meetingFileCompleteUrl(meetingId: string, uploadId: string): str
 
 /** Provider token the worker is registered under, so the e2e spec can reach `drain()`. */
 export const MEETING_FILE_WORKER_TOKEN = 'MEETING_FILE_WORKER';
+
+/**
+ * The transcription port's token, restated here for the same reason: a spec binds a fake to
+ * it without importing anything from the module under test.
+ */
+export const TRANSCRIPTION_PROVIDER_TOKEN = 'TRANSCRIPTION_PROVIDER';
 
 export const EMAIL = 'ada@example.com';
 export const PASSWORD = 'correct-horse-battery-42';

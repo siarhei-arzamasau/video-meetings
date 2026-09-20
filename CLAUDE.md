@@ -61,6 +61,7 @@ Run from the repository root; Turborepo fans them out.
 | Command                             | Does                                                                   |
 | ----------------------------------- | ---------------------------------------------------------------------- |
 | `pnpm dev`                          | Every app in watch mode (web :3000, api :3001, or the next free ports) |
+| `pnpm start:dev`                    | The same, after starting Postgres and applying migrations              |
 | `pnpm build`                        | `@repo/shared` first, then both apps                                   |
 | `pnpm typecheck`                    | `tsc --noEmit` across every package                                    |
 | `pnpm test`                         | Vitest (web) and Jest (api)                                            |
@@ -69,6 +70,18 @@ Run from the repository root; Turborepo fans them out.
 | `pnpm clean`                        | Removes build output and caches                                        |
 
 Scope to one package with a filter: `pnpm build --filter=@repo/api`.
+
+### `pnpm start:dev` is `pnpm dev` plus the three things a machine needs first
+
+`scripts/start.mjs` starts the compose Postgres if nothing answers on `DATABASE_URL`'s port,
+generates the Prisma client when it is missing (it is gitignored), runs `prisma migrate deploy`,
+and then execs `scripts/dev.mjs`. Every step is idempotent, so on a set-up machine it costs
+seconds. `--skip-db` leaves Docker alone for a Postgres that is not this compose file's.
+
+**`pnpm dev` stays the command to use day to day**, and it stays free of setup: it is what
+`start:dev` ends by running, and what CI-adjacent tooling and the Playwright config invoke.
+The split is the point — `deploy` rather than `dev` for the migrations, so a script someone
+runs to see the app can never generate a migration or offer to reset their database.
 
 ### `pnpm dev` picks the ports before Turborepo starts
 
@@ -114,6 +127,12 @@ more to bisect by hand than the intermediate runs ever cost to run.
 
 Four things make that discipline actually work here:
 
+- **Both test runners are capped at four workers, on purpose.** Jest (`apps/api/package.json`)
+  and Vitest (`apps/web/vitest.config.ts`) default to one worker per core, which on an
+  18-core laptop is forty `node` processes for a suite that finishes in seconds — a visible
+  stall on a machine doing anything else, and the pre-commit hook runs the same suite. Four
+  keeps a run to a corner of the machine; pass `--maxWorkers` to either runner for a box
+  with cores to spare. The e2e suites are already at one.
 - **Take the baseline first, and make sure it is a real run.** `pnpm test` replays cached
   logs and prints `FULL TURBO` when nothing has changed, which looks exactly like a passing
   run because it is reporting one from earlier. Use `pnpm test --force` for a baseline you
@@ -162,6 +181,14 @@ through an upload session, which lives under `storage/uploads/<uploadId>/` and s
 `MEETING_FILE_UPLOAD_TTL_HOURS` (default 24). An abandoned session's chunks are removed by the
 same worker that purges deleted files, so the only cost of walking away from an upload is disk
 until it lapses.
+
+Transcription of audio and video is **off by default**
+(`MEETING_FILES_TRANSCRIPTION_ENABLED`). Turning it on needs `TRANSCRIPTION_API_URL` — an
+OpenAI-compatible `audio/transcriptions` endpoint, hosted or a self-hosted Whisper server —
+optionally `TRANSCRIPTION_API_KEY`, and it bounds each request with
+`TRANSCRIPTION_TIMEOUT_SECONDS` (default 600). Changing the flag is a restart, like any other
+environment change; the URL is validated at boot whenever the flag is on, so the API refuses
+to start rather than fail every recording.
 
 `JWT_SECRET` must be at least 32 characters or the API refuses to boot. The `.env.example`
 placeholder satisfies that for local work only.

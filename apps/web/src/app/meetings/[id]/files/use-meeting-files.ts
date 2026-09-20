@@ -21,6 +21,8 @@ export interface MeetingFiles {
   refresh(): void;
   /** Puts a just-uploaded file into the list without waiting for a refetch. */
   add(file: MeetingFile): void;
+  /** Puts the file as the API just answered with in place of the one the list has, where it is. */
+  replace(file: MeetingFile): void;
   /** Takes a just-deleted file out of the list without waiting for a refetch. */
   remove(fileId: string): void;
 }
@@ -114,6 +116,29 @@ export function useMeetingFiles(
     [isReady, refresh],
   );
 
+  // In place, not prepended: the list is newest first, and a retried file that jumped to the
+  // top would jump back down at the next poll. A file the list does not have yet is the
+  // `add` case, and refetching is the honest answer to a list that is not ready.
+  const replace = useCallback(
+    (file: MeetingFile): void => {
+      if (!isReady) {
+        refresh();
+
+        return;
+      }
+
+      setList((current) =>
+        current.state === 'ready'
+          ? {
+              state: 'ready',
+              files: current.files.map((existing) => (existing.id === file.id ? file : existing)),
+            }
+          : current,
+      );
+    },
+    [isReady, refresh],
+  );
+
   const remove = useCallback((fileId: string): void => {
     setList((current) =>
       current.state === 'ready'
@@ -122,5 +147,5 @@ export function useMeetingFiles(
     );
   }, []);
 
-  return { list, refresh, add, remove };
+  return { list, refresh, add, replace, remove };
 }

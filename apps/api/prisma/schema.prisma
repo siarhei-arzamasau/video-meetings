@@ -106,6 +106,9 @@ model MeetingFile {
 
   checksum     String?
   thumbnailKey String? @map("thumbnail_key")
+  /// `<storageKey>.transcript.txt`, set by the transcription step. Null for every file
+  /// uploaded while the flag was off, and for every type that is neither audio nor video.
+  transcriptKey String? @map("transcript_key")
 
   status        MeetingFileStatus @default(uploaded)
   /// User-safe copy only; the real cause is logged, never stored.

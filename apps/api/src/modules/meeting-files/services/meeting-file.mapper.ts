@@ -15,6 +15,7 @@ export interface MeetingFileRecord {
   storageKey: string;
   checksum: string | null;
   thumbnailKey: string | null;
+  transcriptKey: string | null;
   status: MeetingFileStatus;
   failureReason: string | null;
   attempts: number;
@@ -46,6 +47,9 @@ export function toMeetingFile(record: MeetingFileRecord): MeetingFile {
     ...(record.thumbnailKey !== null
       ? { thumbnailPath: thumbnailPathOf(record.meetingId, record.id) }
       : {}),
+    ...(record.transcriptKey !== null
+      ? { transcriptPath: transcriptPathOf(record.meetingId, record.id) }
+      : {}),
     createdAt: record.createdAt.toISOString(),
     ...(record.processedAt !== null ? { processedAt: record.processedAt.toISOString() } : {}),
   };
@@ -56,12 +60,20 @@ export function thumbnailPathOf(meetingId: string, fileId: string): string {
 }
 
 /** Where the object lives under the storage root. Opaque: never the user's name. */
+export function transcriptPathOf(meetingId: string, fileId: string): string {
+  return `/meetings/${meetingId}/files/${fileId}/transcript`;
+}
+
 export function storageKeyOf(meetingId: string, fileId: string): string {
   return `${meetingId}/${fileId}`;
 }
 
 export function thumbnailKeyOf(storageKey: string): string {
   return `${storageKey}.thumb.webp`;
+}
+
+export function transcriptKeyOf(storageKey: string): string {
+  return `${storageKey}.transcript.txt`;
 }
 
 /** C0 controls and DEL: none of them belong in a name that is rendered or put in a header. */
