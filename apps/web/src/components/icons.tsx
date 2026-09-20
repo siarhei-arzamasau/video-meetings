@@ -130,3 +130,11 @@ export function CloseIcon() {
     </svg>
   );
 }
+
+export function RetryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
+      <path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4" />
+    </svg>
+  );
+}

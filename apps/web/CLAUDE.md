@@ -103,6 +103,13 @@ aliases in sync if either changes.
   the thumbnail with the bearer header, turns the blob into `URL.createObjectURL`, and revokes
   it on unmount. Downloads work the same way: a blob, an object URL, a programmatic
   `<a download>`. Both collapse into plain URLs once the token is an `HttpOnly` cookie.
+- **Retry on a failed row is gated exactly like Delete.** `FileRow` takes one `canManage`
+  flag — the uploader or the host — because the API applies one rule to both actions and two
+  flags could only ever disagree with it. The retry itself needs no local state machine: the
+  API answers with the file as `uploaded`, that file replaces the row's in the list, and the
+  list already polls while anything is `uploaded`, so the three second poll restarts on its
+  own. A 409 means someone else got there first, so the list is refetched rather than
+  second-guessed; anything else shows inline with Dismiss, the upload row's pattern.
 - **A file over 100 MB is uploaded in chunks, and the row is the only part that looks
   different.** `FilesSection`'s queue routes on `isChunkedUpload` — over the single-request
   cap goes to `uploadInChunks`, everything else to the Phase 1 path — and the rest of the

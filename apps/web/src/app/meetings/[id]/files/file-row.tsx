@@ -4,8 +4,15 @@ import { Button, Chip, Spinner, Tooltip } from '@heroui/react';
 import type { MeetingFile } from '@repo/shared';
 import { useEffect, useState } from 'react';
 
-import { DownloadIcon, FileIcon, TrashIcon, WarningIcon } from '@/components/icons';
-import { ApiError, downloadMeetingFile, fetchThumbnail } from '@/lib/api-client';
+import {
+  CloseIcon,
+  DownloadIcon,
+  FileIcon,
+  RetryIcon,
+  TrashIcon,
+  WarningIcon,
+} from '@/components/icons';
+import { ApiError, downloadMeetingFile, fetchThumbnail, retryMeetingFile } from '@/lib/api-client';
 import { formatRelativeTime } from '@/lib/date-time';
 import { formatFileSize, statusPresentation } from '@/lib/meeting-files';
 
@@ -13,8 +20,13 @@ interface FileRowProps {
   token: string;
   file: MeetingFile;
   isMine: boolean;
-  canDelete: boolean;
+  /** The uploader-or-host gate. Retry is gated the same way, so one flag covers both. */
+  canManage: boolean;
   onDelete(file: MeetingFile): void;
+  /** The file as the retry left it, for the list to put back in place of this row's. */
+  onRetried(file: MeetingFile): void;
+  /** Someone else moved the file meanwhile: refetch rather than guess what it is now. */
+  onStale(): void;
   onUnauthorized(): void;
 }
 
@@ -22,13 +34,17 @@ export function FileRow({
   token,
   file,
   isMine,
-  canDelete,
+  canManage,
   onDelete,
+  onRetried,
+  onStale,
   onUnauthorized,
 }: FileRowProps) {
   const status = statusPresentation(file);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
 
   async function download() {
     setIsDownloading(true);
@@ -60,6 +76,38 @@ export function FileRow({
     }
   }
 
+  /**
+   * Back through the pipeline. The answer is the file as `uploaded`, which the list puts in
+   * place of this row's — and because the list polls while anything is `uploaded`, that alone
+   * restarts the three second poll until the worker is done with it.
+   */
+  async function retry() {
+    setIsRetrying(true);
+    setRetryError(null);
+
+    try {
+      onRetried(await retryMeetingFile(token, file.meetingId, file.id));
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        onUnauthorized();
+
+        return;
+      }
+
+      // 409: it is no longer failed, because someone else retried it or the worker finished
+      // it. Nothing to report — refetch and let the list show whatever it really is.
+      if (error instanceof ApiError && error.status === 409) {
+        onStale();
+
+        return;
+      }
+
+      setRetryError(error instanceof ApiError ? error.message : 'The retry failed. Try again.');
+    } finally {
+      setIsRetrying(false);
+    }
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3">
       <Thumbnail token={token} file={file} />
@@ -80,6 +128,11 @@ export function FileRow({
         {downloadError !== null && (
           <span className="text-danger text-sm" role="alert">
             {downloadError}
+          </span>
+        )}
+        {retryError !== null && (
+          <span className="text-danger text-sm" role="alert">
+            {retryError}
           </span>
         )}
       </div>
@@ -109,6 +162,25 @@ export function FileRow({
       )}
 
       <div className="ml-auto flex items-center gap-1">
+        {status.kind === 'failed' && canManage && (
+          <Button
+            variant="secondary"
+            size="sm"
+            isDisabled={isRetrying}
+            onPress={() => {
+              void retry();
+            }}
+          >
+            {isRetrying ? <Spinner size="sm" aria-hidden="true" /> : <RetryIcon />}
+            Retry
+          </Button>
+        )}
+        {retryError !== null && (
+          <Button variant="tertiary" size="sm" onPress={() => setRetryError(null)}>
+            <CloseIcon />
+            Dismiss
+          </Button>
+        )}
         <Button
           variant="tertiary"
           size="sm"
@@ -120,7 +192,7 @@ export function FileRow({
           <DownloadIcon />
           Download
         </Button>
-        {canDelete && (
+        {canManage && (
           <Button variant="tertiary" size="sm" onPress={() => onDelete(file)}>
             <TrashIcon />
             Delete

@@ -304,8 +304,10 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
                 token={token}
                 file={file}
                 isMine={file.uploaderId === user.id}
-                canDelete={file.uploaderId === user.id || meeting.hostId === user.id}
+                canManage={file.uploaderId === user.id || meeting.hostId === user.id}
                 onDelete={setDeleting}
+                onRetried={add}
+                onStale={refresh}
                 onUnauthorized={onUnauthorized}
               />
             </li>

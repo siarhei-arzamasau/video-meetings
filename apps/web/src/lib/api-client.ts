@@ -202,6 +202,23 @@ export function listMeetingFiles(
   return apiFetch<MeetingFile[]>(`/meetings/${meetingId}/files`, { headers: authHeaders(token) });
 }
 
+/**
+ * Sends a `failed` file back through the pipeline. The answer is the file as `uploaded`, so
+ * the row goes back to Processing and the list's poll picks it up again. A 409 means it is no
+ * longer failed — someone else retried it, or the worker finished it — and a 404 means the
+ * caller is neither uploader nor host.
+ */
+export function retryMeetingFile(
+  token: string,
+  meetingId: string,
+  fileId: string,
+): Promise<MeetingFile> {
+  return apiFetch<MeetingFile>(`/meetings/${meetingId}/files/${fileId}/retry`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+}
+
 /** Soft delete. A 404 means the file is gone, or the caller is neither uploader nor host. */
 export function deleteMeetingFile(token: string, meetingId: string, fileId: string): Promise<void> {
   return apiFetch<void>(`/meetings/${meetingId}/files/${fileId}`, {

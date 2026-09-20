@@ -12,6 +12,7 @@ import {
   getUpload,
   listMeetingFiles,
   putChunk,
+  retryMeetingFile,
   uploadMeetingFile,
 } from './api-client';
 
@@ -106,6 +107,41 @@ describe('deleteMeetingFile', () => {
     stubFetch(jsonResponse(404, { statusCode: 404, message: 'File not found' }));
 
     await expect(deleteMeetingFile('a-signed-jwt', 'm1', 'f1')).rejects.toMatchObject({
+      status: 404,
+      message: 'File not found',
+    });
+  });
+});
+
+describe('retryMeetingFile', () => {
+  it('sends POST retry and returns the file the API answers with', async () => {
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com/api');
+    const fetchMock = stubFetch(jsonResponse(200, { ...FILE, status: 'uploaded' }));
+
+    await expect(retryMeetingFile('a-signed-jwt', 'm1', 'f1')).resolves.toMatchObject({
+      id: 'f1',
+      status: 'uploaded',
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://api.example.com/api/meetings/m1/files/f1/retry');
+    expect(init.method).toBe('POST');
+    expect(init.headers).toMatchObject({ authorization: 'Bearer a-signed-jwt' });
+  });
+
+  it("surfaces the 409 for a file that is no longer failed, with the API's message", async () => {
+    stubFetch(jsonResponse(409, { statusCode: 409, message: 'Only a failed file can be retried' }));
+
+    await expect(retryMeetingFile('a-signed-jwt', 'm1', 'f1')).rejects.toMatchObject({
+      status: 409,
+      message: 'Only a failed file can be retried',
+    });
+  });
+
+  it('surfaces the 404 for a file the caller may not retry', async () => {
+    stubFetch(jsonResponse(404, { statusCode: 404, message: 'File not found' }));
+
+    await expect(retryMeetingFile('a-signed-jwt', 'm1', 'f1')).rejects.toMatchObject({
       status: 404,
       message: 'File not found',
     });
