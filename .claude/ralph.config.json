@@ -1,6 +1,6 @@
 {
-  "active": false,
-  "milestone": "",
+  "active": true,
+  "milestone": "User profile phase 1: Display name — API",
   "maxIterations": 1,
   "maxTurns": 50,
   "branch": "feature/phase-5",
