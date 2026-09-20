@@ -35,12 +35,17 @@ with authentication since split in two by
 — `auth` owns credentials and tokens, `user` owns the user record, and they interact only
 over the CQRS buses. Meeting file upload is
 [`docs/specs/2026-09-19-meeting-file-upload-prd.md`](docs/specs/2026-09-19-meeting-file-upload-prd.md),
-built in two phases whose plans are the design record for everything about it — the worker,
+built in four phases whose plans are the design record for everything about it — the worker,
 the storage layout, and the module's file layout in
 [phase 1](docs/plans/2026-09-19-meeting-file-upload-phase-1.md)'s _Design decisions_; the
 1 GiB cap, the 8 MiB chunk size, the session table, and why a completed session enters the
 phase 1 pipeline unchanged in [phase 2](docs/plans/2026-09-19-meeting-file-upload-phase-2.md)'s
-_Assumptions_ and _Design constraints_. Read those before changing that module.
+_Assumptions_ and _Design constraints_; retry and the transcription step in
+[phase 3](docs/plans/2026-09-19-meeting-file-upload-phase-3.md); the SSE stream that replaced
+the poll in [phase 4](docs/plans/2026-09-19-meeting-file-upload-phase-4.md). The technology
+choices behind all four (multer, `file-type`, the lease protocol, SSE over polling) are argued
+in [`docs/research-meeting-upload.md`](docs/research-meeting-upload.md). Read those before
+changing that module; do not import them into a session wholesale.
 
 ## Commands
 
@@ -65,42 +70,21 @@ CI (`.github/workflows/ci.yml`) runs format:check → lint → build → typeche
 that order when verifying work locally, and run it once on the finished tree — `build` and
 `typecheck` catch things no test does.
 
-## Required of every service method
+## Code rules
 
-- Every parameter has an explicit TypeScript type
-- The return type is stated explicitly, as `Promise<T>`
-- No `console.log` — use `Logger` from `@nestjs/common`
-- Name variables for what they hold — not `x`, not `data`, not `result`
+These outrank whatever the existing code happens to do.
 
-## Before writing new code
-
-- Read the rules in `CLAUDE.md`; they outrank the existing code
-- Look at the neighbouring files that are written the right way
-
-## Naming
-
-- Files: `feature.type.ts` (`meetings.service.ts`)
-- Methods name an action: `createMeetingWithFiles`
-- Variables name their meaning: `meetingId`, not `id`, `x`, or `data`
-- Enums instead of strings: `MeetingStatus.PENDING`, not `'pnd'`
-- Constants instead of magic numbers: `MAX_FILE_SIZE_MB`
-
-## Size
-
-- File over 250 lines → decompose it before adding code
-- Method over 40 lines → extract a private method
-- Nesting deeper than 3 levels → refactor
-
-## Dependencies
-
-- Import through the module, never the service directly
-- No circular dependencies — check before committing
-- Shared types only from `@app/shared/types`
-
-## Refactoring
-
-- Decompose a large file before adding code to it
-- Tests green at every step of the refactor
+- **Every service method has explicit parameter types and an explicit `Promise<T>` return.**
+- **No `console.log`** — the framework logger (`Logger` from `@nestjs/common` in the API).
+- **Names say what a thing is or does.** Files `feature.type.ts` (`meetings.service.ts`);
+  methods name an action (`createMeetingWithFiles`); variables name their meaning
+  (`meetingId`, never `id`, `x`, `data`, `result`); enums over strings
+  (`MeetingStatus.PENDING`, not `'pnd'`); constants over magic numbers (`MAX_FILE_SIZE_MB`).
+- **Size limits that trigger a refactor first:** a file over 250 lines is decomposed before
+  code is added to it; a method over 40 lines loses a private method; nesting deeper than
+  three levels is flattened.
+- **Dependencies go through the module, never the service directly**, and never in a cycle —
+  check before committing. Shared types come only from `@repo/shared`.
 
 ## Token economy
 
@@ -157,7 +141,8 @@ log saying so. That is a silent failure replacing a loud one.
 
 **A refactor is a sequence of steps that each end green, not one change verified at the end.**
 Take a baseline first, then run the tests after each step, small enough that a red suite names
-the change that broke it. Four repository-specific things make that work:
+the change that broke it — and when the change is to a file already over the size limit above,
+the decomposition is step one. Four repository-specific things make that work:
 
 - **`pnpm test` replays cached logs and prints `FULL TURBO`**, which looks exactly like a
   passing run because it is reporting one from earlier. Use `pnpm test --force` for a baseline
@@ -170,11 +155,9 @@ the change that broke it. Four repository-specific things make that work:
   `--maxWorkers=4` is the way back for a run on a machine that is busy with something else;
   the pre-commit hook runs this suite too. **The e2e suites stay at one worker** — that cap
   is correctness, not speed (see [the API guide](apps/api/AGENTS.md#tests)).
-- **`pnpm test` is not the whole net.** Neither it nor CI runs `test:e2e`. Run
-  `pnpm --filter=@repo/api test:e2e` (needs `docker compose up -d postgres` and a migrated
-  schema; see [the API guide](apps/api/AGENTS.md#tests)) and `pnpm --filter=@repo/web test:e2e`
-  (Playwright, starts both servers on 3100/3101). **The two share one database and must never
-  run at the same time.**
+- **`pnpm test` is not the whole net.** Neither it nor CI runs the two `test:e2e` suites;
+  [the API guide](apps/api/AGENTS.md#tests) owns what they need and why they must never run at
+  the same time.
 - **An adapted test is weaker evidence than an untouched one.** Unit specs change alongside the
   code they mock; what tells you behaviour survived is the suite that passed _unmodified_,
   which for a change behind an unchanged HTTP contract is `test:e2e`. So prefer steps that
@@ -182,37 +165,17 @@ the change that broke it. Four repository-specific things make that work:
 
 ## Setup
 
-Node 24 (`.nvmrc`), pnpm 11 (`corepack enable`), Docker for PostgreSQL.
+The steps are in [`README.md`](README.md#getting-started); `pnpm start:dev` does them all.
+Three facts that bite an agent more than a human:
 
-```bash
-pnpm install
-cp .env.example .env
-cp apps/api/.env.example apps/api/.env
-cp apps/web/.env.example apps/web/.env.local
-docker compose up -d postgres
-pnpm --filter=@repo/api prisma:generate  # required: the client is gitignored, and `dev` does not generate it
-pnpm --filter=@repo/api prisma:migrate   # required: the API's tables do not exist yet
-pnpm exec playwright install chromium    # only for the web browser suite (test:e2e)
-pnpm dev
-```
-
-`GET http://localhost:3001/api/health` should return `{"status":"ok",...}` — at whichever port
-`pnpm dev` printed.
-
-Three environment facts that bite outside the API guide:
-
-- **Uploaded files land under `apps/api/storage/`** (`MEETING_FILES_DIR`, gitignored), created
-  and checked for writability at boot. `docker compose` mounts a named volume there instead, so
-  a rebuilt container keeps its files. Backups of that directory are operational.
-- **`JWT_SECRET` must be at least 32 characters** or the API refuses to boot. The
-  `.env.example` placeholder satisfies that for local work only.
-- **Transcription is off by default** (`MEETING_FILES_TRANSCRIPTION_ENABLED`). Turning it on
-  needs `TRANSCRIPTION_API_URL`, an OpenAI-compatible `audio/transcriptions` endpoint, which
-  is validated at boot so the API refuses to start rather than fail every recording.
-
-Everything else about uploads — the 100 MB single-request cap, the 1 GiB chunked one, session
-expiry, and the SSE stream the meeting page follows — is in
-[the API guide](apps/api/AGENTS.md#meeting-files-srcmodulesmeeting-files), which owns it.
+- **`pnpm dev` does not generate the Prisma client**, and the client is gitignored. On a
+  fresh clone or after a schema change, `pnpm --filter=@repo/api prisma:generate` first.
+- **The API refuses to boot** on a `JWT_SECRET` under 32 characters, and — with
+  `MEETING_FILES_TRANSCRIPTION_ENABLED` on — on a missing `TRANSCRIPTION_API_URL`. Both are
+  boot-time validation, not first-request failures.
+- **`apps/api/storage/` is where uploaded bytes live** (`MEETING_FILES_DIR`, gitignored);
+  the database has only the records. Everything else about uploads is in
+  [the API guide](apps/api/AGENTS.md#meeting-files-srcmodulesmeeting-files), which owns it.
 
 ### Agent tooling
 

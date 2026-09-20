@@ -5,24 +5,16 @@
 The Nest.js 11 backend. Read [the root guide](../../AGENTS.md) first for workspace-wide
 commands and conventions.
 
-## Stack
-
-Nest.js 11 · Prisma 7 (PostgreSQL, `@prisma/adapter-pg`) · class-validator ·
-`@nestjs/jwt` · `@node-rs/argon2` · Jest + Supertest.
-
-**Password hashing is argon2id, never bcrypt.** bcrypt truncates input at 72 bytes, which
-silently makes every password sharing a 72-byte prefix the same credential. An e2e test
-enforces this; `@node-rs/argon2` also needs no `allowBuilds` entry, unlike native `bcrypt`.
-
 ## Commands
 
+The root scripts apply with `--filter=@repo/api`; `build` here is `prisma generate && nest build`.
+This package's own:
+
 ```bash
-pnpm --filter=@repo/api dev              # nest start --watch on :3001, or $PORT
-pnpm --filter=@repo/api build            # prisma generate && nest build
-pnpm --filter=@repo/api test             # jest (*.spec.ts under src/)
-pnpm --filter=@repo/api test:e2e         # jest with test/jest-e2e.json
+pnpm --filter=@repo/api test:e2e         # jest with test/jest-e2e.json — see Tests
+pnpm --filter=@repo/api test:watch
 pnpm --filter=@repo/api prisma:generate
-pnpm --filter=@repo/api prisma:migrate
+pnpm --filter=@repo/api prisma:migrate   # prisma migrate dev
 pnpm --filter=@repo/api prisma:studio
 ```
 
@@ -72,7 +64,12 @@ change state, and on reads that cross a module boundary. Within one module a rea
 straight from a controller and a service is not a violation of the house style —
 `MeetingsService` is the example, and routing its two lookups through a `QueryBus` for
 symmetry with `POST /meetings` would be ceremony. The test is whether the read crosses a
-boundary, not whether it sits next to a write.
+boundary, not whether it sits next to a write. **Nothing else from `@nestjs/cqrs` is used**:
+no sagas, and no events beyond the one in-process `EventBus` the file worker publishes on
+(see _Events and the SSE stream_). `CqrsModule` is imported per feature module, never
+globally, so a module's dependencies stay readable from its own `imports` array; the buses
+still behave globally at runtime, which is what lets two modules share one without depending
+on each other.
 
 ### Adding a command
 
@@ -114,8 +111,10 @@ converts all of them, not a second convention alongside the first.
 ### Where invariants live — the auth example
 
 A handler owns its use case; a shared service owns anything two handlers must not implement
-differently. Login must not become an account-enumeration oracle, and that guarantee is split
-across two files on purpose:
+differently. `PasswordService` is the example: **hashing is argon2id (`@node-rs/argon2`),
+never bcrypt** — bcrypt truncates input at 72 bytes, which silently makes every password
+sharing a 72-byte prefix the same credential; an e2e test enforces this. Login must not become
+an account-enumeration oracle either, and that guarantee is split across two files on purpose:
 
 - `LoginHandler` owns the single shared failure message — both the unknown-email and
   wrong-password paths throw the same `INVALID_CREDENTIALS` constant. Give either its own
@@ -214,20 +213,11 @@ sentence twice.
 
 ### The second boundary — meetings and meeting-files
 
-`FindVisibleMeetingQuery(userId, meetingId) → Meeting | null` is the first read to cross out of
-`meetings`. Every file route dispatches it before touching a file, so a stranger, a guessed id,
-and a missing meeting all get the same 404 from the same place. `MeetingFilesModule` does not
-import `MeetingsModule`, and `MeetingsController.findOne` still reads from `MeetingsService`:
-the in-module read stays on the service, and two near-identical reads is the accepted price.
-
-### What is deliberately absent
-
-No events or sagas outside the one in-process `EventBus` the file worker publishes on (see
-below). Commands and queries are the parts that pay for themselves. The `QueryBus` exists for
-exactly one reason — a read that crosses a module boundary — and not to make reads symmetrical
-with writes. `CqrsModule` is imported per feature module rather than globally, so a module's
-dependencies stay readable from its own `imports` array; the buses still behave globally at
-runtime, which is what lets two modules share one without depending on each other.
+`FindVisibleMeetingQuery(userId, meetingId) → Meeting | null` is the read every file route
+dispatches before touching a file, so a stranger, a guessed id, and a missing meeting all get
+the same 404 from the same place. `MeetingFilesModule` does not import `MeetingsModule`, and
+`MeetingsController.findOne` still reads from `MeetingsService` — two near-identical reads is
+the accepted price of the in-module read staying off the bus.
 
 ## Meeting files (`src/modules/meeting-files`)
 
@@ -442,11 +432,9 @@ instead of at the first request that needs it. Adding one means the class, `.env
 — if it affects local Docker — `docker-compose.yml`.
 
 `ConfigModule` is global and reads `.env.local` then `.env`. Neither overrides a variable
-already in `process.env`, which is what lets the root `pnpm dev` decide `PORT`. Read
-[the root guide](../../AGENTS.md#pnpm-dev-picks-the-ports-before-turborepo-starts) before
-"improving" that with an `EADDRINUSE` retry here: relocating the API on its own is what the
-arrangement exists to prevent, because the frontend's base URL was fixed at boot and cannot
-follow. Started on its own, this app takes its configured port and fails if it is busy.
+already in `process.env`, which is what lets the root `pnpm dev` decide `PORT` — and why an
+`EADDRINUSE` retry in `main.ts` is the wrong fix; see
+[the root guide](../../AGENTS.md#pnpm-dev-picks-the-ports-before-turborepo-starts).
 
 ## Prisma 7 specifics
 
@@ -487,16 +475,15 @@ Postgres), **so a module whose only coverage is an e2e spec is uncovered as far 
 concerned.** Every command handler, query handler, and read service gets a `*.spec.ts` beside
 it for that reason, not for a coverage number.
 
-E2E specs run against the **real database**: `test/utils/create-test-app.ts` boots `AppModule`
-and `useApiSuite` truncates the tables it touches, so `test:e2e` needs
+E2E specs run against the **real database** `DATABASE_URL` points at — by default your
+development one; point it elsewhere if local rows matter to you. `test/utils/create-test-app.ts`
+boots `AppModule` and `useApiSuite` truncates the tables it touches, so `test:e2e` needs
 `docker compose up -d postgres` and a migrated schema — without them every test fails in
 `beforeEach` with `relation "..." does not exist`, which reads like a broken suite and is
 really a missing database. Cleanup runs at both ends for different reasons: `beforeEach` so no
 test inherits another's rows (which is also what makes a repeated run independent of the last),
-`afterAll` so the final test's fixtures are not stranded.
-
-> **`test:e2e` truncates `users` in whatever database `DATABASE_URL` points at**, which by
-> default is your development database. Point it elsewhere if local rows matter to you.
+`afterAll` so the final test's fixtures are not stranded. **The web app's Playwright suite
+truncates the same table, so the two must never run at the same time.**
 
 Six things about that setup are easy to get wrong:
 
@@ -509,10 +496,9 @@ Six things about that setup are easy to get wrong:
   `MEETING_FILES_WORKER_ENABLED=false`.
 - **`start:e2e-web` must stay in step with it**: the same temp-dir idea, but the worker **on**
   with a fast poll, because the web app's browser suite watches the Processing chip disappear.
-- **`maxWorkers: 1` is load-bearing.** Jest parallelises across spec files, and every auth spec
-  truncates the same `users` table in the same database; in parallel they delete each other's
-  fixtures and a seeded `register` starts returning 409. Remove this only alongside per-worker
-  database isolation.
+- **`maxWorkers: 1` is load-bearing**, for the same reason: Jest parallelises across spec
+  files, and in parallel they delete each other's fixtures and a seeded `register` starts
+  returning 409. Remove it only alongside per-worker database isolation.
 - **`test/utils/` reads the database over raw SQL**, not through `prisma.user`, so the specs pin
   table and column names directly. A response is not evidence about what was written: asserting
   through the API would reuse the same `include` the implementation does, so a row the code
@@ -541,7 +527,3 @@ shape, a fourth message on the auth/user boundary, a new exemplar module replaci
 four, the first event or saga, a change to the `apps/api/**` lint overrides. Adding a feature
 module that follows the existing shape needs no update: document the shape, not each module
 that uses it.
-
-## File upload
-
-Use this research for it: @docs/research-meeting-upload.md

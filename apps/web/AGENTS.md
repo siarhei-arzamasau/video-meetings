@@ -5,19 +5,14 @@
 The Next.js 16 frontend. Read [the root guide](../../AGENTS.md) first for workspace-wide
 commands and conventions.
 
-## Stack
-
-Next.js 16 (App Router) · React 19 · HeroUI 3 · Tailwind CSS 4 · next-themes · Vitest +
-jsdom.
-
 ## Commands
 
+The root scripts apply with `--filter=@repo/web`; `typecheck` needs a prior `build` for
+`.next/types`. This package's own:
+
 ```bash
-pnpm --filter=@repo/web dev          # next dev on :3000, or $WEB_PORT
-pnpm --filter=@repo/web build        # next build (standalone output)
-pnpm --filter=@repo/web typecheck    # needs a prior build for .next/types
-pnpm --filter=@repo/web test         # vitest run
 pnpm --filter=@repo/web test:watch
+pnpm --filter=@repo/web test:e2e     # Playwright — see Tests
 ```
 
 ## Every change is checked against `ui-ux-pro-max`
@@ -106,25 +101,6 @@ aliases in sync if either changes.
   the thumbnail with the bearer header, turns the blob into `URL.createObjectURL`, and revokes
   it on unmount. Downloads work the same way. Both collapse into plain URLs once the token is
   an `HttpOnly` cookie.
-- **The meeting page follows its files over SSE, and the three second poll is the fallback that
-  must not be deleted.** `useMeetingFiles` opens `GET /meetings/:id/files/events` at mount
-  beside the first list fetch; `applyFileEvent` replaces a known id **where it is**, re-sorts an
-  unknown one in, and removes a `deleted` one, so the Processing chip goes the moment the worker
-  finishes. Two rules follow from one fact — an event says what a row is now, a list says what
-  every row was when the server ran the query, and the client cannot order the two:
-  **the list is refetched every time a stream opens** (only a list requested after the server
-  subscribed this connection holds what no event will repeat), and **events arriving during a
-  fetch are replayed on top of the snapshot**, so a slow refetch cannot put a settled row back
-  to Processing. **`EventSource` is not used** and cannot be while the token is in
-  `localStorage`: it sends no `Authorization` header, and a token in the URL is logged by every
-  proxy — the stream is opened with `fetch` and parsed by `src/lib/sse.ts`, the file the cookie
-  migration deletes. `watchMeetingFiles` reopens a dropped stream (1, 2, 4 seconds); a TTL close
-  is an ordinary drop. After three drops in a minute the poll takes over **for a minute
-  (`STREAM_RETRY_MS`), not for good** — an API restart is exactly three drops, and a page that
-  never retried would sit on the poll until reloaded. The poll stays because a stream is the
-  first thing a corporate proxy or captive portal breaks. **One polite `role="status"` region**
-  (`FilesSection`, visually hidden) announces how many files are processing: one per section,
-  never one per row, and empty on first render so nothing is read aloud for arriving.
 - **Retry on a failed row is gated exactly like Delete.** `FileRow` takes one `canManage` flag —
   uploader or host — because the API applies one rule to both and two flags could only disagree
   with it. The retry needs no local state machine: the API answers with the file as `uploaded`,
@@ -147,6 +123,31 @@ aliases in sync if either changes.
   sends — so a file rejected here reads exactly as it would have from the server. Queue rows are
   keyed by a counter, not `crypto.randomUUID()`, which exists only in secure contexts: a dev
   server opened over plain HTTP from a phone is not one.
+
+### The files stream
+
+The meeting page follows its files over SSE: `useMeetingFiles` opens
+`GET /meetings/:id/files/events` at mount beside the first list fetch, and `applyFileEvent`
+replaces a known id **where it is**, re-sorts an unknown one in, and removes a `deleted` one,
+so the Processing chip goes the moment the worker finishes. Four rules, each of which was a
+bug once:
+
+- **The list is refetched every time a stream opens, and events arriving during a fetch are
+  replayed on top of the snapshot.** An event says what a row is now; a list says what every
+  row was when the server ran the query; the client cannot order the two. Only a list
+  requested after the server subscribed this connection holds what no event will repeat, and
+  the replay is what stops a slow refetch putting a settled row back to Processing.
+- **`EventSource` is not used, and cannot be while the token is in `localStorage`**: it sends
+  no `Authorization` header, and a token in the URL is logged by every proxy. The stream is
+  opened with `fetch` and parsed by `src/lib/sse.ts` — a file the cookie migration deletes.
+- **The three second poll is the fallback and must not be deleted.** `watchMeetingFiles`
+  reopens a dropped stream (1, 2, 4 seconds; a TTL close is an ordinary drop). After three
+  drops in a minute the poll takes over **for a minute (`STREAM_RETRY_MS`), not for good** —
+  an API restart is exactly three drops, and a page that never retried would sit on the poll
+  until reloaded. A stream is the first thing a corporate proxy or captive portal breaks.
+- **One polite `role="status"` region** (`FilesSection`, visually hidden) announces how many
+  files are processing: one per section, never one per row, and empty on first render so
+  nothing is read aloud for arriving.
 
 ## API access
 
@@ -186,9 +187,8 @@ parameters give way to `credentials: 'include'` **inside this file only** — th
 explicit argument buys, and why a transport reaching into `auth-token.ts` is the wrong shape.
 A test pins that the unauthenticated wrappers send no `authorization` header; keep it.
 
-Nothing here may treat 3001 as fixed, and the API's port is never discovered at runtime: Next
-inlines `NEXT_PUBLIC_API_URL` into the bundle at boot, which is why the root `pnpm dev`
-resolves ports first — see
+Nothing here may treat 3001 as fixed or discover the API's port at runtime — Next inlines
+`NEXT_PUBLIC_API_URL` at boot; see
 [the root guide](../../AGENTS.md#pnpm-dev-picks-the-ports-before-turborepo-starts).
 
 ### Client-side validation and credentials
@@ -220,10 +220,10 @@ verification to maintain.
 
 `src/lib/auth-token.ts` keeps the JWT in `localStorage`, a placeholder rather than the answer:
 any script the page runs can read it. The intended fix is an `HttpOnly` cookie, at which point
-this module is deleted rather than extended — do not build more session machinery on it. Every
-access is guarded (`localStorage` throws outright where storage is disabled) and nothing
-rethrows, because losing a token is survivable and failing a completed registration over it is
-not.
+this module and `use-signed-in.ts` below are deleted rather than extended — do not build more
+session machinery on either. Every access is guarded (`localStorage` throws outright where
+storage is disabled) and nothing rethrows, because losing a token is survivable and failing a
+completed registration over it is not.
 
 **Route protection is client-side only, and there is deliberately no `middleware.ts`.** The
 token is in `localStorage`, which does not exist in the request middleware runs in — a gate
@@ -236,9 +236,8 @@ nothing secret goes in it, and it is the _data_ that is protected, never the URL
 
 **The gate is `src/lib/use-signed-in.ts`, and it is still not session machinery.** One hook
 holding the token-after-mount read, `getMe`, the 401 clear-and-redirect, and a local `signOut`.
-No provider, no context, no refresh, no interceptor — the cookie migration deletes this hook
-along with `auth-token.ts`. A page adds only its own requests and hands a mid-page 401 back to
-`signOut`.
+No provider, no context, no refresh, no interceptor. A page adds only its own requests and
+hands a mid-page 401 back to `signOut`.
 
 **Signing out is local**: clear the token, `replace` to `/auth/login`. There is no logout
 endpoint because the JWT is stateless and stays valid until it expires. That is a property of
