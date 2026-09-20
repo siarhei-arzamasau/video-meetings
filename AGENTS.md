@@ -126,10 +126,13 @@ the change that broke it. Four repository-specific things make that work:
   passing run because it is reporting one from earlier. Use `pnpm test --force` for a baseline
   you intend to trust — a suite that was already red is worth knowing about before its failure
   looks like yours.
-- **Both runners are capped at four workers on purpose** (`apps/api/package.json`,
-  `apps/web/vitest.config.ts`). The default of one per core is forty `node` processes on an
-  18-core laptop for a suite that finishes in seconds, and the pre-commit hook runs it too.
-  Pass `--maxWorkers` for a box with cores to spare; the e2e suites are already at one.
+- **Both runners are set to every core** (`maxWorkers: '100%'` in `apps/api/package.json` and
+  `apps/web/vitest.config.ts`). Measured on an 18-core laptop, that halves the web suite and
+  costs the API's about 13% — a `ts-jest` compile per worker outweighs the parallelism there,
+  and no worker count beats four for it. Both were capped at four before, and
+  `--maxWorkers=4` is the way back for a run on a machine that is busy with something else;
+  the pre-commit hook runs this suite too. **The e2e suites stay at one worker** — that cap
+  is correctness, not speed (see [the API guide](apps/api/AGENTS.md#tests)).
 - **`pnpm test` is not the whole net.** Neither it nor CI runs `test:e2e`. Run
   `pnpm --filter=@repo/api test:e2e` (needs `docker compose up -d postgres` and a migrated
   schema; see [the API guide](apps/api/AGENTS.md#tests)) and `pnpm --filter=@repo/web test:e2e`
