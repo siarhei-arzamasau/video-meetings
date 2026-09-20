@@ -1,10 +1,8 @@
 # Package guide — `@repo/api`
 
-> **`CLAUDE.md` and `AGENTS.md` in this directory are byte-identical mirrors.** Edit one,
-> then `cp CLAUDE.md AGENTS.md`; `diff CLAUDE.md AGENTS.md` must print nothing. Below,
-> **"this guide"** means both files together.
+> **`AGENTS.md` is the guide; `CLAUDE.md` beside it imports it.** Write every change here.
 
-The Nest.js 11 backend. Read [the root guide](../../CLAUDE.md) first for workspace-wide
+The Nest.js 11 backend. Read [the root guide](../../AGENTS.md) first for workspace-wide
 commands and conventions.
 
 ## Stack
@@ -49,40 +47,32 @@ prisma/
   migrations/           Applied migrations — never edit one that has shipped
 ```
 
-**`src/modules/auth` is the shape to copy for a new feature module.** It is CQRS — one
-command class and one handler per write operation, dispatched through `@nestjs/cqrs` — and
-that is the house style for anything new, not an exception. `src/modules/health` still shows
-the minimum a module needs when it changes no state and reaches no database; a module with
-nothing to write needs no commands.
+Four worked examples, in the order worth reading them:
 
-`src/modules/meetings` is the second worked example and the one to read for a module with
-both sides: `POST /meetings` is a command, while the two reads stay on a plain service.
+- **`auth`** — the shape to copy for a new feature module. CQRS, one command class and one
+  handler per write, and that is the house style for anything new, not an exception.
+- **`meetings`** — the mixed case: `POST /meetings` is a command, the two reads stay on a
+  plain service.
+- **`user`** — read before splitting a module in two. It owns the user record and exports
+  nothing; two modules deep in a request path talk to it entirely over the buses.
+- **`meeting-files`** — the largest: two commands, a read service, a storage service over
+  `fs`, and a polling worker. It has its own section below because most of what it does
+  right is invisible in the code.
 
-`src/modules/user` is the third, and the one to read before splitting a module in two. It
-owns the user record — the insert, the lookups, the public shape, and the one route that
-changes a user's own profile — and exports nothing. Two modules deep in a request path talk
-to it entirely over the buses; see the module boundary section below for why that is not the
-same as importing it.
-
-`src/modules/meeting-files` is the fourth and the largest: two commands, a read service, a
-storage service over `fs`, and a polling worker. It has its own section below because most of
-what it does right is invisible in the code — ordering, locking, and a claim query that
-Prisma cannot express.
+`health` still shows the minimum a module needs when it changes no state and reaches no
+database; a module with nothing to write needs no commands.
 
 ## CQRS — the module pattern
 
-Every write operation is a command object dispatched through `@nestjs/cqrs`'s `CommandBus`
-to exactly one handler. `src/modules/auth` is the worked example: `register` and `login` are
-commands. `src/modules/meetings` shows the mixed case — `CreateMeetingCommand` on the write,
-`MeetingsService` on the reads.
+Every write is a command object dispatched through `@nestjs/cqrs`'s `CommandBus` to exactly
+one handler.
 
-**Reads inside a module do not need a bus.** The pattern earns its indirection on operations
-that change state, and on reads that cross a module boundary — one class per use case, a
-uniform place for the next one to land, and a handler that can be unit-tested without an HTTP
-layer. Within one module, a read served straight from a controller and a service is not a
-violation of the house style: `MeetingsService` is the example, and routing its two lookups
-through a `QueryBus` for symmetry with `POST /meetings` would be ceremony. The test is
-whether the read crosses a boundary, not whether it sits next to a write.
+**Reads inside a module do not need a bus.** The indirection earns its keep on operations that
+change state, and on reads that cross a module boundary. Within one module a read served
+straight from a controller and a service is not a violation of the house style —
+`MeetingsService` is the example, and routing its two lookups through a `QueryBus` for
+symmetry with `POST /meetings` would be ceremony. The test is whether the read crosses a
+boundary, not whether it sits next to a write.
 
 ### Adding a command
 
@@ -92,84 +82,76 @@ Five things, and the middle three fail at runtime rather than compile time:
    needs.
 2. `commands/handlers/<name>.handler.ts` — `@CommandHandler(TheCommand)` on a class
    implementing `ICommandHandler`, with the work in `execute`.
-3. **Import `CqrsModule` in the feature module.** Each module that dispatches commands
-   imports it; it is not global. A module that injects `CommandBus` without importing it
-   fails at startup with an unresolved-dependency error naming the controller, not the
-   missing import.
+3. **Import `CqrsModule` in the feature module.** It is not global. A module that injects
+   `CommandBus` without importing it fails at startup with an unresolved-dependency error
+   naming the controller, not the missing import.
 4. **Register the handler in the module's `providers`.** A handler that is written,
    decorated, and never registered compiles cleanly and throws only when the route is first
-   hit. The decorator does not register anything by itself.
+   hit. The decorator registers nothing by itself.
 5. **Dispatch with explicit type arguments** — `commandBus.execute<TheCommand, TResult>(…)`.
    `execute` defaults its result to `any`, and `typescript/no-explicit-any` is an error here,
    so the inferred version fails lint rather than typecheck, which reads as unrelated noise.
 
 **Commands carry primitives, never the DTO instance.** A DTO is an HTTP-transport object
-holding class-validator decorators; a handler that accepted one could not be exercised
-without constructing a web-layer object, and it would silently depend on validation having
-already run. The controller destructures the DTO and passes the fields.
+holding class-validator decorators; a handler that accepted one could not be exercised without
+constructing a web-layer object, and would silently depend on validation having already run.
+The controller destructures the DTO and passes the fields.
 
 ### Adding a query
 
 The same five things with `queries/`, `@QueryHandler`, `IQueryHandler`, and `QueryBus`
-substituted — including step 5, which matters more here, because a query's result type is
-where the useful information is. `src/modules/user/queries` is the worked example.
+substituted — step 5 matters more here, because a query's result type is where the useful
+information is. `src/modules/user/queries` is the worked example.
 
 One rule of its own: **a query returns `null` for "no such row", never a `NotFoundException`.**
 What a miss means belongs to the caller. `FindUserByIdQuery` returning `null` is how
-`JwtAuthGuard` can answer 401 while some future controller answers 404 from the same handler;
-a handler that threw would have decided for both of them.
+`JwtAuthGuard` answers 401 while some future controller answers 404 from the same handler.
 
-`@nestjs/cqrs` 11 also ships `Query<TResult>` and `Command<TResult>` base classes that carry
-the result type, which would make the explicit type arguments in step 5 unnecessary. Nothing
-here uses them — the messages are plain classes. Adopting them is a reasonable change, but it
-is one commit that converts all of them, not a second convention alongside the first.
+`@nestjs/cqrs` 11 ships `Query<TResult>`/`Command<TResult>` base classes that would make step
+5's type arguments unnecessary. Nothing here uses them; adopting them is one commit that
+converts all of them, not a second convention alongside the first.
 
 ### Where invariants live — the auth example
 
-A handler owns its use case, and a shared service owns anything two handlers must not
-implement differently. Auth shows why that split is not cosmetic: the login endpoint must
-not become an account-enumeration oracle, and that guarantee is spread across two files on
-purpose.
+A handler owns its use case; a shared service owns anything two handlers must not implement
+differently. Login must not become an account-enumeration oracle, and that guarantee is split
+across two files on purpose:
 
-- `LoginHandler` owns the single shared failure message. Both the unknown-email and
-  wrong-password paths throw the same `INVALID_CREDENTIALS` constant. Give either path its
-  own message and the endpoint starts answering "does this address have an account?".
+- `LoginHandler` owns the single shared failure message — both the unknown-email and
+  wrong-password paths throw the same `INVALID_CREDENTIALS` constant. Give either its own
+  message and the endpoint starts answering "does this address have an account?".
 - `PasswordService` owns the timing half — `verifyDummy` spends a real argon2 verification
-  against a dummy hash built at startup, so a miss costs what a hit costs. The no-account
-  path in `LoginHandler` must keep calling it, and keep `await`ing it. **No test catches its
-  removal**; all four login specs stay green while the defence is gone.
+  against a dummy hash built at startup, so a miss costs what a hit costs. The no-account path
+  must keep calling it, and keep `await`ing it. **No test catches its removal**; all four login
+  specs stay green while the defence is gone.
 
 `CreateUserHandler` — in the user module, not auth — maps Prisma's `P2002` to the 409 that
-`POST /auth/register` returns. It is keyed on the unique index failing, not on a preceding
-`findUnique`: two concurrent registrations of one address both pass a read check, and only one
-survives the insert. It lives with the insert because that is the only place that can answer
-authoritatively, and `RegisterHandler` deliberately does not catch it on the way past — a
+`POST /auth/register` returns. It is keyed on the unique index failing, not a preceding
+`findUnique`: two concurrent registrations of one address both pass a read check and only one
+survives the insert. `RegisterHandler` deliberately does not catch it on the way past — a
 `try`/`catch` there would put the response for a taken address in two files.
 
 ### Reading a Prisma constraint error — the meetings trap
 
-`CreateMeetingHandler` maps `P2003` to a 400, and getting there is less obvious than the
-`P2002` case above, because **two foreign keys in that insert point at `users`**:
-`meetings_host_id_fkey` and `meeting_participants_user_id_fkey`. The code alone does not say
-which failed. An unknown participant is the caller's mistake; the host row vanishing is a race
-between the guard's lookup and the insert, and reporting it as "a participant is not
-registered" sends someone hunting a bug in a participant list that was correct.
+`CreateMeetingHandler` maps `P2003` to a 400, and that is less obvious than the `P2002` case,
+because **two foreign keys in that insert point at `users`**: `meetings_host_id_fkey` and
+`meeting_participants_user_id_fkey`. An unknown participant is the caller's mistake; the host
+row vanishing is a race between the guard's lookup and the insert, and reporting it as "a
+participant is not registered" sends someone hunting a bug in a correct participant list.
 
 **The constraint name is not where it looks like it should be.** With `@prisma/adapter-pg` it
-arrives nested, at `meta.driverAdapterError.cause.constraint.index`, _not_ as
-`meta.field_name` — that is the older non-adapter shape, and a handler written against it
-compiles, reads `undefined`, and silently misclassifies every violation. Capture the real
-payload before matching on it. `create-meeting.handler.spec.ts` pins the shape observed
-against Postgres for exactly that reason, and the handler searches the serialised `meta`
-rather than a fixed path, since the nesting is Prisma's internal shape and not a contract.
+arrives at `meta.driverAdapterError.cause.constraint.index`, _not_ `meta.field_name` — the
+older non-adapter shape, against which a handler compiles, reads `undefined`, and silently
+misclassifies every violation. `create-meeting.handler.spec.ts` pins the payload observed
+against Postgres, and the handler searches the serialised `meta` rather than a fixed path,
+since the nesting is Prisma's internal shape and not a contract. The default is deliberately
+asymmetric: an unrecognised payload yields the 400, the overwhelmingly likelier cause, so an
+upgrade that moves the field degrades to the common answer rather than turning ordinary bad
+requests into 500s.
 
-The default is deliberate and asymmetric: an unrecognised payload yields the 400. The
-participant list is the overwhelmingly likelier cause, so an upgrade that moves the field
-degrades to the common answer rather than turning ordinary bad requests into 500s.
-
-`CreateMeetingHandler` also rejects a host who lists themselves as a participant. That rule
-cannot live in the DTO — the DTO never sees the host, who comes from the guard — which is what
-makes it a use-case invariant and the handler's to own.
+The handler also rejects a host who lists themselves as a participant. That rule cannot live
+in the DTO — the DTO never sees the host, who comes from the guard — which is what makes it a
+use-case invariant and the handler's to own.
 
 ### The module boundary — auth and user
 
@@ -186,288 +168,249 @@ Three messages are the entire interface:
 | `FindUserCredentialsByEmailQuery` | `email`                 | `UserCredentials \| null` |
 
 **`AuthModule` does not import `UserModule`, and that is deliberate.** `CqrsModule`'s
-`ExplorerService` scans every module in the container and registers all handlers into one set
-of buses, so naming a command or query class is enough to reach its handler wherever it lives.
-The buses are the decoupling. Importing the module as well would add a compile-time dependency
-that buys nothing and invites the next person to inject a provider straight across the boundary.
+`ExplorerService` registers every handler in the container into one set of buses, so naming a
+command or query class reaches its handler wherever it lives. The buses are the decoupling;
+importing the module as well would add a compile-time dependency that buys nothing and invites
+the next person to inject a provider straight across the boundary.
 
-Two rules keep the boundary honest, and neither is enforced by a type:
+Two rules keep it honest, and no type enforces either:
 
 - **A raw password never crosses it.** `CreateUserCommand` carries a hash, because argon2 and
-  the password policy are auth's. The user module could not tell a good hash from a bad one and
-  should not be handed the chance to try.
-- **`UserCredentials` is declared in its query file, never in `@repo/shared`.** That package is
-  imported by the browser bundle. A password hash must not appear in a type the client can
-  name, which is also why it is a separate query from `FindUserByIdQuery` rather than a flag on
-  it: the only caller that asks for a secret is the login path, and everyone else gets a shape
-  that cannot leak one. Both user-returning paths map through `toPublicUser`, so the omission
-  of `passwordHash` is a property of the module rather than of each call site.
+  the password policy are auth's. The user module could not tell a good hash from a bad one.
+- **`UserCredentials` is declared in its query file, never in `@repo/shared`**, which the
+  browser bundle imports. That is also why it is a separate query from `FindUserByIdQuery`
+  rather than a flag on it: only the login path asks for a secret, and everyone else gets a
+  shape that cannot leak one. Both user-returning paths map through `toPublicUser`, so
+  omitting `passwordHash` is a property of the module rather than of each call site.
 
-`GET /me` still reaches no handler of its own: `JwtAuthGuard` dispatches `FindUserByIdQuery`
-while authenticating, `@CurrentUser` returns what it attached, and the controller does no
-second read. That is one query per authenticated request, in the guard, where the lookup
-already was.
+`GET /me` reaches no handler of its own: `JwtAuthGuard` dispatches `FindUserByIdQuery` while
+authenticating and `@CurrentUser` returns what it attached — one query per authenticated
+request, in the guard, where the lookup already was.
 
 ### The display name — registration derives it, the user owns it
 
 `PATCH /api/users/me` (`UserController` → `UpdateDisplayNameCommand`) is the user module's
-first route. `UserModule` imports `AuthModule` for `JwtAuthGuard` exactly as the meetings
-modules do; the dependency runs that way and never the other, so the bus-only boundary above
-is untouched.
-
-Two rules it enforces, neither of which a type carries:
+first route. `UserModule` imports `AuthModule` for `JwtAuthGuard` as the meetings modules do;
+the dependency runs that way and never the other, so the bus-only boundary is untouched.
 
 - **Registration derives the initial name and nothing else overwrites it.**
   `displayNameFromEmail` runs in `CreateUserHandler` and is the only place that ever writes a
-  name the user did not choose. A future profile sync or login path that "refreshes" the name
-  from the address would silently undo a name someone set.
-- **The endpoint acts on the caller and on nobody else.** `me` is a literal segment, not a
-  parameter, so there is no route here that takes a user id — the PRD's rule is a property of
-  the routing table rather than a check each new handler must remember. An `id` in the body is
-  a 400 from `forbidNonWhitelisted`, not a field quietly dropped. `test/users-me.e2e-spec.ts`
-  asserts both, including that `PATCH /api/users/<id>` is a 404 rather than a refusal.
+  name the user did not choose. A profile sync that "refreshes" it from the address would
+  silently undo a name someone set.
+- **The endpoint acts on the caller and nobody else.** `me` is a literal segment, not a
+  parameter, so the rule is a property of the routing table rather than a check each new
+  handler must remember. An `id` in the body is a 400 from `forbidNonWhitelisted`, not a field
+  quietly dropped; `test/users-me.e2e-spec.ts` asserts both, including that
+  `PATCH /api/users/<id>` is a 404.
 
 The trim-and-bounds rule is stated twice, in `UpdateDisplayNameDto` and in the handler, and
 that is not redundancy to remove: the DTO is the HTTP layer's rejection, carrying the one
 message `@repo/shared` exports so a field that turns red in the browser says exactly what the
-server would, while the handler is the use case's own invariant, because a command has to be
-safe whatever dispatched it. Both trim **before** measuring, so whitespace-only fails the
-minimum without needing a rule of its own and a padded name is not rejected for characters
-that were never going to be stored.
-
-**A bound pair sharing one message is `@Length`, not `@MinLength` plus `@MaxLength`.** Both of
-the pair fail on a value that is not a string at all, so a non-string body answered with the
-same sentence printed twice — one custom message, one decorator.
+server would, while the handler is the use case's own invariant, because **a command has to be
+safe whatever dispatched it**. Both trim _before_ measuring, so whitespace-only fails the
+minimum without a rule of its own. A bound pair sharing one message is `@Length`, not
+`@MinLength` plus `@MaxLength` — both of the pair fail on a non-string, printing the same
+sentence twice.
 
 ### The second boundary — meetings and meeting-files
 
-`FindVisibleMeetingQuery(userId, meetingId) → Meeting | null` is the fourth message on the
-buses and the first read to cross out of `meetings`. Every file route dispatches it before
-touching a file, so a stranger, a guessed id, and a missing meeting all get the same 404 from
-the same place. `MeetingFilesModule` does not import `MeetingsModule` — the buses are the
-boundary, exactly as with auth and user — and `MeetingsController.findOne` still reads from
-`MeetingsService`, not from the handler: the in-module read stays on the service, and two
-near-identical reads is the accepted price of the rule.
+`FindVisibleMeetingQuery(userId, meetingId) → Meeting | null` is the first read to cross out of
+`meetings`. Every file route dispatches it before touching a file, so a stranger, a guessed id,
+and a missing meeting all get the same 404 from the same place. `MeetingFilesModule` does not
+import `MeetingsModule`, and `MeetingsController.findOne` still reads from `MeetingsService`:
+the in-module read stays on the service, and two near-identical reads is the accepted price.
 
 ### What is deliberately absent
 
-No `EventBus`, no events, no sagas anywhere yet. Commands and queries are the parts that pay
-for themselves; the rest of the CQRS vocabulary is available and unused until something needs
-it. Adding an event with no subscriber, or a saga with one step, buys a file to read and
-nothing else.
-
-The `QueryBus` arrived with the auth/user split and exists for exactly one reason: a read that
-crosses a module boundary. It is not there to make reads symmetrical with writes — see
-`MeetingsService`, which still serves two lookups from a plain service inside its own module,
-and should stay that way.
-
-`CqrsModule` is imported per feature module rather than registered globally. That keeps a
-module's dependencies readable from its own `imports` array, and it is one line — the cost
-of a global registration is that no module states what it actually needs. Note the asymmetry
-this creates with the paragraph above: the buses behave globally at runtime while each module
-still declares them, which is what lets two modules share a bus without depending on each
-other.
+No events or sagas outside the one in-process `EventBus` the file worker publishes on (see
+below). Commands and queries are the parts that pay for themselves. The `QueryBus` exists for
+exactly one reason — a read that crosses a module boundary — and not to make reads symmetrical
+with writes. `CqrsModule` is imported per feature module rather than globally, so a module's
+dependencies stay readable from its own `imports` array; the buses still behave globally at
+runtime, which is what lets two modules share one without depending on each other.
 
 ## Meeting files (`src/modules/meeting-files`)
 
-What the code cannot say for itself. The PRD is `docs/specs/2026-09-19-meeting-file-upload-prd.md`;
-the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-phase-1.md`.
+What the code cannot say for itself. The PRD is `docs/specs/2026-09-19-meeting-file-upload-prd.md`
+and the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-phase-1.md`
+and `-phase-2.md`; read those for _what_ was decided, this for what a reader of the code would
+get wrong.
 
-- **Upload is bytes first, then one transaction.** Multer writes to `<MEETING_FILES_DIR>/tmp`
-  (on disk, never a 100 MB buffer); the handler sniffs, `fsync`s, and `rename`s the file into
-  `<meetingId>/<fileId>` (same filesystem, so atomic), and only then inserts — inside a
-  transaction that first takes `SELECT … FOR UPDATE` on the meeting row and counts. That lock
-  is what makes the 50-file cap safe under concurrent uploads; a read-then-write would let two
-  requests both pass the count. If the insert fails the object is removed, and the temp file
-  is removed on every exit that did not rename it. The record never points at bytes that are
-  not there, and bytes never outlive a failed record. **The interceptor resolves the meeting
-  before it reads the body.** Nest runs interceptors before pipes and the handler, so without
-  that check `MeetingFileUploadInterceptor` would write up to 100 MB to the temp directory for
-  a non-UUID id or a meeting the caller cannot see, then reject it; the 400 and the 404 go out
-  first instead. The handler checks visibility again — a command has to be safe whatever
-  dispatched it — and that second indexed read is the cost of not writing 100 MB.
+**Upload and storage**
+
+- **Bytes first, then one transaction.** Multer writes to `<MEETING_FILES_DIR>/tmp` (never a
+  100 MB buffer); the handler sniffs, `fsync`s, and `rename`s into `<meetingId>/<fileId>` (same
+  filesystem, so atomic), and only then inserts — inside a transaction that first takes
+  `SELECT … FOR UPDATE` on the meeting row and counts. That lock is what makes the 50-file cap
+  safe under concurrency; a read-then-write would let two requests both pass. A failed insert
+  removes the object, and the temp file is removed on every exit that did not rename it.
+- **The interceptor resolves the meeting before it reads the body.** Nest runs interceptors
+  before pipes and the handler, so without that check `MeetingFileUploadInterceptor` would
+  write up to 100 MB for a non-UUID id or an invisible meeting and then reject it. The handler
+  checks visibility again — a command has to be safe whatever dispatched it — and that second
+  indexed read is the cost of not writing 100 MB.
 - **The type is sniffed from the bytes, never the client's header.** `file-type` is pinned to
   **16.5.4** because 17+ is ESM-only and this is a CJS build; do not "upgrade" it. Text has no
   magic bytes, so an undetected file that decodes as UTF-8 with no NUL is typed by extension —
-  but only among `.txt`/`.md`/`.csv`. An extension never elevates a file to a binary type,
-  which is why `page.html` renamed `page.pdf` is a 415 and `page.html` renamed `notes.txt` is
-  stored as `text/plain` and served as an attachment with `nosniff`.
+  among `.txt`/`.md`/`.csv` only. An extension never elevates a file to a binary type, so
+  `page.html` renamed `page.pdf` is a 415 while renamed `notes.txt` it is stored as
+  `text/plain` and served as an attachment with `nosniff`.
 - **Multer needs two options that look optional.** `defParamCharset: 'utf8'` — busboy decodes
-  filenames as latin1 by default and `отчёт.pdf` arrives as mojibake without it — and
-  `preservePath: true`, because otherwise multer takes the basename and a path separator never
-  reaches the name rule that exists to reject it.
-- **`claimNext` is the one raw SQL statement in the module, and it has to be.** A worker claims
-  a row with a single `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1)`, setting
-  `status = processing`, `leased_until = now() + lease`, `attempts + 1`, in one statement. Two
-  replicas cannot claim the same row, and a worker that dies leaves a row whose lease expires
-  and is reclaimed. Prisma's query builder cannot express `SKIP LOCKED`. Every other status
-  change goes through `MeetingFileRepository.transition(id, from, to, patch, lease?)` — a
-  conditional `updateMany` on the expected `from`, and for the worker also on the
-  `leased_until` its claim was given, because a reclaim after expiry keeps the status at
-  `processing` and status alone cannot tell the current holder from the one it replaced. A
-  caller that gets `false` back has lost a race (a delete mid-run, an expired lease another
-  worker took) and discards its result rather than overwriting — including removing the
-  thumbnail it wrote, which nothing else will ever find.
-- **`purgedAt` is the purge marker the PRD's schema lacked.** Delete is soft; the worker
-  claims `deleted` rows that are not yet purged, removes the object, the thumbnail and the
-  transcript, and sets `purged_at`. Without the column, "deleted rows still holding bytes" would be unknowable and
-  a crash mid-`unlink` unrecoverable. The thumbnail is removed by the key `thumbnailKeyOf`
-  derives, not the one on the row: a file deleted while processing is purged before the row
-  has learned its key, and the thumbnail written afterwards would otherwise be orphaned.
-  `attempts` counts claims, not failures; a row claimed a fourth time is failed unrun, and a
-  purge claimed a fourth time is marked purged unrun with its keys at error level in the log,
-  so an object the process cannot unlink is not reclaimed every lease for ever.
-- **A chunked upload is a row in its own table, `meeting_file_uploads`, and not a `MeetingFile`.**
-  That is the PRD's "nothing is listed until the bytes are complete", enforced structurally:
-  while the chunks are arriving there is no file row to list, download, or count against the
-  meeting's 50-file cap, so no route needs a rule excluding one. Its chunks live at
-  `uploads/<uploadId>/<index>` under `MEETING_FILES_DIR`. The row carries `attempts` and
-  `leased_until` for the same reason `meeting_files` does — the worker removes an expired
-  session's chunk tree under a lease, so a crash mid-removal is retried and a removal that
-  keeps throwing is eventually given up on rather than reclaimed for ever. `expires_at` is
-  the whole lifecycle: aborting a session sets it to `now()`, so abort and expiry are one
-  path in the worker and the row needs no status column.
-- **Completing a session claims it first, and expires it the moment the file exists.**
-  `CompleteUploadHandler` takes the row's `leased_until` in one conditional statement
-  (`claimForCompletion`) before it reads a chunk, so of two completions racing for one
-  session — a client whose connection dropped mid-completion and retried, as it is told it
-  may — exactly one assembles and the other is a 409 `The upload is already being completed`.
-  The lease is the completion's own five minutes, not the worker's, because it has to outlast
-  a gigabyte copy on a slow disk. A failure before the file exists releases it, so the retry
-  needs no waiting; once `UploadMeetingFileCommand` has answered, `expires_at` is set to
-  `now()` **before** the chunk tree is removed, so a retry from then on is a 404 and never a
-  second file. Assembly writes to `tmp/assemble-<uuid>`, never `tmp/<uploadId>` — two
-  completions must not write into or remove one another's file, whatever the lease is doing.
-- **Three things about the chunked routes are not visible in the controller.** The chunk body
-  is parsed by a raw middleware declared in `MeetingFilesModule.configure` — which is why
-  `express` is a direct dependency of this package and not only a transitive one through
-  `@nestjs/platform-express`: a value imported from it must resolve at runtime, and pnpm's
-  strict layout means an undeclared one compiles and then fails at boot. It is scoped to
-  `MeetingFileUploadsController` and to `PUT` — scoped to the controller rather than a path
-  string so it cannot drift from the route or miss the global `api` prefix, and to `PUT` so the
-  sibling `POST` keeps the global JSON parser. Its limit is one chunk, which is what rejects an
-  oversized body before it is buffered. `MeetingFileUploadsController` is listed **before**
-  `MeetingFilesController`, so `files/uploads/…` is matched as a session and never as a file id
-  by the routes one segment shorter. And a session is private to the person who opened it: the
-  host may delete anyone's file but has no business resuming anyone's upload, so
-  `requireOwnedUpload` matches on `uploaderId` and answers the same 404 for expired, purged,
-  another meeting's, and another user's.
-- **A chunk's length is derived from the session, never believed from the request.** Every
-  chunk but the last must be exactly `chunk_size`; the last is the remainder. That is what
-  makes a truncated chunk a 400 instead of a hole in the assembled file that only the checksum
-  would catch — and it is why the client never chooses the chunk size.
+  filenames as latin1 and `отчёт.pdf` arrives as mojibake without it — and `preservePath: true`,
+  because otherwise multer takes the basename and a path separator never reaches the name rule
+  that exists to reject it.
+- **Downloads declare the object's real length.** `Content-Length` is the `stat` size, not the
+  record's; they differ only for a truncated object, which is already `failed` with a reason,
+  and the record's length would turn that download into an aborted transfer instead of the
+  bytes that exist. The `stat` is also the existence check.
+- **Backups of `MEETING_FILES_DIR` are operational.** The database has the records, the
+  directory has the bytes, and nothing here copies either anywhere.
+
+**The worker's claim protocol**
+
+- **`claimNext` is the one raw SQL statement in the module, and it has to be.** A single
+  `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1)` sets `status = processing`,
+  `leased_until = now() + lease`, `attempts + 1`. Two replicas cannot claim one row, and a
+  worker that dies leaves a row whose lease expires. Prisma cannot express `SKIP LOCKED`.
+- **Every other status change goes through `MeetingFileRepository.transition`**
+  (`id, from, to, patch, lease?`) — a conditional `updateMany` on the expected `from`, and
+  for the worker also on the `leased_until` its claim was given, because a reclaim keeps the
+  status at `processing` and status alone cannot tell the current holder from the one it
+  replaced. A caller that gets `false` has lost a race and discards its result rather than
+  overwriting — including removing the thumbnail it wrote, which nothing else would find.
+- **A slow step keeps its lease with a heartbeat.** Transcribing an hour of audio outlasts the
+  60 second lease, so the worker renews `leased_until` every `lease / 3` seconds through
+  `renewLease`, **the module's second raw statement**, which returns the lease the row now
+  holds. That return value is why it is raw: the final `transition` is conditional on the value
+  the _last renewal_ set, not the one the claim did. A renewal updating zero rows means the row
+  is no longer ours — the heartbeat reports `null`, both conditional updates miss on purpose,
+  and the patch and its bytes are discarded. Renewals never overlap and `stop()` waits for the
+  one in flight, since each is conditional on the lease the previous one set.
+- **`attempts` counts claims, not failures.** A row claimed a fourth time is failed unrun; a
+  purge claimed a fourth time is marked purged unrun with its keys logged at error level, so an
+  object the process cannot unlink is not reclaimed every lease for ever.
 - **The worker claims two kinds of row, files first.** An expired or aborted session is looked
-  for only when no file is claimable, because a file someone is waiting on outranks a chunk
-  tree nobody will read again. `claimExpired` is the sessions' `claimNext`: the same
-  `FOR UPDATE SKIP LOCKED` under the same lease, so two replicas cannot claim one session and
-  a worker that dies mid-removal leaves a row another reclaims. The tree goes first and
-  `purged_at` second, so a crash between them is retried rather than forgotten.
-- **One publisher per write, and never before it commits.** Every status change is announced
-  on the in-process `EventBus` as a `MeetingFileChangedEvent(meetingId, file)`: by the worker
-  on the `true` branch of each conditional transition and after `markPurged` reports its row,
-  and by the upload, delete, and retry handlers after theirs. A transition that lost its race
-  changed nothing, so it announces nothing — publishing there would tell a watching page the
-  opposite of what the row says. The chunked path needs no publisher of its own because
-  `CompleteUploadHandler` ends in `UploadMeetingFileCommand`. The event carries the whole
-  `MeetingFile`, not a diff: the contract has no version field, so a subscriber replaces the
-  row by id, and a missed event is repaired by the next full list.
-- **Fan-out is in-process, and that fixes a single API instance.** `MeetingFileEventsService`
-  subscribes to that bus once per process and keeps a `Subject` per meeting someone is
-  watching; `GET :id/files/events` is a Nest `@Sse` route that returns
-  `stream(meetingId)`, merged with a heartbeat and ended by
-  `MEETING_FILES_STREAM_TTL_SECONDS`. A second replica would have its own bus and its own
-  subscribers, so a change made on replica A would never reach a stream held open by replica
-  B — **the change to make if a second replica appears is PostgreSQL `LISTEN/NOTIFY` in
-  place of that one subscription**, and nothing above it moves. The heartbeat
-  is `event: ping` with no data rather than the `: ping` comment the phase plan named, because
-  Nest's SSE writer only produces field lines from a `MessageEvent` — an event with an empty
-  data buffer is the same no-op for `EventSource` and the same bytes for a proxy. The TTL is
-  read per stream rather than in the constructor for the same reason `TranscribeStep` reads
-  its flag per run: so the e2e suite can shorten it with `ConfigService.set`.
-- **Two things about the stream route are not visible next to it, and both are about Nest's
-  own timing.** Visibility is a **guard** there (`VisibleMeetingGuard`) and an awaited call
-  inside the handler on every other route: Nest commits an SSE response's headers one
-  macrotask after it subscribes, so a query awaited in the handler loses the race — the 200
-  and `content-type: text/event-stream` are already sent and the `NotFoundException` becomes
-  an `event: error` on an open stream instead of a status code. A guard runs before that
-  machinery. (A malformed id is left to `ParseUUIDPipe`, whose throw is synchronous and so
-  does not race; the guard returns `true` for one.) And the service ends its streams in
-  **`beforeApplicationShutdown`**, not `onApplicationShutdown`: Nest closes the HTTP server
-  between those two hooks, and `server.close()` waits for connections still in flight, so a
-  stream ended in the later hook is ended after the close it is blocking — SIGTERM would
-  hang, and `app.close()` would never resolve.
-- **The worker is in-process, behind `MEETING_FILES_WORKER_ENABLED` (default on).** `pnpm dev`
-  runs one API process and a second entry point would be a second thing to start everywhere,
-  for two steps that take milliseconds. Every replica polls when it is on; switch it off per
-  replica if that matters. **`test/setup-env.ts` turns it off**, and the API e2e suite drives
-  it through `drain()` instead — that is what makes "the row is now ready" an assertion rather
-  than a race. `drain()` is reached under the string token `MEETING_FILE_WORKER`, so the spec
-  compiles (and fails) before the worker exists.
+  for only when no file is claimable, because a file someone is waiting on outranks a chunk tree
+  nobody will read again. `claimExpired` is the sessions' `claimNext`, under the same lease.
+- **Shutdown aborts a step, and an aborted step is released, not failed.**
+  `onApplicationShutdown` aborts the `signal` every step gets before waiting for the tick —
+  otherwise a deploy would wait on a third party for up to `TRANSCRIPTION_TIMEOUT_SECONDS` and
+  end in a SIGKILL and a lapsed lease anyway. A throw after that abort is not the file's fault:
+  the worker takes `processing → uploaded`, removes what earlier steps wrote, and leaves the row
+  for the next claim. A step that waits on anything outside the process must honour the signal.
+- **The worker is in-process, behind `MEETING_FILES_WORKER_ENABLED` (default on).** A second
+  entry point would be a second thing to start everywhere for two steps that take milliseconds.
+  Every replica polls when it is on. **`test/setup-env.ts` turns it off** and the API e2e suite
+  drives it through `drain()` instead, which is what makes "the row is now ready" an assertion
+  rather than a race; `drain()` is reached under the string token `MEETING_FILE_WORKER`, so a
+  spec compiles and fails before the worker exists.
 - **Failures store copy, never causes.** Only a `StepError`'s `userMessage` reaches
   `failureReason`; anything else stores `Processing failed. You can still download the file.`
   and logs the real error with its stack. Every transition logs file id, meeting id, from, to,
   and duration.
-- **Retry is the one caller of `failed → uploaded`.** `POST :fileId/retry`
-  (`RetryMeetingFileHandler`) is a state transition, not a re-upload: a conditional
-  `transition(id, 'failed', 'uploaded', …)` that resets `attempts` to 0 and clears
-  `failureReason` and `processedAt`, after which the worker claims the row like any other
-  `uploaded` file. Nothing re-runs the pipeline by hand. Zero rows changed means the file is
-  no longer `failed` — the worker or another retry moved it — and that is the 409; who may
-  retry is the uploader or the host, the delete rule, with the same 404 for everyone else.
-  `attempts` going back to 0 is deliberate: a retry is a fresh chance, not a fourth attempt
-  against the cap of three.
-- **Transcription is one more `PIPELINE` entry, and that was the point of the list.** Adding
-  `TranscribeStep` changed no status, no route, and nothing in the worker except the
-  heartbeat and the shutdown abort below. It is behind `MEETING_FILES_TRANSCRIPTION_ENABLED`,
-  **off by default**, and turning it on is a restart like any other environment change:
-  `ConfigService` answers with the validated boot-time value whenever the step asks. (The step
-  asks when it runs rather than once in its constructor only so the e2e suite can flip the
-  flag with `ConfigService.set` between tests.) `TRANSCRIPTION_API_URL` is validated at boot
-  when the flag is on, so a process cannot start in a state where every recording would
-  fail. A file the step does not apply to — a PDF, or anything
-  uploaded while the flag was off — is **skipped, not failed**: it reaches `ready` with no
-  transcript and no reason. Turning the flag on later does not reprocess those files; retry
-  does, one file at a time.
+
+**Delete, retry, and the purge marker**
+
+- **`purgedAt` is the purge marker the PRD's schema lacked.** Delete is soft; the worker claims
+  `deleted` rows not yet purged, removes the object, thumbnail and transcript, and sets
+  `purged_at`. Without the column, "deleted rows still holding bytes" would be unknowable and a
+  crash mid-`unlink` unrecoverable. The thumbnail is removed by the key `thumbnailKeyOf`
+  derives, not the one on the row: a file deleted while processing is purged before the row has
+  learned its key, and the thumbnail written afterwards would be orphaned.
+- **Retry is the one caller of `failed → uploaded`.** `POST :fileId/retry` is a state
+  transition, not a re-upload: a conditional `transition(id, 'failed', 'uploaded', …)` that
+  resets `attempts` to 0 and clears `failureReason` and `processedAt`, after which the worker
+  claims the row like any other. Zero rows changed means the file is no longer `failed` — that
+  is the 409. Who may retry is the uploader or the host, the delete rule, with the same 404 for
+  everyone else. `attempts` going back to 0 is deliberate: a retry is a fresh chance, not a
+  fourth attempt against the cap of three.
+
+**Chunked upload (phase 2)**
+
+- **A chunked upload is a row in its own table, `meeting_file_uploads`, not a `MeetingFile`.**
+  That is the PRD's "nothing is listed until the bytes are complete", enforced structurally:
+  while chunks arrive there is no file row to list, download, or count against the 50-file cap,
+  so no route needs a rule excluding one. Chunks live at `uploads/<uploadId>/<index>`. The row
+  carries `attempts` and `leased_until` for the same reason `meeting_files` does, and
+  `expires_at` is the whole lifecycle — aborting sets it to `now()`, so abort and expiry are one
+  path in the worker and the row needs no status column.
+- **Completing a session claims it first, and expires it the moment the file exists.**
+  `claimForCompletion` takes the row's `leased_until` in one conditional statement before a
+  chunk is read, so of two completions racing — a client whose connection dropped and retried,
+  as it is told it may — exactly one assembles and the other is a 409. The lease is the
+  completion's own five minutes, not the worker's, because it has to outlast a gigabyte copy on
+  a slow disk. A failure before the file exists releases it; once `UploadMeetingFileCommand` has
+  answered, `expires_at` is set to `now()` **before** the chunk tree is removed, so a retry from
+  then on is a 404 and never a second file. Assembly writes to `tmp/assemble-<uuid>`, never
+  `tmp/<uploadId>` — two completions must not write into or remove one another's file.
+- **A chunk's length is derived from the session, never believed from the request.** Every chunk
+  but the last must be exactly `chunk_size`, the last is the remainder. That is what makes a
+  truncated chunk a 400 instead of a hole only the checksum would catch, and why the client
+  never chooses the chunk size.
+- **Three things about the chunked routes are not visible in the controller.** The chunk body is
+  parsed by a raw middleware declared in `MeetingFilesModule.configure` — which is why `express`
+  is a direct dependency and not only a transitive one: pnpm's strict layout means an undeclared
+  import compiles and fails at boot. It is scoped to `MeetingFileUploadsController` (rather than
+  a path string, so it cannot drift from the route or miss the global prefix) and to `PUT` (so
+  the sibling `POST` keeps the global JSON parser), and its limit is one chunk, which rejects an
+  oversized body before it is buffered. `MeetingFileUploadsController` is listed **before**
+  `MeetingFilesController`, so `files/uploads/…` is never matched as a file id by the routes one
+  segment shorter. And a session is private to whoever opened it — the host may delete anyone's
+  file but has no business resuming anyone's upload — so `requireOwnedUpload` matches on
+  `uploaderId` and answers the same 404 for expired, purged, another meeting's, and another
+  user's.
+
+**Events and the SSE stream**
+
+- **One publisher per write, and never before it commits.** Every status change is announced on
+  the in-process `EventBus` as `MeetingFileChangedEvent(meetingId, file)`: by the worker on the
+  `true` branch of each conditional transition and after `markPurged`, and by the upload, delete,
+  and retry handlers after theirs. A transition that lost its race changed nothing, so it
+  announces nothing. The chunked path needs no publisher because `CompleteUploadHandler` ends in
+  `UploadMeetingFileCommand`. The event carries the whole `MeetingFile`, not a diff: the contract
+  has no version field, so a subscriber replaces the row by id and a missed event is repaired by
+  the next full list.
+- **Fan-out is in-process, and that fixes a single API instance.** `MeetingFileEventsService`
+  subscribes once per process and keeps a `Subject` per watched meeting; `GET :id/files/events`
+  is a `@Sse` route merging that with a heartbeat, ended by `MEETING_FILES_STREAM_TTL_SECONDS`.
+  A second replica would have its own bus, so a change on A would never reach a stream held on B
+  — **the change to make if a second replica appears is PostgreSQL `LISTEN/NOTIFY` in place of
+  that one subscription**, and nothing above it moves. The heartbeat is `event: ping` with no
+  data rather than a `: ping` comment because Nest's SSE writer only produces field lines from a
+  `MessageEvent`; it is the same no-op for `EventSource` and the same bytes for a proxy.
+- **Two things about the stream route are about Nest's own timing.** Visibility is a **guard**
+  there (`VisibleMeetingGuard`) and an awaited call inside the handler everywhere else: Nest
+  commits an SSE response's headers one macrotask after it subscribes, so a query awaited in the
+  handler loses the race — the 200 and `content-type: text/event-stream` are already sent and
+  the `NotFoundException` becomes an `event: error` on an open stream. (A malformed id is left
+  to `ParseUUIDPipe`, whose throw is synchronous and does not race.) And the service ends its
+  streams in **`beforeApplicationShutdown`**, not `onApplicationShutdown`: Nest closes the HTTP
+  server between those hooks and `server.close()` waits for connections in flight, so a stream
+  ended in the later hook is ended after the close it is blocking — SIGTERM would hang.
+
+**Transcription**
+
+- **It is one more `PIPELINE` entry, and that was the point of the list.** Adding
+  `TranscribeStep` changed no status, no route, and nothing in the worker except the heartbeat
+  and the shutdown abort. It is behind `MEETING_FILES_TRANSCRIPTION_ENABLED`, **off by default**,
+  and turning it on is a restart like any other environment change. A file the step does not
+  apply to — a PDF, or anything uploaded while the flag was off — is **skipped, not failed**: it
+  reaches `ready` with no transcript and no reason, and turning the flag on later does not
+  reprocess it. Retry does, one file at a time. `TRANSCRIPTION_API_URL` is validated at boot when
+  the flag is on, so a process cannot start where every recording would fail.
 - **The provider is a port with one adapter.** `TranscriptionProvider` is
   `transcribe(stream, contentType, signal)` and nothing else, bound under the string token
   `TRANSCRIPTION_PROVIDER` so a spec can substitute a fake without importing the module. The
-  adapter posts an OpenAI-compatible `audio/transcriptions` request — served by hosted
-  providers and self-hosted Whisper servers alike, which is what makes the vendor
-  configuration rather than code. The object is **streamed** into the multipart body, never
-  buffered, so a gigabyte of video costs a chunk of memory; that is why it is `fetch` with
-  `duplex: 'half'` and not a `FormData` of `Blob`s. The endpoint's filename is derived from
-  the sniffed type (`recording.mp3`), never the user's name: an OpenAI-compatible endpoint
-  routes on that extension, and the user's text has no business on a third party's wire.
-  Every failure — non-2xx, timeout, dropped connection — is one `StepError` with one message;
-  the vendor's own words stay in the log.
-- **A slow step keeps its lease with a heartbeat.** Transcribing an hour of audio outlasts the
-  60 second lease, and a lapsed lease is reclaimed by another worker — after which the first
-  one's result must be thrown away. So while the steps run, the worker renews `leased_until`
-  every `lease / 3` seconds through `MeetingFileRepository.renewLease`, **the module's second
-  raw statement**, which returns the lease the row now holds. That return value is why it is
-  raw: the final `transition` is conditional on `leased_until`, so it has to match the value
-  the _last renewal_ set, not the one the claim did. A renewal that updates zero rows means
-  the row is no longer ours; the heartbeat then reports `null`, both conditional updates miss
-  on purpose, and the patch — thumbnail and transcript alike — is discarded and its bytes
-  removed. Renewals never overlap, and `stop()` waits for the one in flight: each is
-  conditional on the lease the previous one set, so a stale value in either place would make
-  the worker discard its own result as a lost race.
-- **Shutdown aborts a step, and an aborted step is released, not failed.** A step can now
-  take minutes, so `onApplicationShutdown` aborts the `signal` every step gets in its
-  `StepContext` before waiting for the tick — otherwise a deploy would wait on a third party
-  for up to `TRANSCRIPTION_TIMEOUT_SECONDS`, outlive any orchestrator's grace period, and end
-  in a SIGKILL and a lapsed lease anyway. A throw after that abort is not the file's fault:
-  the worker takes `processing → uploaded` (the lease-expiry edge, early and on purpose),
-  removes whatever the earlier steps wrote, and leaves the row for the next claim. A step
-  that waits on anything outside the process must honour the signal; the two stateless steps
-  finish in milliseconds and ignore it.
-- **Downloads declare the object's real length.** `Content-Length` is the `stat` size, not the
-  record's; they differ only for a truncated object, which is already `failed` with a reason,
-  and declaring the record's length would turn that download into an aborted transfer instead
-  of the bytes that exist. The `stat` is also the existence check, so a missing object is an
-  ordinary 500 with an error body rather than headers with no body.
-- **Backups of `MEETING_FILES_DIR` are operational.** The database has the records; the
-  directory has the bytes; nothing here copies either anywhere.
+  adapter posts an OpenAI-compatible `audio/transcriptions` request — served by hosted providers
+  and self-hosted Whisper alike, which is what makes the vendor configuration rather than code.
+  The object is **streamed** into the multipart body, never buffered, so a gigabyte of video
+  costs a chunk of memory; that is why it is `fetch` with `duplex: 'half'` and not a `FormData`
+  of `Blob`s. The endpoint's filename is derived from the sniffed type (`recording.mp3`), never
+  the user's: the endpoint routes on that extension, and the user's text has no business on a
+  third party's wire. Every failure is one `StepError` with one message; the vendor's own words
+  stay in the log.
+- **Both the flag and the TTL are read per run, not in a constructor**, so the e2e suite can
+  change them with `ConfigService.set` between tests.
 
 ## Bootstrap behaviour (`src/configure-app.ts`)
 
@@ -478,9 +421,9 @@ that had quietly diverged. Only process-level concerns (`enableShutdownHooks`, `
 in `main.ts`.
 
 - **Global prefix `api`** — a controller at `@Controller('health')` serves `/api/health`.
-- **`ValidationPipe`** with `whitelist`, `forbidNonWhitelisted`, and `transform`. Request
-  bodies and queries should be class-validator DTO classes; unknown properties are rejected
-  rather than silently dropped.
+- **`ValidationPipe`** with `whitelist`, `forbidNonWhitelisted`, and `transform`. Bodies and
+  queries should be class-validator DTO classes; unknown properties are rejected rather than
+  silently dropped.
 - **Implicit conversion is deliberately off.** With it on, class-transformer coerces a value
   into whatever the DTO property is typed as, so `{"password": 12345678}` arrives as
   `"12345678"` and passes `@IsString()` — the API would accept credentials of any JSON type.
@@ -494,171 +437,110 @@ in `main.ts`.
 ## Environment
 
 Every variable the app cannot start without belongs in the `EnvironmentVariables` class in
-`src/config/env.validation.ts`. Validation runs at boot, so misconfiguration fails
-immediately instead of at the first request that needs it. Adding a variable means:
-the class, `.env.example`, and — if it affects local Docker — `docker-compose.yml`.
+`src/config/env.validation.ts`; validation runs at boot, so misconfiguration fails immediately
+instead of at the first request that needs it. Adding one means the class, `.env.example`, and
+— if it affects local Docker — `docker-compose.yml`.
 
-`ConfigModule` is global and reads `.env.local` then `.env`. Neither overrides a variable already
-in `process.env`, which is what lets the root `pnpm dev` decide `PORT` — it probes upward from the
-configured value for a free one and exports the result, so `main.ts` binds a port the web app has
-already been told about. Read
-[the root guide](../../CLAUDE.md#pnpm-dev-picks-the-ports-before-turborepo-starts) before
+`ConfigModule` is global and reads `.env.local` then `.env`. Neither overrides a variable
+already in `process.env`, which is what lets the root `pnpm dev` decide `PORT`. Read
+[the root guide](../../AGENTS.md#pnpm-dev-picks-the-ports-before-turborepo-starts) before
 "improving" that with an `EADDRINUSE` retry here: relocating the API on its own is what the
 arrangement exists to prevent, because the frontend's base URL was fixed at boot and cannot
 follow. Started on its own, this app takes its configured port and fails if it is busy.
 
 ## Prisma 7 specifics
 
-Prisma 7 differs from earlier versions in ways that are easy to get wrong:
-
 - The `datasource` block has **no `url`**. The CLI reads the connection string from
   `prisma.config.ts`; the runtime client receives it through the `PrismaPg` driver adapter
   constructed in `PrismaService`.
 - The client is generated into `src/generated/prisma` and imported from there — not from
-  `@prisma/client`. That directory is gitignored, so `prisma generate` must run before a
-  build or typecheck on a clean clone (the `build` script does this).
-- `prisma.config.ts` falls back to the docker-compose connection string so `generate`
-  works without a `.env`. Commands that actually reach the database still need a real
-  `DATABASE_URL`.
-- **`prisma generate` is not implied by editing the schema.** A model added without it
-  produces `Property 'user' does not exist on type 'PrismaService'`, which reads like a
-  broken import rather than a stale client.
+  `@prisma/client`. That directory is gitignored, so `prisma generate` must run before a build
+  or typecheck on a clean clone (the `build` script does this).
+- `prisma.config.ts` falls back to the docker-compose connection string so `generate` works
+  without a `.env`. Commands that reach the database still need a real `DATABASE_URL`.
+- **`prisma generate` is not implied by editing the schema.** A model added without it produces
+  `Property 'user' does not exist on type 'PrismaService'`, which reads like a broken import
+  rather than a stale client — as does a _whole spec suite_ failing to compile after a pull that
+  added one.
+- **Columns are snake_case, models are camelCase.** Every multi-word field carries a `@map` and
+  every model a `@@map` — `User.passwordHash` is `users.password_hash`. The e2e helpers read
+  those column names over raw SQL, so a mapping change breaks them loudly.
 
 Database work goes through `PrismaService` (injectable, owns connect/disconnect via
 `OnModuleInit`/`OnModuleDestroy`), exported by `PrismaModule`.
 
-**Columns are snake_case, models are camelCase.** Every field that is more than one word
-carries a `@map`, and every model a `@@map` — `User.passwordHash` is `users.password_hash`.
-The e2e helpers read those column names over raw SQL, so a mapping change breaks them
-loudly rather than silently.
-
 ## Lint overrides that matter here
 
-`.oxlintrc.json` relaxes two rules for `apps/api/**`:
-`typescript/consistent-type-imports` is off (Nest resolves constructor dependencies from
-emitted decorator metadata, which a type-only import erases), and
-`typescript/no-extraneous-class` allows decorated empty classes (Nest modules). Import
-injectable classes as values, not types.
+`.oxlintrc.json` relaxes two rules for `apps/api/**`: `typescript/consistent-type-imports` is
+off (Nest resolves constructor dependencies from emitted decorator metadata, which a type-only
+import erases), and `typescript/no-extraneous-class` allows decorated empty classes (Nest
+modules). Import injectable classes as values, not types.
 
 ## Tests
 
-Jest, configured inline in `package.json` with `rootDir: src` and `testRegex:
-.*\.spec\.ts$` — unit specs sit beside the code as `*.spec.ts`. E2E specs use
-`test/jest-e2e.json` and Supertest. Not Vitest — that's the web app.
+Jest, configured inline in `package.json` with `rootDir: src` and `testRegex: .*\.spec\.ts$` —
+unit specs sit beside the code. E2E specs use `test/jest-e2e.json` and Supertest. Not Vitest —
+that's the web app.
 
-**Neither `pnpm test` nor CI runs `test:e2e`, so a module whose only coverage is an e2e spec
-is uncovered as far as CI is concerned.** Every command handler, query handler, and read
-service gets a `*.spec.ts` beside it for that reason, not for a coverage number.
+**Neither `pnpm test` nor CI runs `test:e2e`** (it is not in `turbo.json`, and CI has no
+Postgres), **so a module whose only coverage is an e2e spec is uncovered as far as CI is
+concerned.** Every command handler, query handler, and read service gets a `*.spec.ts` beside
+it for that reason, not for a coverage number.
 
-E2E specs run against the **real database**, not a mock: `test/utils/create-test-app.ts`
-boots `AppModule` and `useApiSuite` truncates the tables it touches. `test:e2e` therefore
-needs `docker compose up -d postgres` and a migrated schema — without them every test fails
-in `beforeEach` with `relation "..." does not exist`, which reads like a broken suite and is
-really a missing database.
+E2E specs run against the **real database**: `test/utils/create-test-app.ts` boots `AppModule`
+and `useApiSuite` truncates the tables it touches, so `test:e2e` needs
+`docker compose up -d postgres` and a migrated schema — without them every test fails in
+`beforeEach` with `relation "..." does not exist`, which reads like a broken suite and is
+really a missing database. Cleanup runs at both ends for different reasons: `beforeEach` so no
+test inherits another's rows (which is also what makes a repeated run independent of the last),
+`afterAll` so the final test's fixtures are not stranded.
 
-> **`test:e2e` truncates `users` in whatever database `DATABASE_URL` points at.** By default
-> that is your development database. It is not currently a separate test database, so local
-> rows you care about will not survive a run. Point `DATABASE_URL` elsewhere if that matters.
+> **`test:e2e` truncates `users` in whatever database `DATABASE_URL` points at**, which by
+> default is your development database. Point it elsewhere if local rows matter to you.
 
-Cleanup runs at both ends, for different reasons. `beforeEach` truncates so no test inherits
-another's rows — that is also what makes a run independent of the previous one, so a repeated
-run cannot fail on a duplicate-email assertion. `afterAll` truncates so the last test's
-fixtures are not stranded in the database; without it, what remains depends on which spec
-happened to finish last.
+Six things about that setup are easy to get wrong:
 
-Four things about that setup are easy to get wrong:
-
-- **Environment must be set in `test/setup-env.ts`, not in a helper.**
-  `ConfigModule.forRoot()` is evaluated when `app.module.ts` is _imported_, and it prefers
-  `process.env` over the `.env` file. Anything assigned after that import — including at the
-  top of `createTestApp` — is too late, so the app signs tokens with the developer's local
-  `JWT_SECRET` while the specs verify with the test one. The failure looks like broken
-  signing code, not like configuration. Jest `setupFiles` runs early enough. The same file
-  points `MEETING_FILES_DIR` at a per-run temp directory (removed at exit, so the suite never
-  reads or deletes real uploads) and sets `MEETING_FILES_WORKER_ENABLED=false`. The
-  `start:e2e-web` script exists for the web app's browser suite and must stay in step with it:
-  the same temp-dir idea, but the worker **on** with a fast poll, because that suite watches
-  the Processing chip disappear.
-- **`truncateUsers` cascades to `meeting_files` and `meeting_file_uploads`** through
-  `meetings`, so the file specs need no cleanup of their own; `test/utils/meeting-files-table.ts`
-  and `test/utils/meeting-file-uploads-table.ts` read and seed those tables over raw SQL,
-  including the states (`leased_until`, `attempts`, `purged_at`, an `expires_at` in the past) a
-  route cannot produce on demand.
-- **`maxWorkers: 1` is load-bearing.** Jest parallelises across spec files by default, and
-  every auth spec truncates the same `users` table in the same database. Run them in
-  parallel and they delete each other's fixtures — a seeded `register` starts returning 409.
-  Remove this only alongside per-worker database isolation.
-- **`test/utils/` reads the database over raw SQL**, not through `prisma.user`, so the
-  specs pin table and column names directly (`users`, snake_case). A schema whose `@@map`
-  or `@map` disagrees breaks them; the file documents the mapping it expects.
-  `meetings-table.ts` is the same idea one table over, and it exists because a response is
-  not evidence about what was written: asserting through the API would reuse the same
-  `include` the implementation does, so a row the code never meant to write — the host
-  landing in `meeting_participants` — would be invisible. It has no truncation helper on
-  purpose; `truncateUsers` cascades, and a second one would be a way for the two to
-  disagree about what "clean" means.
-- **`test/utils/sse.ts` is the only client that can read a stream route**, and it uses Node's
-  `http` directly. Supertest buffers a whole response and resolves when the server ends it,
-  which for `files/events` is after the TTL — so ordering could not be asserted and every
-  test would cost the TTL. The helper binds the suite's server to an ephemeral port on first
-  use, parses events as they arrive, and hands them over one at a time; a non-200 is read to
-  completion and exposed as `body` so a refusal is asserted the way a supertest response is.
-- **`test/utils/jwt.ts` verifies tokens with `node:crypto` alone**, never the library the
-  API signs with, so a token only `@nestjs/jwt` can read fails the assertion. It is checked
-  against a signature produced by `openssl dgst -sha256 -hmac`. Do not "simplify" it into
-  `JwtService`.
-
-Neither `pnpm test` nor CI runs `test:e2e` — it is not in `turbo.json`, and CI has no
-Postgres service. Run it explicitly.
+- **Environment must be set in `test/setup-env.ts`, not in a helper.** `ConfigModule.forRoot()`
+  is evaluated when `app.module.ts` is _imported_ and prefers `process.env`, so anything
+  assigned after that import — including at the top of `createTestApp` — is too late, and the
+  app signs tokens with the developer's local `JWT_SECRET` while the specs verify with the test
+  one. The failure looks like broken signing code, not configuration. Jest `setupFiles` runs
+  early enough. The same file points `MEETING_FILES_DIR` at a per-run temp directory and sets
+  `MEETING_FILES_WORKER_ENABLED=false`.
+- **`start:e2e-web` must stay in step with it**: the same temp-dir idea, but the worker **on**
+  with a fast poll, because the web app's browser suite watches the Processing chip disappear.
+- **`maxWorkers: 1` is load-bearing.** Jest parallelises across spec files, and every auth spec
+  truncates the same `users` table in the same database; in parallel they delete each other's
+  fixtures and a seeded `register` starts returning 409. Remove this only alongside per-worker
+  database isolation.
+- **`test/utils/` reads the database over raw SQL**, not through `prisma.user`, so the specs pin
+  table and column names directly. A response is not evidence about what was written: asserting
+  through the API would reuse the same `include` the implementation does, so a row the code
+  never meant to write — the host landing in `meeting_participants` — would be invisible.
+  `truncateUsers` cascades to `meetings`, `meeting_files`, and `meeting_file_uploads`, which is
+  why the file specs need no cleanup of their own and why there is deliberately no second
+  truncation helper to disagree with it about what "clean" means. The files' helpers also seed
+  states a route cannot produce on demand (`leased_until`, `attempts`, `purged_at`, a past
+  `expires_at`).
+- **`test/utils/sse.ts` is the only client that can read a stream route**, over Node's `http`
+  directly. Supertest buffers a whole response and resolves when the server ends it, which for
+  `files/events` is after the TTL — ordering could not be asserted and every test would cost the
+  TTL. The helper parses events as they arrive and hands them over one at a time; a non-200 is
+  read to completion and exposed as `body`.
+- **`test/utils/jwt.ts` verifies tokens with `node:crypto` alone**, never the library the API
+  signs with, so a token only `@nestjs/jwt` can read fails the assertion. It is checked against
+  a signature produced by `openssl dgst -sha256 -hmac`. Do not "simplify" it into `JwtService`.
 
 ## Keeping this guide current
 
-Update it in the same commit as the change, in **both** files.
-[The root guide](../../CLAUDE.md#keeping-documentation-current) covers the general rules and
-what belongs at the workspace level; this guide owns what is specific to `@repo/api`.
-
-Revisit it when:
-
-- **Anything global in `src/configure-app.ts` changes** — the bootstrap section documents
-  what is applied once so controllers do not repeat it. A new global pipe, filter,
-  interceptor, or guard belongs there; so does narrowing the CORS policy, which is currently
-  flagged as local-development-only and should stop being flagged once it is fixed. Re-enabling
-  implicit conversion would invalidate the DTO type-rejection the auth specs assert.
-- **The Prisma setup changes** — how the connection string reaches the CLI versus the
-  runtime, and where the client is generated, are the parts people get wrong. Keep the
-  Prisma section accurate on upgrades, and re-check it whenever `prisma.config.ts`,
-  `schema.prisma`'s generator block, or `PrismaService` is touched.
-- **A new cross-cutting concern appears under `src/common/`** — say what it does and
-  whether it is registered globally or per-controller.
-- **The module conventions shift** — `src/modules/auth` is named here as the shape to copy,
-  `src/modules/meetings` as the command-plus-reads example, `src/modules/user` as the
-  bus-only boundary, and `src/modules/health` as the no-write minimum. If a better exemplar
-  replaces any of them, repoint the reference.
-- **Prisma's error `meta` shape changes on an upgrade** — the meetings section names the
-  exact path the constraint arrives at today and says it is not a contract. If a version
-  bump moves it, the handler keeps working but the explanation stops being true, and the
-  next person reads a path that no longer exists.
-- **Events or sagas arrive** — the CQRS section states plainly that neither exists. The first
-  one to land makes that false, and the reason it was worth adding is exactly the kind of thing
-  this guide should carry. The `QueryBus` is the precedent: it was documented with the boundary
-  that justified it, not merely announced.
-- **A module boundary moves** — the auth/user interface is three messages, and the guide names
-  them because a fourth is a decision worth seeing in review. The two unenforced rules (no raw
-  password crosses, `UserCredentials` stays out of `@repo/shared`) have no test behind them, so
-  the guide is the only thing carrying them.
-- **The auth contract changes** — the status codes, the single shared 401 message, and the
-  argon2id choice are each asserted by an e2e spec. Changing one means changing its test on
-  purpose, not discovering it failed.
-- **The `user` module grows a second route** — the display name section states that `me` is a
-  literal segment and that registration is the only thing that derives a name. A new route can
-  break either without failing to compile.
-- **The `apps/api/**` lint overrides in `.oxlintrc.json` change** — those are documented
-  with their reasons because they contradict the workspace defaults.
-- **The environment contract grows** — the process (class, `.env.example`, compose file) is
-  documented, not the variable list, so only a change to the process needs an edit here.
-
-Adding a feature module that follows the existing shape needs no update. Document the
-shape, not each module that uses it.
+Update it in the same commit as the change;
+[the root guide](../../AGENTS.md#keeping-documentation-current) covers the general rules, this
+one owns what is specific to `@repo/api`. The sections above each name what would invalidate
+them — a global added to `configure-app.ts`, a Prisma upgrade that moves the constraint `meta`
+shape, a fourth message on the auth/user boundary, a new exemplar module replacing one of the
+four, the first event or saga, a change to the `apps/api/**` lint overrides. Adding a feature
+module that follows the existing shape needs no update: document the shape, not each module
+that uses it.
 
 ## File upload
 
