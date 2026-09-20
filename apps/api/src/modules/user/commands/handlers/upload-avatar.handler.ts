@@ -37,7 +37,14 @@ import { UploadAvatarCommand } from '../upload-avatar.command';
  * **Bytes first, then the row.** The rendition is moved into place and only then is the
  * version bumped. The reverse order would announce a new version over the old image; this
  * order can at worst leave the new image under the old version, which the next upload
- * corrects — and the key does not change, so there is no orphan either way.
+ * corrects.
+ *
+ * The one cost of that order is worth stating plainly, because it is easy to assume away: on
+ * a **first** upload the bytes are written while `avatarKey` is still null, so a row update
+ * that fails leaves `avatars/<userId>.webp` on disk with nothing pointing at it, and there is
+ * no purger for this subtree. It is bounded — one file per account, overwritten by that
+ * account's next successful upload, because the key is derived from the id and never
+ * changes — but it is not nothing, and a reader should not be told otherwise.
  */
 @CommandHandler(UploadAvatarCommand)
 export class UploadAvatarHandler implements ICommandHandler<UploadAvatarCommand, User> {

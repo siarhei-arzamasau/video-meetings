@@ -25,10 +25,17 @@ import {
  * size rule would let it through.
  */
 export function validateAvatarFile(file: File): string | null {
-  // `file.type` is the browser's guess from the extension, so it is only ever a first pass —
-  // the server decides by decoding. Being stricter here than the server is the failure that
-  // matters, and this is not: every type the server takes is in the list.
-  if (!AVATAR_ALLOWED_TYPES.includes(file.type)) {
+  // An empty `file.type` is judged by nobody here, and that is the important half of this
+  // rule. The value is the browser's lookup of the extension in the operating system's MIME
+  // registry, and it comes back empty whenever that registry has no entry — routinely for
+  // `.webp` on older Windows installs, and for any extension the machine does not know. A
+  // check that refused it would refuse a perfectly good picture the API would have accepted,
+  // with no way for its owner to appeal; the server decodes the bytes and is the authority.
+  //
+  // A type the browser *did* name still has to be one the API takes: that is the round trip
+  // this function exists to save, and it cannot be stricter than the server because every
+  // type the server decodes is on the list.
+  if (file.type !== '' && !AVATAR_ALLOWED_TYPES.includes(file.type)) {
     return AVATAR_TYPE_MESSAGE;
   }
 

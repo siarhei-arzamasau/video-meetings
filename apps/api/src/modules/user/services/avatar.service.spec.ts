@@ -1,10 +1,10 @@
-import { NotFoundException } from '@nestjs/common';
+import { InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AVATAR_CONTENT_TYPE } from '@repo/shared';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AvatarStorage } from '../storage/avatar-storage';
-import { AvatarService } from './avatar.service';
+import { AVATAR_OBJECT_MISSING, AvatarService } from './avatar.service';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const KEY = `${USER_ID}.webp`;
@@ -60,6 +60,21 @@ describe('AvatarService', () => {
     // Deliberately the same answer: telling the two apart would make a future
     // `/users/:id/avatar` an oracle for which ids exist.
     await expect(service.openAvatar(USER_ID)).rejects.toThrow(NotFoundException);
+  });
+
+  it('names its own 500 when the row points at bytes that are gone', async () => {
+    // `MEETING_FILES_DIR` is gitignored, so the tree goes missing in ways the rows do not —
+    // a fresh clone, a container with no volume. Unwrapped, this answers with a raw ENOENT
+    // carrying a filesystem path, and logs a stack where a named cause belongs.
+    const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    stat.mockRejectedValue(enoent);
+
+    const error = await service.openAvatar(USER_ID).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(InternalServerErrorException);
+    expect((error as Error).message).toBe(AVATAR_OBJECT_MISSING);
+    // The original is kept as the cause, so the log still says which path was missing.
+    expect((error as Error).cause).toBe(enoent);
   });
 
   it('takes the id it is given rather than assuming the caller', async () => {

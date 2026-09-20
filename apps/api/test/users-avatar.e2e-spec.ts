@@ -379,10 +379,33 @@ describe(`${AVATAR_URL}`, () => {
 
   describe('without a usable token', () => {
     it.each([
+      [
+        'uploading',
+        () =>
+          suite
+            .postFileWithoutAuth(AVATAR_URL, Buffer.from('x'), {
+              fieldName: 'avatar',
+              filename: 'a.png',
+            })
+            .expect(401),
+      ],
+      ['fetching', () => suite.get(AVATAR_URL).expect(401)],
+      ['removing', () => suite.delete(AVATAR_URL).expect(401)],
+    ])('rejects %s with no Authorization header at all', async (_description, request) => {
+      // Genuinely absent, not an empty bearer: the two are different requests, and a guard
+      // that started telling them apart must not slip through a test that only sent one.
+      await registerUser(EMAIL);
+
+      await request();
+
+      expect(await storedKey(EMAIL)).toBeNull();
+    });
+
+    it.each([
       ['uploading', (token: string) => upload(token, Buffer.from('x'), 'a.png')],
       ['fetching', (token: string) => fetchAvatar(token)],
       ['removing', (token: string) => removeAvatar(token)],
-    ])('rejects %s with no Authorization header', async (_description, request) => {
+    ])('rejects %s with an empty bearer value', async (_description, request) => {
       await registerUser(EMAIL);
 
       await request('').expect(401);

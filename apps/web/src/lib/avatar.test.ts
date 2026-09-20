@@ -37,9 +37,25 @@ describe('validateAvatarFile', () => {
     ['a PDF', 'application/pdf'],
     ['a GIF', 'image/gif'],
     ['an SVG', 'image/svg+xml'],
-    ['a type the browser could not guess', ''],
   ])('refuses %s', (_description, type) => {
     expect(validateAvatarFile(fileOf(type, 1_024))).toBe(AVATAR_TYPE_MESSAGE);
+  });
+
+  it('lets a file through when the browser could not name its type', () => {
+    // `file.type` is empty whenever the machine's MIME registry has no entry for the
+    // extension — which happens for `.webp` on older Windows installs. Refusing it here would
+    // refuse a picture the API decodes happily, and its owner could not appeal. The server
+    // decides by decoding; this check only ever saves a round trip.
+    expect(validateAvatarFile(fileOf('', 1_024, 'ada.webp'))).toBeNull();
+  });
+
+  it('still applies the other rules to a file of unknown type', () => {
+    // Not judging the type is not the same as not judging the file: size and emptiness are
+    // things the browser can see for itself.
+    expect(validateAvatarFile(fileOf('', 0, 'ada.webp'))).toBe(AVATAR_EMPTY_MESSAGE);
+    expect(validateAvatarFile(fileOf('', MAX_AVATAR_SIZE_BYTES + 1, 'ada.webp'))).toBe(
+      AVATAR_SIZE_MESSAGE,
+    );
   });
 
   it('refuses an empty file with its own sentence', () => {
@@ -56,7 +72,7 @@ describe('validateAvatarFile', () => {
     );
   });
 
-  it('judges the type rather than the name', () => {
+  it('judges the type the browser reported rather than the name', () => {
     // The extension is not the check on either side: the browser reads `file.type` and the
     // server decodes the bytes.
     expect(validateAvatarFile(fileOf('application/pdf', 1_024, 'photo.png'))).toBe(

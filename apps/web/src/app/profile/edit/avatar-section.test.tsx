@@ -81,6 +81,24 @@ function renderSection(user: User = WITHOUT_AVATAR) {
 }
 
 describe('choosing a file', () => {
+  it('opens the file dialog from the visible button', async () => {
+    // The input is `aria-hidden` and out of the tab order, so this button is the only way a
+    // user reaches the dialog at all. Every other test here drives the input directly, which
+    // means nothing else would notice if the ref or the handler went away.
+    const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {});
+
+    try {
+      const form = renderSection();
+
+      await form.user.click(screen.getByRole('button', { name: 'Choose a picture' }));
+
+      expect(click).toHaveBeenCalledTimes(1);
+      expect(click.mock.instances[0]).toBe(form.input);
+    } finally {
+      click.mockRestore();
+    }
+  });
+
   it('previews it and offers to upload, without sending anything yet', async () => {
     const form = renderSection();
 

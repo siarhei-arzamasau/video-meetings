@@ -20,6 +20,18 @@ export interface ApiSuite {
     file: string | Buffer,
     options?: { fieldName?: string; filename?: string },
   ): request.Test;
+  /**
+   * The same multipart request with **no `Authorization` header at all**.
+   *
+   * Its own method rather than an empty token, because the two are different requests: a
+   * missing header and `Bearer ` reach the guard differently, and a spec that wants to pin
+   * the first cannot do it by passing `''` to `postFile`, which always sets the header.
+   */
+  postFileWithoutAuth(
+    url: string,
+    file: string | Buffer,
+    options?: { fieldName?: string; filename?: string },
+  ): request.Test;
   get(url: string): request.Test;
   delete(url: string): request.Test;
 }
@@ -74,6 +86,10 @@ export function useApiSuite(options: TestAppOptions = {}): ApiSuite {
       request(assigned(app, 'app').getHttpServer())
         .post(url)
         .set('Authorization', `Bearer ${token}`)
+        .attach(fieldName, file, filename === undefined ? undefined : { filename }),
+    postFileWithoutAuth: (url, file, { fieldName = 'file', filename } = {}) =>
+      request(assigned(app, 'app').getHttpServer())
+        .post(url)
         .attach(fieldName, file, filename === undefined ? undefined : { filename }),
     get: (url) => request(assigned(app, 'app').getHttpServer()).get(url),
     delete: (url) => request(assigned(app, 'app').getHttpServer()).delete(url),

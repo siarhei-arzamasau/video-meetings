@@ -1,12 +1,20 @@
 import type { ReadStream } from 'node:fs';
 
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { AVATAR_CONTENT_TYPE } from '@repo/shared';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { AvatarStorage } from '../storage/avatar-storage';
 
 export const AVATAR_NOT_FOUND = 'No avatar';
+
+/**
+ * The row says there is a picture and the filesystem disagrees. A 500 rather than a 404,
+ * because the two mean different things to an operator: a 404 is an account without an
+ * avatar, this is storage that has lost one it was told to keep. `MeetingFilesService` names
+ * the same condition for the same reason.
+ */
+export const AVATAR_OBJECT_MISSING = 'The avatar could not be read from storage';
 
 export interface OpenedAvatar {
   contentType: string;
@@ -46,12 +54,29 @@ export class AvatarService {
       throw new NotFoundException(AVATAR_NOT_FOUND);
     }
 
-    const { size } = await this.storage.stat(user.avatarKey);
+    const { size } = await this.statObject(user.avatarKey);
 
     return {
       contentType: AVATAR_CONTENT_TYPE,
       size,
       stream: this.storage.openRead(user.avatarKey),
     };
+  }
+
+  /**
+   * The object's size, or this module's own 500.
+   *
+   * `MEETING_FILES_DIR` is gitignored, so the storage tree goes missing in ways the rows do
+   * not: a fresh clone, a container started without a volume, a developer clearing it by
+   * hand. Without this, every read of an avatar whose bytes are gone answers with a raw
+   * `ENOENT` — an unlabelled 500 carrying a filesystem path, and a stack trace in the log
+   * where a named cause belongs. `MeetingFilesService.statObject` does exactly this.
+   */
+  private async statObject(key: string): Promise<{ size: number }> {
+    try {
+      return await this.storage.stat(key);
+    } catch (error) {
+      throw new InternalServerErrorException(AVATAR_OBJECT_MISSING, { cause: error });
+    }
   }
 }
