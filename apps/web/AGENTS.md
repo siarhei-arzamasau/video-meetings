@@ -98,6 +98,18 @@ aliases in sync if either changes.
   keep the reader's locale, because showing `7/30/2026` to someone who reads `30/07/2026` is a
   misread date rather than a cosmetic difference.
 
+- **A killed `next dev` can leave Turbopack's persistent cache corrupt, and the symptom looks
+  like a runaway machine, not a cache.** Turbopack keeps a dev cache in `.next/dev/cache`. When
+  a `next dev` is killed mid-write (a Playwright run interrupted, a panel closed, a hard reboot),
+  a later `next dev` still says `Ready`, still serves the routes whose cache entries survived —
+  and on a route whose entry did not, `next-server` dies silently, `next dev` restarts it, and
+  every restart spawns a fresh pool of PostCSS worker processes (`node .next/dev/build/<hash>.js
+<port>`) that the dead parent never reaps. Within minutes that is thousands of idle `node`
+  processes and a load average in the hundreds; the health-check URL (`/`) never answers, so
+  the browser suite times out waiting for the web server. Diagnosis: `curl` one route that
+  works and one that hangs. Cure: `pnpm --filter=@repo/web clean` (it is `rm -rf .next`) and
+  start again — the cache is rebuilt in seconds. Nothing in the app is at fault, and nothing in
+  the app can prevent it; do not go looking there first.
 - **An authenticated image needs an object URL.** The token lives in `localStorage`, so an
   `<img src="/api/…/thumbnail">` would arrive with no credentials and a 401. `FileRow` fetches
   the thumbnail with the bearer header, turns the blob into `URL.createObjectURL`, and revokes
@@ -258,7 +270,10 @@ is the stronger check on everything else.
 `playwright.config.ts` starts both servers itself — the API through the API's `start:e2e-web`
 script on **3101** (worker on, fast poll, temp storage) and this app on **3100** — with
 `reuseExistingServer` off, one worker, and no retries. It needs `docker compose up -d postgres`
-and a migrated schema, and `pnpm exec playwright install chromium` once. It is not in
+and a migrated schema, and `pnpm exec playwright install chromium` once. On a slow or loaded
+machine the two-minute wait for each server can be raised with `E2E_SERVER_TIMEOUT_MS`; a wait
+that times out even at several minutes is the corrupt-cache symptom described above, not a
+slow machine. It is not in
 `turbo.json` and not in CI for the same reason the API's `test:e2e` is not. Its
 `globalTeardown` truncates `users` through `pg`, so **it must never run alongside the API's
 e2e suite**: they share the database. A running `next dev` from this directory also blocks it,
