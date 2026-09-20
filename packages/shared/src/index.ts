@@ -4,6 +4,17 @@ export {
   MAX_DISPLAY_NAME_LENGTH,
   MIN_DISPLAY_NAME_LENGTH,
 } from './types/user';
+export {
+  AVATAR_ACCEPT,
+  AVATAR_ALLOWED_TYPES,
+  AVATAR_CONTENT_TYPE,
+  AVATAR_EMPTY_MESSAGE,
+  AVATAR_SIZE_MESSAGE,
+  AVATAR_SIZE_PIXELS,
+  AVATAR_TYPE_MESSAGE,
+  AVATAR_UNREADABLE_MESSAGE,
+  MAX_AVATAR_SIZE_BYTES,
+} from './types/avatar';
 export type { AuthResponse, ChangePasswordRequest, Credentials } from './types/auth';
 export {
   CURRENT_PASSWORD_MESSAGE,

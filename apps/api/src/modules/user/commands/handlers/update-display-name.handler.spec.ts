@@ -21,6 +21,8 @@ describe('UpdateDisplayNameHandler', () => {
         id: 'user-id',
         email: 'ada+test@example.com',
         displayName: data.displayName,
+        avatarKey: null,
+        avatarVersion: 0,
         createdAt: new Date('2026-07-30T12:00:00.000Z'),
         passwordHash: 'hashed-password',
       }),
@@ -52,6 +54,7 @@ describe('UpdateDisplayNameHandler', () => {
       id: 'user-id',
       email: 'ada+test@example.com',
       displayName: 'Ada Lovelace',
+      avatarVersion: 0,
       createdAt: '2026-07-30T12:00:00.000Z',
     });
     expect(user).not.toHaveProperty('passwordHash');

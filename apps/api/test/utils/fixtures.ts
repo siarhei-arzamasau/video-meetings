@@ -20,6 +20,9 @@ export const USERS_ME_URL = '/api/users/me';
 /** The caller's own credential. A literal path for the same reason `users/me` is one. */
 export const CHANGE_PASSWORD_URL = '/api/auth/password';
 
+/** The caller's own picture. `me` again, so no route here can be pointed at anyone else. */
+export const AVATAR_URL = '/api/users/me/avatar';
+
 export function meetingFilesUrl(meetingId: string): string {
   return `${MEETINGS_URL}/${meetingId}/files`;
 }
@@ -138,6 +141,18 @@ export const PASSWORD_UNCHANGED_MESSAGE =
 
 /** A second password for the rotation specs, distinct from `PASSWORD`. */
 export const NEW_PASSWORD = 'a-different-battery-43';
+
+/**
+ * The avatar contract from `@repo/shared`, restated for the reason everything else here is:
+ * relaxing a bound or rewording a message must fail a test rather than quietly pass one.
+ */
+export const MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024;
+export const AVATAR_SIZE_PIXELS = 256;
+export const AVATAR_CONTENT_TYPE = 'image/webp';
+export const AVATAR_SIZE_MESSAGE = 'Your picture must be 5 MB or smaller.';
+export const AVATAR_TYPE_MESSAGE = 'Your picture must be a PNG, JPEG, or WebP image.';
+export const AVATAR_EMPTY_MESSAGE = 'The file is empty.';
+export const AVATAR_UNREADABLE_MESSAGE = 'That image could not be read. Try a different file.';
 
 /** RFC 5321's maximum forward path. Anything longer must be a 400, not a 500. */
 export const MAX_EMAIL_LENGTH = 254;

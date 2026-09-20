@@ -72,6 +72,9 @@ describe(`PATCH ${USERS_ME_URL}`, () => {
       const response = await rename(token, { displayName: 'Ada Lovelace' }).expect(200);
 
       expect(Object.keys(response.body as object).toSorted()).toEqual([
+        // No `avatarPath`: this account has no picture, and its absence is how a client knows
+        // to draw initials. `avatarVersion` is always there, because 0 is a version.
+        'avatarVersion',
         'createdAt',
         'displayName',
         'email',

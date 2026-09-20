@@ -15,6 +15,10 @@ describe('CreateUserHandler', () => {
       id: 'user-id',
       email: 'ada+test@example.com',
       displayName: 'ada+test',
+      // A new account has no avatar. Stated rather than left off the mock: `toPublicUser`
+      // reads both columns, and a row missing them is not a row Prisma can return.
+      avatarKey: null,
+      avatarVersion: 0,
       createdAt: new Date('2026-07-30T12:00:00.000Z'),
       passwordHash: 'hashed-password',
     });
@@ -47,6 +51,7 @@ describe('CreateUserHandler', () => {
       id: 'user-id',
       email: 'ada+test@example.com',
       displayName: 'ada+test',
+      avatarVersion: 0,
       createdAt: '2026-07-30T12:00:00.000Z',
     });
     expect(user).not.toHaveProperty('passwordHash');

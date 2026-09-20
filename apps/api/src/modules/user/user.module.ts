@@ -2,17 +2,23 @@ import { Module } from '@nestjs/common';
 import { CqrsModule } from '@nestjs/cqrs';
 
 import { AuthModule } from '../auth/auth.module';
+import { DeleteAvatarHandler } from './commands/handlers/delete-avatar.handler';
 import { CreateUserHandler } from './commands/handlers/create-user.handler';
 import { UpdateDisplayNameHandler } from './commands/handlers/update-display-name.handler';
 import { UpdatePasswordHashHandler } from './commands/handlers/update-password-hash.handler';
+import { UploadAvatarHandler } from './commands/handlers/upload-avatar.handler';
 import { FindUserByIdHandler } from './queries/handlers/find-user-by-id.handler';
 import { FindUserCredentialsByEmailHandler } from './queries/handlers/find-user-credentials-by-email.handler';
 import { FindUserCredentialsByIdHandler } from './queries/handlers/find-user-credentials-by-id.handler';
+import { AvatarImage } from './services/avatar-image';
+import { AvatarService } from './services/avatar.service';
+import { AvatarStorage } from './storage/avatar-storage';
+import { AvatarUploadInterceptor } from './storage/avatar-upload.interceptor';
 import { UserController } from './user.controller';
 
 /**
- * Owns the user record: the insert, the lookups, the public shape, and the routes that change
- * a user's own profile. `GET /api/auth/me` stays in the auth module, served by what its guard
+ * Owns the user record: the insert, the lookups, the public shape, the avatar's bytes, and the
+ * routes that change a user's own profile. `GET /api/auth/me` stays in the auth module, served by what its guard
  * already loaded.
  *
  * Nothing is exported. The buses are the entire surface for other modules: a consumer names a
@@ -32,9 +38,18 @@ import { UserController } from './user.controller';
     CreateUserHandler,
     UpdateDisplayNameHandler,
     UpdatePasswordHashHandler,
+    UploadAvatarHandler,
+    DeleteAvatarHandler,
     FindUserByIdHandler,
     FindUserCredentialsByEmailHandler,
     FindUserCredentialsByIdHandler,
+    // Not handlers: the avatar's collaborators. `AvatarStorage` creates and probes its
+    // directory at boot, and `AvatarUploadInterceptor` is a provider rather than a decorator
+    // because it needs that storage injected.
+    AvatarStorage,
+    AvatarImage,
+    AvatarService,
+    AvatarUploadInterceptor,
   ],
 })
 export class UserModule {}
