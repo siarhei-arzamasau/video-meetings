@@ -64,6 +64,24 @@ aliases in sync if either changes.
   paint light-theme grey onto a dark page. Dark's own `--muted` is 7.72:1 and is left alone.
   Measure before changing either: the numbers above are from a real browser, and HeroUI
   bumping its palette is what would silently undo this.
+- **`globals.css` also gives dark-mode form fields their edge back, and without it there is
+  none.** HeroUI paints a field the same colour as the card in _both_ themes — white on white
+  in light, `oklch(21.03%)` on itself in dark — with `--field-border` transparent at zero
+  width throughout. Light mode separates the two with `--field-shadow`, a real drop shadow;
+  dark mode sets that to `0 0 0 0 transparent inset`, because a black shadow on a near-black
+  card shows nothing, and puts nothing in its place. The result is an input with no boundary
+  at all until it is focused, on every form in the app. The override is the dark-mode
+  equivalent of that drop shadow: a 1px **inset** hairline, so it costs no geometry and the
+  field is the same size in both themes, landing in the shadow slot after Tailwind's four so
+  `ring-*` and HeroUI's own `status-focused-field` keep theirs — which is what upstream's
+  "transparent shadow to allow ring utilities to work" is protecting. **The colour is measured,
+  not picked.** WCAG 1.4.11 wants 3:1 for whatever identifies a control, and nothing in the
+  dark palette reaches it against the card (`--border` is 1.21:1, `--segment` 1.89:1), so the
+  value is lighter than either: `oklch(52% …)` measures 3.19:1 at rest and on focus, 3.13:1 on
+  hover, and 3.65:1 for a field on the page rather than a card. One token, so every component
+  drawing `bg-field`+`shadow-field` inherits it — input, input group, textarea, select,
+  checkbox, radio, autocomplete, number field, search field, date input, OTP. Do not reach for
+  a per-form class instead.
 - **`src/app/providers.tsx`.** HeroUI v3 needs no provider of its own; this file exists for
   next-themes, which must set both `class` and `data-theme` because HeroUI reads the two
   together.
