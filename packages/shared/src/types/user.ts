@@ -35,3 +35,17 @@ export const MAX_DISPLAY_NAME_LENGTH = 80;
  * differently. Built from the bounds above so raising one cannot leave the copy stale.
  */
 export const DISPLAY_NAME_MESSAGE = `Your display name must be ${MIN_DISPLAY_NAME_LENGTH}–${MAX_DISPLAY_NAME_LENGTH} characters.`;
+
+/**
+ * Body of `PATCH /api/users/me`.
+ *
+ * The field name matches `User` for the same reason `CreateMeetingRequest`'s do: the request
+ * and the response describe one resource. There is no `id` — the endpoint acts on whoever the
+ * token names, and a caller that could address a user would be a caller that could address
+ * someone else's.
+ *
+ * The name is sent as typed; the API trims it and answers with the trimmed value.
+ */
+export interface UpdateDisplayNameRequest {
+  displayName: string;
+}

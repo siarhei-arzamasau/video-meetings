@@ -1,4 +1,4 @@
-export type { User } from './types/user';
+export type { UpdateDisplayNameRequest, User } from './types/user';
 export {
   DISPLAY_NAME_MESSAGE,
   MAX_DISPLAY_NAME_LENGTH,
