@@ -132,6 +132,22 @@ export function isProcessing(files: ReadonlyArray<Pick<MeetingFile, 'status'>>):
 }
 
 /**
+ * What a screen reader is told when the number of files still being processed changes.
+ *
+ * One phrase for the whole section, and a **contextual** one rather than a bare number:
+ * since the page follows its files over a stream, a row can settle — or arrive, or vanish —
+ * with no action from the reader, and the chip going is a change only a sighted one sees.
+ * A live region per row would be several of them competing to announce the same thing.
+ */
+export function processingAnnouncement(count: number): string {
+  if (count === 0) {
+    return 'All files have finished processing.';
+  }
+
+  return count === 1 ? '1 file is processing.' : `${String(count)} files are processing.`;
+}
+
+/**
  * The list after one change arrived from the event stream: the insert / replace / remove
  * rule, and the one place it is written down.
  *

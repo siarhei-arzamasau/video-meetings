@@ -137,7 +137,12 @@ aliases in sync if either changes.
   life. Nothing turns the stream back on: a page that has proved it cannot hold one is not
   improved by asking again, and a reload is the user's own retry. **The poll is still there
   because a stream is the first thing a corporate proxy or a captive portal breaks**, and
-  removing it would make those pages stop updating altogether.
+  removing it would make those pages stop updating altogether. **The section carries one
+  polite `role="status"` region** (`FilesSection`, visually hidden) announcing how many files
+  are processing and when none are: the list now changes with no action from the reader, and
+  the chip going is a change only a sighted one sees. One region for the section, not one per
+  row — several rows announcing the same transition is the anti-pattern — and it stays empty
+  on the first render, so nothing is read aloud for arriving on the page.
 - **Retry on a failed row is gated exactly like Delete.** `FileRow` takes one `canManage`
   flag — the uploader or the host — because the API applies one rule to both actions and two
   flags could only ever disagree with it. The retry itself needs no local state machine: the

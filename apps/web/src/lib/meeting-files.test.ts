@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import {
   acceptAttribute,
   applyFileEvent,
+  processingAnnouncement,
   formatFileSize,
   isChunkedUpload,
   isProcessing,
@@ -139,6 +140,17 @@ describe('isProcessing', () => {
   it('is false for ready and failed only, and for an empty list', () => {
     expect(isProcessing([file({ status: 'ready' }), file({ status: 'failed' })])).toBe(false);
     expect(isProcessing([])).toBe(false);
+  });
+});
+
+describe('processingAnnouncement', () => {
+  it('names the count, because a bare number announced on its own says nothing', () => {
+    expect(processingAnnouncement(1)).toBe('1 file is processing.');
+    expect(processingAnnouncement(3)).toBe('3 files are processing.');
+  });
+
+  it('says the work is over rather than announcing zero', () => {
+    expect(processingAnnouncement(0)).toBe('All files have finished processing.');
   });
 });
 
