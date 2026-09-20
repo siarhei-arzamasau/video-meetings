@@ -31,6 +31,13 @@ describe('initialsOf', () => {
     expect(initialsOf('𝐀da 𝐋ovelace')).toBe('𝐀𝐋');
   });
 
+  it('stays at two characters when uppercasing lengthens one', () => {
+    // `'ß'.toUpperCase()` is 'SS' and `'ﬁ'.toUpperCase()` is 'FI'. Uppercasing the joined pair
+    // would put four glyphs into a circle sized for two.
+    expect(initialsOf('ßeta ßoy')).toBe('SS');
+    expect(initialsOf('ﬁrst')).toBe('F');
+  });
+
   it('falls back to a question mark when there is nothing to take', () => {
     // The API will not store a blank name, so this is a defence rather than a case — but it
     // renders inside a circle that has to hold something.

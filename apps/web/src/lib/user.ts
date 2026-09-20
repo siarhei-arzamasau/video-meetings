@@ -23,13 +23,23 @@ export function initialsOf(displayName: string): string {
     return NO_INITIALS;
   }
 
-  const first = firstCharacterOf(words[0]);
-  const last = words.length > 1 ? firstCharacterOf(words[words.length - 1]) : '';
+  const first = initialOf(words[0]);
+  const last = words.length > 1 ? initialOf(words[words.length - 1]) : '';
 
-  return `${first}${last}`.toUpperCase();
+  return `${first}${last}`;
 }
 
-/** `noUncheckedIndexedAccess` is on, so the caller's indexing is `string | undefined` here. */
-function firstCharacterOf(word: string | undefined): string {
-  return Array.from(word ?? '')[0] ?? '';
+/**
+ * One uppercase character for a word, or nothing for no word.
+ *
+ * The uppercasing happens **here**, per character, rather than once over the joined pair,
+ * because it can lengthen: `'ß'.toUpperCase()` is `'SS'` and `'ﬁ'.toUpperCase()` is `'FI'`.
+ * Uppercasing the pair would put three or four glyphs into a circle sized for two.
+ *
+ * `noUncheckedIndexedAccess` is on, so the caller's indexing is `string | undefined` here.
+ */
+function initialOf(word: string | undefined): string {
+  const first = Array.from(word ?? '')[0];
+
+  return first === undefined ? '' : (Array.from(first.toUpperCase())[0] ?? '');
 }
