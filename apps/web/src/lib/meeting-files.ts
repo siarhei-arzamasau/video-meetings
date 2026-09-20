@@ -132,6 +132,34 @@ export function isProcessing(files: ReadonlyArray<Pick<MeetingFile, 'status'>>):
 }
 
 /**
+ * The list after one change arrived from the event stream: the insert / replace / remove
+ * rule, and the one place it is written down.
+ *
+ * `MeetingFile` has no version field, so there is nothing to compare an event against — an
+ * event for a known id simply replaces that row **where it is**, because the list is newest
+ * first and a row that jumped to the top would jump back at the next refetch. A `deleted`
+ * file is taken out, which also covers the purge the worker announces afterwards. An id the
+ * list has never seen is somebody else's upload, and it is re-sorted in rather than
+ * prepended, so it lands exactly where a refetch would have put it.
+ *
+ * Returns the same array when nothing changed, so React can skip a render.
+ */
+export function applyFileEvent(
+  files: ReadonlyArray<MeetingFile>,
+  file: MeetingFile,
+): ReadonlyArray<MeetingFile> {
+  const known = files.some(({ id }) => id === file.id);
+
+  if (file.status === 'deleted') {
+    return known ? files.filter(({ id }) => id !== file.id) : files;
+  }
+
+  return known
+    ? files.map((existing) => (existing.id === file.id ? file : existing))
+    : sortNewestFirst([file, ...files]);
+}
+
+/**
  * Newest first, ties on `id` descending — the API's own order, restated for the same reason
  * `latestMeetings` re-sorts: the signature cannot promise an order, and a prepended upload
  * must land where a refetch would put it.
