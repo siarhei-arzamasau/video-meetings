@@ -1,6 +1,11 @@
+import {
+  DISPLAY_NAME_MESSAGE,
+  MAX_DISPLAY_NAME_LENGTH,
+  MIN_DISPLAY_NAME_LENGTH,
+} from '@repo/shared';
 import { describe, expect, it } from 'vitest';
 
-import { initialsOf } from './user';
+import { initialsOf, validateDisplayName } from './user';
 
 describe('initialsOf', () => {
   it('takes the first letter of the first and last word', () => {
@@ -43,5 +48,34 @@ describe('initialsOf', () => {
     // renders inside a circle that has to hold something.
     expect(initialsOf('   ')).toBe('?');
     expect(initialsOf('')).toBe('?');
+  });
+});
+
+describe('validateDisplayName', () => {
+  it('accepts a name the API would store', () => {
+    expect(validateDisplayName('Ada Lovelace')).toBeNull();
+  });
+
+  it('accepts the shortest name the bounds allow', () => {
+    expect(validateDisplayName('a'.repeat(MIN_DISPLAY_NAME_LENGTH))).toBeNull();
+  });
+
+  it('measures the trimmed value, as the API does', () => {
+    // `UpdateDisplayNameDto` trims before it measures, so a name padded past the maximum is
+    // accepted there. Refusing it here would be stricter than the server with no appeal.
+    const longest = 'a'.repeat(MAX_DISPLAY_NAME_LENGTH);
+
+    expect(validateDisplayName(`    ${longest}    `)).toBeNull();
+    expect(validateDisplayName('  Ada  ')).toBeNull();
+  });
+
+  it.each([
+    ['blank', ''],
+    ['whitespace-only', '   '],
+    ['over the maximum once trimmed', `  ${'a'.repeat(MAX_DISPLAY_NAME_LENGTH + 1)}  `],
+  ])('refuses a %s name with the shared message', (_case, name) => {
+    // The same constant the API's DTO carries, so a field that turns red says what the
+    // server would have said.
+    expect(validateDisplayName(name)).toBe(DISPLAY_NAME_MESSAGE);
   });
 });

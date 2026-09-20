@@ -1,7 +1,14 @@
 /**
- * Presentation derived from the user record. Nothing here talks to the API — the display name
- * arrives with `getMe`, and these are the ways the app renders it.
+ * The display name, as the app renders it and as the app checks it. Nothing here talks to the
+ * API — the name arrives with `getMe` and leaves through `updateDisplayName`; this is what
+ * surrounds those two calls.
  */
+
+import {
+  DISPLAY_NAME_MESSAGE,
+  MAX_DISPLAY_NAME_LENGTH,
+  MIN_DISPLAY_NAME_LENGTH,
+} from '@repo/shared';
 
 /** What a name with nothing renderable in it falls back to, so the circle is never empty. */
 const NO_INITIALS = '?';
@@ -42,4 +49,27 @@ function initialOf(word: string | undefined): string {
   const first = Array.from(word ?? '')[0];
 
   return first === undefined ? '' : (Array.from(first.toUpperCase())[0] ?? '');
+}
+
+/**
+ * The message to show for a display name, or `null` when it passes.
+ *
+ * The bounds and the sentence both come from `@repo/shared`, so this is `UpdateDisplayNameDto`
+ * restated rather than a second rule: same trim, same bounds, same one message for blank,
+ * whitespace-only, and over-long alike — a distinction the user could not act on differently.
+ * The API keeps the final say and `updateDisplayName` surfaces whatever it says; this only
+ * saves a round trip, which is why it must never be the stricter of the two.
+ *
+ * Length in UTF-16 code units, matching `@Length` on the DTO. Counting characters here would
+ * accept a name of emoji the server then refuses, which is the one direction that costs the
+ * user an unappealable rejection.
+ */
+export function validateDisplayName(displayName: string): string | null {
+  const trimmed = displayName.trim();
+
+  if (trimmed.length < MIN_DISPLAY_NAME_LENGTH || trimmed.length > MAX_DISPLAY_NAME_LENGTH) {
+    return DISPLAY_NAME_MESSAGE;
+  }
+
+  return null;
 }

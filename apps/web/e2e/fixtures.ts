@@ -23,6 +23,17 @@ export const NOTES_TXT = path.join(FIXTURES, 'notes.txt');
 
 /** Restated, as the API fixtures restate it: a relaxed bound must fail a test. */
 export const MAX_MEETING_FILE_SIZE_BYTES = 100 * 1024 * 1024;
+
+/**
+ * Restated from `@repo/shared` for the same reason, and the message with them: the edit form
+ * and the API both render this sentence from one constant, so a spec that spelt it out of
+ * that constant could not notice the day the copy changes under the user.
+ *
+ * The dash is an en dash, as the shared constant builds it.
+ */
+export const MAX_DISPLAY_NAME_LENGTH = 80;
+export const DISPLAY_NAME_MESSAGE = 'Your display name must be 1–80 characters.';
+
 export const MAX_CHUNKED_MEETING_FILE_SIZE_BYTES = 1024 ** 3;
 export const MEETING_FILE_CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
 
