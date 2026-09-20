@@ -118,8 +118,8 @@ aliases in sync if either changes.
   and the list already polls while anything is. A 409 means someone else got there first, so the
   list is refetched rather than second-guessed; anything else shows inline with Dismiss.
 - **A file over 100 MB is uploaded in chunks, and the row is the only part that looks
-  different.** `FilesSection`'s queue routes on `isChunkedUpload`; the rest of the component
-  only learns that such a row carries a session id (Cancel drops it server-side, Retry resumes).
+  different.** `use-upload-queue.ts` routes on `isChunkedUpload`; `FilesSection` only learns
+  that such a row carries a session id (Cancel drops it server-side, Retry resumes).
   The client-side size check is the **chunked** cap for that reason — rejecting at 100 MB would
   refuse a file the app can perfectly well send.
 - **A stored upload session id is a hint, never a promise.** A browser cannot keep a `File`
@@ -129,7 +129,10 @@ aliases in sync if either changes.
   file, which is what makes a stale entry harmless and why nothing expires entries here.
 - **The upload queue renders on `uploads.length`, not on the list being `ready`.** Add file and
   the drop target work while the list is still loading or failed, so hiding the queue there would
-  swallow a rejection message and run an upload with no progress or Cancel. Pre-flight messages
+  swallow a rejection message and run an upload with no progress or Cancel. The queue itself is
+  `use-upload-queue.ts` — one upload in flight at a time, the client-side checks on the way in —
+  and the drag state is `use-drop-target.ts`, whose depth counter is what keeps the target lit
+  while the pointer crosses the rows inside it. Pre-flight messages
   come from the `MEETING_FILE_*_MESSAGE` constants in `@repo/shared` — the same ones the API
   sends — so a file rejected here reads exactly as it would have from the server. Queue rows are
   keyed by a counter, not `crypto.randomUUID()`, which exists only in secure contexts: a dev
@@ -162,9 +165,18 @@ bug once:
 
 ## API access
 
-All calls to the backend go through `src/lib/api-client.ts` — the single boundary between the
-web app and the API. Add endpoint wrappers there (`apiFetch<T>` plus a named function) rather
-than calling `fetch` from components. The base URL comes from `NEXT_PUBLIC_API_URL`, defaulting
+All calls to the backend go through `src/lib/api-client/` — the single boundary between the
+web app and the API, imported as `@/lib/api-client` whichever file inside it a wrapper lives
+in. `core.ts` holds the transport every wrapper shares (`apiFetch`, `ApiError`, the bearer
+header, `sendWithProgress`); `auth.ts`, `user.ts`, `meetings.ts`, `meeting-files.ts` and
+`uploads.ts` group the wrappers by the part of the API they call, and `index.ts` re-exports
+all of them. `auth.ts` and `user.ts` split where the API splits — credentials and tokens
+against the account record — which is why `getMe` sits in `auth.ts` under `/auth/me` while
+`updateDisplayName` sits in `user.ts` under `/users/me`.
+**Only `index.ts` is imported from outside** — a component reaching for `api-client/core`
+has stepped around the boundary. Add endpoint wrappers to the matching file (`apiFetch<T>`
+plus a named function, then one line in `index.ts`) rather than calling `fetch` from
+components. The base URL comes from `NEXT_PUBLIC_API_URL`, defaulting
 to `http://localhost:3001/api` (origin _and_ the API's `/api` prefix); response shapes are
 imported as types from `@repo/shared`.
 
@@ -175,13 +187,13 @@ recoverable from a 409. Reading the body must never throw, because a failing res
 obliged to carry JSON and a parse error would replace the real failure. A rejection that is not
 an `ApiError` means the request never reached the API.
 
-Three calls are exceptions, and all three stay inside that file:
+Three calls are exceptions, and all three stay inside that directory:
 
 - **`uploadMeetingFile` and `putChunk` are `XMLHttpRequest`**, because `fetch` cannot report
-  upload progress and the PRD asks for a percentage. Both go through one private
-  `sendWithProgress`, so the exception lives in a single place; everything else about them
-  matches `apiFetch`. A third caller belongs there too — nothing else in the app may open an
-  `XMLHttpRequest`.
+  upload progress and the PRD asks for a percentage. Both go through one shared
+  `sendWithProgress` in `core.ts`, so the exception lives in a single place; everything else
+  about them matches `apiFetch`. A third caller belongs there too — nothing else in the app
+  may open an `XMLHttpRequest`.
 - **`openMeetingFileEvents` hands back the `Response` unread**, because the body is a
   `text/event-stream` the caller reads with `readEventStream`. It is still the same boundary —
   `buildApiUrl`, the bearer header, a non-2xx as an `ApiError` — so a 401 there reaches
@@ -342,7 +354,7 @@ Update it in the same commit as the change;
 one owns what is specific to `@repo/web`. Revisit it when a new top-level directory appears
 under `src/`, when theming or the Providers tree changes, when `next.config.ts` gains or loses
 an option (each is documented with why it is set — keep the pairing), when calls stop going
-exclusively through `src/lib/api-client.ts` (the API access section is then wrong and needs
+exclusively through `src/lib/api-client/` (the API access section is then wrong and needs
 rewriting rather than amending), or when the path alias, test runner, or test file pattern
 changes. Adding an ordinary component, route, or endpoint wrapper that follows the existing
 patterns needs no update.
