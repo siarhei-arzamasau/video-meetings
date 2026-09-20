@@ -88,7 +88,7 @@ describe('MeetingFileEventsService', () => {
   });
 
   afterEach(() => {
-    service.onApplicationShutdown();
+    service.beforeApplicationShutdown();
     jest.useRealTimers();
   });
 
@@ -160,7 +160,7 @@ describe('MeetingFileEventsService', () => {
   });
 
   it('completes the stream after the TTL', async () => {
-    service.onApplicationShutdown();
+    service.beforeApplicationShutdown();
     service = await build(2);
     const watcher = watch(MEETING_A);
 
@@ -193,10 +193,10 @@ describe('MeetingFileEventsService', () => {
     expect(filesOf(third)).toHaveLength(1);
   });
 
-  it('completes every open stream on shutdown, so no handle outlives the process', () => {
+  it('completes every open stream on shutdown, before the HTTP server is closed', () => {
     const watcher = watch(MEETING_A);
 
-    service.onApplicationShutdown();
+    service.beforeApplicationShutdown();
 
     expect(watcher.completed).toBe(true);
     expect(subjects()).toEqual([]);

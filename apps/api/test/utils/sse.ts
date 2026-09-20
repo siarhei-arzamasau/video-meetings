@@ -58,7 +58,18 @@ export async function openSse(
 
   const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
     const request = http.request(
-      { host: '127.0.0.1', port, path: url, method: 'GET', headers: bearer(token) },
+      {
+        host: '127.0.0.1',
+        port,
+        path: url,
+        method: 'GET',
+        headers: bearer(token),
+        // A socket of its own, never the global agent's pool. Node keeps connections alive by
+        // default, and a pooled socket still carrying an unfinished stream from an earlier
+        // test is handed to the next request, which then reads that stream's headers as its
+        // own answer — a 200 where the spec asked for a 404, intermittently.
+        agent: false,
+      },
       resolve,
     );
     request.on('error', reject);

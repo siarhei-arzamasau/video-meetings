@@ -15,7 +15,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import type { MessageEvent } from '@nestjs/common';
-import { CommandBus, QueryBus } from '@nestjs/cqrs';
+import { CommandBus } from '@nestjs/cqrs';
 import type { MeetingFile, User } from '@repo/shared';
 import contentDisposition from 'content-disposition';
 import type { Response } from 'express';
@@ -29,8 +29,8 @@ import { UploadMeetingFileCommand } from './commands/upload-meeting-file.command
 import { MeetingFileEventsService } from './services/meeting-file-events.service';
 import { MeetingFilesService } from './services/meeting-files.service';
 import type { OpenedFile } from './services/meeting-files.service';
-import { requireVisibleMeeting } from './services/visible-meeting';
 import { MeetingFileUploadInterceptor } from './storage/meeting-file-upload.interceptor';
+import { VisibleMeetingGuard } from './visible-meeting.guard';
 
 export const FILE_REQUIRED_MESSAGE = 'A file is required';
 
@@ -41,7 +41,6 @@ const UUID_V4 = new ParseUUIDPipe({ version: '4' });
 export class MeetingFilesController {
   constructor(
     private readonly commandBus: CommandBus,
-    private readonly queryBus: QueryBus,
     private readonly files: MeetingFilesService,
     private readonly fileEvents: MeetingFileEventsService,
   ) {}
@@ -55,21 +54,18 @@ export class MeetingFilesController {
    * route and never as a file id — the same reason `MeetingFileUploadsController` is listed
    * first in the module.
    *
-   * Visibility is resolved before the observable is returned, so a stranger gets the same
-   * 404 and the same error body as every other route here rather than an open stream that
-   * never carries anything. Nest turns a rejection from an `@Sse` handler into an ordinary
-   * response, which is what makes that possible.
+   * **Visibility is a guard here and an awaited call everywhere else**, and the difference is
+   * not stylistic: Nest commits an SSE response's headers one macrotask after subscribing, so
+   * a query awaited inside this handler loses the race and the 404 arrives as an `event:
+   * error` on a 200 stream. `VisibleMeetingGuard` runs before any of that. The handler is
+   * therefore synchronous, which is also what keeps it that way.
    *
    * The stream closes itself after `MEETING_FILES_STREAM_TTL_SECONDS`; reconnecting is the
    * client's job, and it refetches the list when it does.
    */
   @Sse('events')
-  async events(
-    @CurrentUser() user: User,
-    @Param('id', UUID_V4) meetingId: string,
-  ): Promise<Observable<MessageEvent>> {
-    await requireVisibleMeeting(this.queryBus, user.id, meetingId);
-
+  @UseGuards(VisibleMeetingGuard)
+  events(@Param('id', UUID_V4) meetingId: string): Observable<MessageEvent> {
     return this.fileEvents.stream(meetingId);
   }
 

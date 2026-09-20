@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnApplicationShutdown, OnModuleInit } from '@nestjs/common';
+import { BeforeApplicationShutdown, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type { MessageEvent } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventBus } from '@nestjs/cqrs';
@@ -43,20 +43,17 @@ export const HEARTBEAT_INTERVAL_MS = 15_000;
  * thousand meetings holds as many subjects as it has open streams, which is none at rest.
  */
 @Injectable()
-export class MeetingFileEventsService implements OnModuleInit, OnApplicationShutdown {
+export class MeetingFileEventsService implements OnModuleInit, BeforeApplicationShutdown {
   private readonly logger = new Logger(MeetingFileEventsService.name);
-  private readonly ttlMs: number;
   private readonly meetings = new Map<string, Subject<MessageEvent>>();
   /** Emits once on shutdown; every open stream takes until it. */
   private readonly closed = new Subject<void>();
   private subscription: Subscription | undefined;
 
   constructor(
-    config: ConfigService,
+    private readonly config: ConfigService,
     private readonly events: EventBus,
-  ) {
-    this.ttlMs = config.get<number>('MEETING_FILES_STREAM_TTL_SECONDS', 300) * 1_000;
-  }
+  ) {}
 
   /**
    * One subscription for the whole process, not one per stream: the bus carries every
@@ -78,10 +75,15 @@ export class MeetingFileEventsService implements OnModuleInit, OnApplicationShut
   }
 
   /**
-   * Ends every open stream before the process goes, so a connection held open is not a
-   * handle that keeps Node — or Jest — alive past the last test.
+   * Ends every open stream, and **`beforeApplicationShutdown` rather than
+   * `onApplicationShutdown` because of the order Nest closes things in**: the HTTP server is
+   * closed between those two hooks, and `server.close()` waits for every connection that is
+   * still in flight. A stream ended in the later hook is therefore ended after the close it
+   * is blocking — the process hangs on SIGTERM, and `app.close()` never resolves in a test.
+   * This hook runs first, the responses end, and the sockets are idle by the time the server
+   * is asked to close.
    */
-  onApplicationShutdown(): void {
+  beforeApplicationShutdown(): void {
     this.subscription?.unsubscribe();
     // Completing the subjects is not enough on its own: a stream is a `merge` of its
     // meeting's subject and a heartbeat that never ends, and a merge ends only when every
@@ -113,7 +115,7 @@ export class MeetingFileEventsService implements OnModuleInit, OnApplicationShut
     return new Observable<MessageEvent>((subscriber) => {
       const subject = this.subjectFor(meetingId);
       const inner = merge(subject, heartbeat())
-        .pipe(takeUntil(merge(timer(this.ttlMs), this.closed)))
+        .pipe(takeUntil(merge(timer(this.ttlMs()), this.closed)))
         .subscribe(subscriber);
 
       return () => {
@@ -121,6 +123,17 @@ export class MeetingFileEventsService implements OnModuleInit, OnApplicationShut
         this.release(meetingId, subject);
       };
     });
+  }
+
+  /**
+   * Read per stream rather than once in the constructor. `ConfigService` answers with the
+   * validated boot-time value either way — changing the TTL is a restart, like every setting
+   * here — but asking at subscribe is what lets the e2e suite shorten it with
+   * `ConfigService.set` between tests instead of rebuilding the application, the same reason
+   * `TranscribeStep` asks for its flag when it runs.
+   */
+  private ttlMs(): number {
+    return this.config.get<number>('MEETING_FILES_STREAM_TTL_SECONDS', 300) * 1_000;
   }
 
   private subjectFor(meetingId: string): Subject<MessageEvent> {

@@ -330,6 +330,40 @@ the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-p
   `FOR UPDATE SKIP LOCKED` under the same lease, so two replicas cannot claim one session and
   a worker that dies mid-removal leaves a row another reclaims. The tree goes first and
   `purged_at` second, so a crash between them is retried rather than forgotten.
+- **One publisher per write, and never before it commits.** Every status change is announced
+  on the in-process `EventBus` as a `MeetingFileChangedEvent(meetingId, file)`: by the worker
+  on the `true` branch of each conditional transition and after `markPurged` reports its row,
+  and by the upload, delete, and retry handlers after theirs. A transition that lost its race
+  changed nothing, so it announces nothing — publishing there would tell a watching page the
+  opposite of what the row says. The chunked path needs no publisher of its own because
+  `CompleteUploadHandler` ends in `UploadMeetingFileCommand`. The event carries the whole
+  `MeetingFile`, not a diff: the contract has no version field, so a subscriber replaces the
+  row by id, and a missed event is repaired by the next full list.
+- **Fan-out is in-process, and that fixes a single API instance.** `MeetingFileEventsService`
+  subscribes to that bus once per process and keeps a `Subject` per meeting someone is
+  watching; `GET :id/files/events` is a Nest `@Sse` route that returns
+  `stream(meetingId)`, merged with a heartbeat and ended by
+  `MEETING_FILES_STREAM_TTL_SECONDS`. A second replica would have its own bus and its own
+  subscribers, so a change made on replica A would never reach a stream held open by replica
+  B — **the change to make if a second replica appears is PostgreSQL `LISTEN/NOTIFY` in
+  place of that one subscription**, and nothing above it moves. The heartbeat
+  is `event: ping` with no data rather than the `: ping` comment the phase plan named, because
+  Nest's SSE writer only produces field lines from a `MessageEvent` — an event with an empty
+  data buffer is the same no-op for `EventSource` and the same bytes for a proxy. The TTL is
+  read per stream rather than in the constructor for the same reason `TranscribeStep` reads
+  its flag per run: so the e2e suite can shorten it with `ConfigService.set`.
+- **Two things about the stream route are not visible next to it, and both are about Nest's
+  own timing.** Visibility is a **guard** there (`VisibleMeetingGuard`) and an awaited call
+  inside the handler on every other route: Nest commits an SSE response's headers one
+  macrotask after it subscribes, so a query awaited in the handler loses the race — the 200
+  and `content-type: text/event-stream` are already sent and the `NotFoundException` becomes
+  an `event: error` on an open stream instead of a status code. A guard runs before that
+  machinery. (A malformed id is left to `ParseUUIDPipe`, whose throw is synchronous and so
+  does not race; the guard returns `true` for one.) And the service ends its streams in
+  **`beforeApplicationShutdown`**, not `onApplicationShutdown`: Nest closes the HTTP server
+  between those two hooks, and `server.close()` waits for connections still in flight, so a
+  stream ended in the later hook is ended after the close it is blocking — SIGTERM would
+  hang, and `app.close()` would never resolve.
 - **The worker is in-process, behind `MEETING_FILES_WORKER_ENABLED` (default on).** `pnpm dev`
   runs one API process and a second entry point would be a second thing to start everywhere,
   for two steps that take milliseconds. Every replica polls when it is on; switch it off per
@@ -531,6 +565,12 @@ Four things about that setup are easy to get wrong:
   landing in `meeting_participants` — would be invisible. It has no truncation helper on
   purpose; `truncateUsers` cascades, and a second one would be a way for the two to
   disagree about what "clean" means.
+- **`test/utils/sse.ts` is the only client that can read a stream route**, and it uses Node's
+  `http` directly. Supertest buffers a whole response and resolves when the server ends it,
+  which for `files/events` is after the TTL — so ordering could not be asserted and every
+  test would cost the TTL. The helper binds the suite's server to an ephemeral port on first
+  use, parses events as they arrive, and hands them over one at a time; a non-200 is read to
+  completion and exposed as `body` so a refusal is asserted the way a supertest response is.
 - **`test/utils/jwt.ts` verifies tokens with `node:crypto` alone**, never the library the
   API signs with, so a token only `@nestjs/jwt` can read fails the assertion. It is checked
   against a signature produced by `openssl dgst -sha256 -hmac`. Do not "simplify" it into

@@ -129,7 +129,9 @@ export class MeetingFileRepository {
    *
    * Prisma's query builder cannot express this, which is why it is the one raw statement in
    * the module. The column aliases turn the row into `MeetingFileRecord`; timestamps come
-   * back as `Date`s from the driver.
+   * back as `Date`s from the driver. **Every column of that interface has to be listed**: a
+   * missing one is `undefined` rather than `null` on the claimed row, and `toMeetingFile`
+   * reads `!== null` — so a column left out here becomes a path the client is told exists.
    */
   async claimNext(leaseSeconds: number): Promise<ClaimedFile | null> {
     const rows = await this.prisma.$queryRaw<ClaimedFile[]>`
@@ -160,6 +162,7 @@ export class MeetingFileRepository {
         f.storage_key AS "storageKey",
         f.checksum,
         f.thumbnail_key AS "thumbnailKey",
+        f.transcript_key AS "transcriptKey",
         f.status,
         f.failure_reason AS "failureReason",
         f.attempts,

@@ -31,6 +31,7 @@ import { MeetingFileRepository } from './services/meeting-file.repository';
 import { MeetingFilesService } from './services/meeting-files.service';
 import { MeetingFileStorage } from './storage/meeting-file-storage';
 import { MeetingFileUploadInterceptor } from './storage/meeting-file-upload.interceptor';
+import { VisibleMeetingGuard } from './visible-meeting.guard';
 
 /**
  * Files attached to meetings: upload, list, download, delete, and the processing worker.
@@ -63,6 +64,7 @@ import { MeetingFileUploadInterceptor } from './storage/meeting-file-upload.inte
     MeetingFileUploadRepository,
     MeetingFileStorage,
     MeetingFileUploadInterceptor,
+    VisibleMeetingGuard,
     ContentSniffer,
     TranscribeStep,
     // The port's one implementation. A deployment swaps vendors through
