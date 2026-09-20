@@ -1,8 +1,8 @@
 {
   "active": true,
   "milestone": "User profile phase 1: Display name — API",
-  "maxIterations": 1,
-  "maxTurns": 50,
+  "maxIterations": 15,
+  "maxTurns": 500,
   "branch": "feature/phase-5",
   "prompt": "Read ./claude/ralph.md and follow rules from it. Take the next opened Issue from '{milestone}' and implement it in '{branch}'."
 }
