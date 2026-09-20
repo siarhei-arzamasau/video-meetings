@@ -14,6 +14,10 @@ export function meetingFilesUrl(meetingId: string): string {
   return `${MEETINGS_URL}/${meetingId}/files`;
 }
 
+export function meetingFileEventsUrl(meetingId: string): string {
+  return `${meetingFilesUrl(meetingId)}/events`;
+}
+
 export function meetingFileUrl(meetingId: string, fileId: string): string {
   return `${meetingFilesUrl(meetingId)}/${fileId}`;
 }
