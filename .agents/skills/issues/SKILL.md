@@ -1,24 +1,24 @@
 ---
 name: issues
-description: Создает github issues и milestones из файла
-плана. Использую, когда есть готовый план с фазами, и нужно создать бэклог на github.
+description: Creates GitHub issues and milestones from a plan
+  file. Use when a phased plan is ready and the backlog needs to be created on GitHub.
 ---
 
 # Plan Generator
 
-Прочитай план из файла: $ARGUMENTS
+Read the plan from the file: $ARGUMENTS
 
-Для каждой фазы создай milestone и issues в GitHub, используя gh CLI.
+For each phase, create a milestone and issues on GitHub using the gh CLI.
 
-## Порядок действий
+## Steps
 
-1. Прочитай файл плана
-2. Для каждой фазы создай milestone: `gh api repos/:owner/:repo/milestones -f title="Фаза N:
-название"`
-3. Для каждой задачи в фазе создай Issue: `gh issue create --title "..." --body "..." --label "..."
+1. Read the plan file
+2. For each phase create a milestone: `gh api repos/:owner/:repo/milestones -f title="Phase N:
+name"`
+3. For each task in the phase create an issue: `gh issue create --title "..." --body "..." --label "..."
 --milestone "..."`.
 
-## Фрмат Issue
+## Issue format
 
-**Title**: текст задачи из плана (без [])
-**Body**: описани задачи
+**Title**: the task text from the plan (without the [])
+**Body**: the task description

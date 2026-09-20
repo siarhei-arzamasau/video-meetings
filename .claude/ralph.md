@@ -1,28 +1,28 @@
-# Ralph Loop - правила автономной работы
+# Ralph Loop — rules for autonomous work
 
-## Как брать Issues
+## How to pick up issues
 
-- Читай title, body и критерий готовности
-- Проверяй что указанная ветка уже существует (если нет, создай)
-- Работой только в этой ветке - не создавай новых
+- Read the title, the body and the acceptance criteria
+- Check that the branch named there already exists (create it if it does not)
+- Work only in that branch — do not create new ones
 
-## Именоваяние коммитов
+## Commit naming
 
-- По правилам в skill commit
+- Follow the rules in the commit skill
 
-## Правила реализауции
+## Implementation rules
 
-- Сначала тесты - потом реализация (TDD)
-- После каждого финального изменения запускай тесты
-- Если тесты красные после 5 попыток - остановись и напиши в Issue комментарий с описание проблемы
+- Tests first, implementation second (TDD)
+- Run the tests after every finished change
+- If the tests are still red after 5 attempts, stop and comment on the issue describing the problem
 
-## Правила завершения
+## Finishing rules
 
-- Убедись что все тесты зелёные
-- Убедись что все требования выполнены
-- Запусти skill /review для код ревью
-- Закрой Issue
-- Не создавай PR это сделает Stop Hook
-- После закрытия одного Issue — немедленно завершай сессию
-- Не берй следующий Issue самостоятельно
-- Stop Hook сам запустит новую сессию для следующего Issue
+- Make sure every test is green
+- Make sure every requirement is met
+- Run the /review skill for a code review
+- Close the issue
+- Do not open a PR — the Stop hook does that
+- End the session immediately after closing one issue
+- Do not pick up the next issue yourself
+- The Stop hook starts a new session for the next issue

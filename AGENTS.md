@@ -65,42 +65,42 @@ CI (`.github/workflows/ci.yml`) runs format:check → lint → build → typeche
 that order when verifying work locally, and run it once on the finished tree — `build` and
 `typecheck` catch things no test does.
 
-## Обязательно для каждого метода сервиса
+## Required of every service method
 
-- Все параметры имеют явный ypeScript тип
-- Возвращаемый тип указан явно через Promise<T>
-- Нет console. log - используй Logger из @nestjs/common
-- Переменные называй по смыслу - не х, не data, не result
+- Every parameter has an explicit TypeScript type
+- The return type is stated explicitly, as `Promise<T>`
+- No `console.log` — use `Logger` from `@nestjs/common`
+- Name variables for what they hold — not `x`, not `data`, not `result`
 
-## Перед написанием нового кода
+## Before writing new code
 
-- Прочитай CLAUDE.md правила, он имеет больший приоритет над существующим кодом
-- Посмотри на соседние файлы которые написаны правильно
+- Read the rules in `CLAUDE.md`; they outrank the existing code
+- Look at the neighbouring files that are written the right way
 
-## Именование
+## Naming
 
-- Файлы: feature.type.ts (meetings.service.ts)
-- Методы описывают действие: createMeetingWithFiles
-- Переменные по смыслу: meetingId не id, x, data
-- Enum вместо строк: MeetingStatus.PENDING не 'pnd'
-- Константы вместо magic numbers: MAX_FILE_SIZE_MB
+- Files: `feature.type.ts` (`meetings.service.ts`)
+- Methods name an action: `createMeetingWithFiles`
+- Variables name their meaning: `meetingId`, not `id`, `x`, or `data`
+- Enums instead of strings: `MeetingStatus.PENDING`, not `'pnd'`
+- Constants instead of magic numbers: `MAX_FILE_SIZE_MB`
 
-## Размер
+## Size
 
-- Файл > 250 строк → декомпозируй перед добавлением кода
-- Метод > 40 строк → выдели в приватный метод
-- Вложенность > 3 уровней → рефакторить
+- File over 250 lines → decompose it before adding code
+- Method over 40 lines → extract a private method
+- Nesting deeper than 3 levels → refactor
 
-## Зависимости
+## Dependencies
 
-- Импортируй через модуль, не через сервис напрямую
-- Никаких circular dependencies - проверяй перед коммитом
-- Shared типы только из @app/shared/types
+- Import through the module, never the service directly
+- No circular dependencies — check before committing
+- Shared types only from `@app/shared/types`
 
-## Рефакторинг
+## Refactoring
 
-- Перед добавлением кода в большой файл - декомпозируй
-- Тесты зелёные на каждом шаге рефакторинга
+- Decompose a large file before adding code to it
+- Tests green at every step of the refactor
 
 ## Token economy
 
