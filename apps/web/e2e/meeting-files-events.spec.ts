@@ -19,6 +19,33 @@ const isEventsRequest = (request: Request): boolean =>
 const pickFiles = (page: Page, files: string[]): Promise<void> =>
   page.locator('input[type="file"]').setInputFiles(files);
 
+/**
+ * The value of `read()` once it has not changed for `quietMs` — the only signal a backoff
+ * that has stopped can give, since a give-up is silence rather than an event.
+ */
+async function untilQuiet(read: () => number, quietMs: number): Promise<number> {
+  let last = read();
+  let since = Date.now();
+
+  await expect
+    .poll(
+      () => {
+        const now = read();
+
+        if (now !== last) {
+          last = now;
+          since = Date.now();
+        }
+
+        return Date.now() - since >= quietMs;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+
+  return last;
+}
+
 /** Waits for the first list to have landed, so a later upload cannot trigger a refetch. */
 const waitForEmptyList = (page: Page): Promise<void> =>
   expect(page.getByText('No files yet', { exact: false }))
@@ -34,6 +61,8 @@ test.describe('live file updates', () => {
     /** When each list refetch happened, so the window around the upload can be inspected. */
     const listRequests: number[] = [];
     let openedStream = false;
+    /** When the stream's headers arrived — the moment the page refetches the list. */
+    let streamOpenedAt: number | null = null;
     page.on('request', (request) => {
       if (isListRequest(request)) {
         listRequests.push(Date.now());
@@ -43,9 +72,24 @@ test.describe('live file updates', () => {
         openedStream = true;
       }
     });
+    page.on('response', (response) => {
+      if (isEventsRequest(response.request()) && response.ok()) {
+        streamOpenedAt = Date.now();
+      }
+    });
 
     await page.goto(`/meetings/${meeting.id}`);
     await waitForEmptyList(page);
+    // The list is fetched once more the moment the stream opens: only a list requested after
+    // the server subscribed this page can be trusted to hold what no event will repeat. Wait
+    // for that fetch to have been sent, so the window below holds the upload's alone.
+    await expect
+      .poll(() => {
+        const openedAt = streamOpenedAt;
+
+        return openedAt !== null && listRequests.some((at) => at >= openedAt);
+      })
+      .toBe(true);
 
     await pickFiles(page, [SAMPLE_PDF]);
 
@@ -113,8 +157,12 @@ test.describe('live file updates', () => {
     await waitForEmptyList(page);
 
     // Upload only once the stream has been given up on, so the poll is the only thing left
-    // that can settle the row. The backoff spends about three seconds getting here.
-    await expect.poll(() => attempts, { timeout: 15_000 }).toBe(3);
+    // that can settle the row. The backoff spends about three seconds getting here, and the
+    // count is not asserted exactly: the dev server's double mount adds one attempt the
+    // page aborts itself. What the give-up rule promises is that the attempts *stop*, and
+    // with backoffs of one and two seconds, five quiet seconds is that.
+    await expect.poll(() => attempts, { timeout: 15_000 }).toBeGreaterThanOrEqual(3);
+    const givenUpAt = await untilQuiet(() => attempts, 5_000);
 
     await pickFiles(page, [SAMPLE_PDF]);
 
@@ -129,9 +177,9 @@ test.describe('live file updates', () => {
     // The list was refetched while the row was processing — that is the poll, and nothing
     // else could have moved the chip.
     expect(listRequests.length).toBeGreaterThan(beforeSettling);
-    // And the stream was not tried again: a page that has proved it cannot hold one does
-    // not keep asking.
-    expect(attempts).toBe(3);
+    // And the stream was not tried again yet: after giving up, the poll has the page to
+    // itself for a minute before the next attempt, which is well past this test's end.
+    expect(attempts).toBe(givenUpAt);
 
     await host.context.close();
   });

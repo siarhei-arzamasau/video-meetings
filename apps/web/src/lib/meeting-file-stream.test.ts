@@ -43,7 +43,9 @@ interface Harness {
   run(): Promise<void>;
   waits: number[];
   files: MeetingFile[];
-  onDropped: ReturnType<typeof vi.fn>;
+  /** Every `onOpen` and `onFile`, in the order they were called. */
+  calls: string[];
+  onOpen: ReturnType<typeof vi.fn>;
   onUnauthorized: ReturnType<typeof vi.fn>;
   onUnavailable: ReturnType<typeof vi.fn>;
   fetchMock: ReturnType<typeof vi.fn>;
@@ -60,7 +62,8 @@ interface Harness {
 function harness(script: Array<Response | Error>, stopAfter = MAX_STREAM_DROPS + 2): Harness {
   const waits: number[] = [];
   const files: MeetingFile[] = [];
-  const onDropped = vi.fn();
+  const calls: string[] = [];
+  const onOpen = vi.fn(() => calls.push('open'));
   const onUnauthorized = vi.fn();
   const onUnavailable = vi.fn();
   const controller = new AbortController();
@@ -77,7 +80,8 @@ function harness(script: Array<Response | Error>, stopAfter = MAX_STREAM_DROPS +
   return {
     waits,
     files,
-    onDropped,
+    calls,
+    onOpen,
     onUnauthorized,
     onUnavailable,
     fetchMock,
@@ -87,8 +91,11 @@ function harness(script: Array<Response | Error>, stopAfter = MAX_STREAM_DROPS +
         token: 'token-1',
         meetingId: 'm1',
         signal: controller.signal,
-        onFile: (file) => files.push(file),
-        onDropped,
+        onOpen,
+        onFile: (file) => {
+          calls.push(`file ${file.id}`);
+          files.push(file);
+        },
         onUnauthorized,
         onUnavailable,
         wait: (ms) => {
@@ -115,6 +122,16 @@ describe('watchMeetingFiles', () => {
     expect(files).toEqual([FILE, PROCESSING]);
   });
 
+  it('reports the open before the first event, so the refetch it triggers overlaps the stream', async () => {
+    const { run, calls } = harness([stream(`event: ping\n\n${fileEvent(FILE)}`)], 1);
+
+    await run();
+
+    // An event applied before the caller has asked for a list would be applied to nothing;
+    // one applied after is replayed on top of the list when it lands. Open first, always.
+    expect(calls).toEqual(['open', 'file f1']);
+  });
+
   it('drops an event whose data is not a file, and keeps reading the rest', async () => {
     const { run, files } = harness([
       stream(`event: file\ndata: not json\n\nevent: file\ndata: {"no":"id"}\n\n${fileEvent(FILE)}`),
@@ -126,16 +143,27 @@ describe('watchMeetingFiles', () => {
     expect(files).toEqual([FILE]);
   });
 
-  it('refetches the list and reopens when the server ends the stream', async () => {
-    const { run, onDropped, waits, fetchMock } = harness([stream('event: ping\n\n')]);
+  it('reopens when the server ends the stream, and reports every open', async () => {
+    const { run, onOpen, waits, fetchMock } = harness([stream('event: ping\n\n')]);
 
     await run();
 
-    // The API closes a stream at its TTL, so an ending is the ordinary case: events were
-    // missed while nothing was listening, and only a list can say which.
-    expect(onDropped).toHaveBeenCalled();
+    // The API closes a stream at its TTL, so an ending is the ordinary case. Each reopen is
+    // reported, because the list is stale from the moment the last stream stopped and only
+    // a list requested after the server is subscribed again can say what was missed.
     expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+    expect(onOpen).toHaveBeenCalledTimes(fetchMock.mock.calls.length);
     expect(waits[0]).toBe(RECONNECT_DELAYS_MS[0]);
+  });
+
+  it('reports no open for a connection that was refused', async () => {
+    const { run, onOpen } = harness([new TypeError('Failed to fetch')]);
+
+    await run();
+
+    // A refetch here would be a fetch for every failed attempt, and there is nothing a
+    // stream that never opened could have missed that the previous open did not cover.
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it('backs off across consecutive failures to open', async () => {
@@ -172,8 +200,8 @@ describe('watchMeetingFiles', () => {
       token: 'token-1',
       meetingId: 'm1',
       signal: controller.signal,
+      onOpen: vi.fn(),
       onFile: vi.fn(),
-      onDropped: vi.fn(),
       onUnauthorized: vi.fn(),
       onUnavailable,
       wait: () => {
@@ -208,13 +236,13 @@ describe('watchMeetingFiles', () => {
   });
 
   it('resolves without opening anything when the signal is already aborted', async () => {
-    const { run, controller, fetchMock, onDropped } = harness([stream('event: ping\n\n')]);
+    const { run, controller, fetchMock, onOpen } = harness([stream('event: ping\n\n')]);
     controller.abort();
 
     await expect(run()).resolves.toBeUndefined();
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(onDropped).not.toHaveBeenCalled();
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it('stops reconnecting once the caller aborts mid-wait', async () => {

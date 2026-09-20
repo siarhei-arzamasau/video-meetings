@@ -123,21 +123,30 @@ aliases in sync if either changes.
   it on unmount. Downloads work the same way: a blob, an object URL, a programmatic
   `<a download>`. Both collapse into plain URLs once the token is an `HttpOnly` cookie.
 - **The meeting page follows its files over Server-Sent Events, and the three second poll is
-  the fallback that must not be deleted.** `useMeetingFiles` fetches the list, then opens
-  `GET /meetings/:id/files/events` and applies what arrives — `applyFileEvent`: replace a
-  known id **where it is**, re-sort an unknown one in, remove a `deleted` one — so the
-  Processing chip disappears the moment the worker finishes rather than up to three seconds
-  later. **`EventSource` is not used**, and cannot be while the token is in `localStorage`:
-  it cannot send an `Authorization` header, and a token in the URL is logged by every proxy.
-  The stream is opened with `fetch` and `src/lib/sse.ts` parses the format; the `HttpOnly`
-  cookie migration is what deletes that file. `watchMeetingFiles` reopens a dropped stream
-  (1, 2, 4 seconds) and refetches the list each time, because a drop means events happened
-  with nobody listening — the TTL close is an ordinary drop, not an error. After three drops
-  inside a minute it gives up for good and the poll takes over for the rest of the page's
-  life. Nothing turns the stream back on: a page that has proved it cannot hold one is not
-  improved by asking again, and a reload is the user's own retry. **The poll is still there
-  because a stream is the first thing a corporate proxy or a captive portal breaks**, and
-  removing it would make those pages stop updating altogether. **The section carries one
+  the fallback that must not be deleted.** `useMeetingFiles` opens
+  `GET /meetings/:id/files/events` at mount beside the first list fetch and applies what
+  arrives — `applyFileEvent`: replace a known id **where it is**, re-sort an unknown one in,
+  remove a `deleted` one — so the Processing chip disappears the moment the worker finishes
+  rather than up to three seconds later. **The list is fetched again every time a stream
+  opens, and events that arrive while a fetch is in flight are replayed on top of the
+  snapshot it brings back.** Both follow from one fact: an event says what a row is now, a
+  list says what every row was when the server ran the query, and the client cannot order
+  the two — so only a list requested after the server subscribed this connection is trusted
+  to hold what no event will repeat, and a snapshot never overwrites an event that may be
+  newer than it. Do not "simplify" either away; the first is what closes the gap at mount and
+  after every reconnect, the second what stops a slow refetch from putting a settled row
+  back to Processing with nothing left to move it. **`EventSource` is not used**, and cannot
+  be while the token is in `localStorage`: it cannot send an `Authorization` header, and a
+  token in the URL is logged by every proxy. The stream is opened with `fetch` and
+  `src/lib/sse.ts` parses the format; the `HttpOnly` cookie migration is what deletes that
+  file. `watchMeetingFiles` reopens a dropped stream (1, 2, 4 seconds); the TTL close is an
+  ordinary drop, not an error. After three drops inside a minute it gives up and the poll
+  takes over — **for a minute (`STREAM_RETRY_MS`), not for good**: an API restart is one
+  close and two refused connections, exactly three drops, and a page that never tried again
+  would sit on the poll until reloaded, which for a quiet page means never seeing anyone
+  else's upload again. **The poll is still there because a stream is the first thing a
+  corporate proxy or a captive portal breaks**, and removing it would make those pages stop
+  updating altogether. **The section carries one
   polite `role="status"` region** (`FilesSection`, visually hidden) announcing how many files
   are processing and when none are: the list now changes with no action from the reader, and
   the chip going is a change only a sighted one sees. One region for the section, not one per

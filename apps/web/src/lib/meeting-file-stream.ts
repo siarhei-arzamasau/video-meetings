@@ -8,11 +8,11 @@ export const FILE_EVENT = 'file';
 
 /**
  * How long to wait before reopening, by consecutive failure. The last entry repeats, though
- * in practice the fallback below is reached first when the failures are close together.
+ * in practice the give-up rule below is reached first when the failures are close together.
  */
 export const RECONNECT_DELAYS_MS: ReadonlyArray<number> = [1_000, 2_000, 4_000];
 
-/** Three drops this close together mean the stream does not work here, not that it blipped. */
+/** Three drops this close together mean the stream does not work here right now. */
 export const MAX_STREAM_DROPS = 3;
 export const DROP_WINDOW_MS = 60_000;
 
@@ -21,16 +21,20 @@ export interface WatchMeetingFilesOptions {
   meetingId: string;
   /** Aborts the request and the read. The watch resolves rather than throwing. */
   signal: AbortSignal;
+  /**
+   * A stream opened — the first one and every reconnect. From this moment the API is
+   * watching the meeting for this connection, so every later change arrives as an event; the
+   * caller refetches the list, which is the only thing that covers what happened before.
+   */
+  onOpen(): void;
   /** A file changed. The whole `MeetingFile`, to be applied by `applyFileEvent`. */
   onFile(file: MeetingFile): void;
-  /**
-   * The stream dropped and will be reopened. The caller refetches the list: anything that
-   * happened while nothing was listening is only recoverable that way.
-   */
-  onDropped(): void;
   /** The token is no longer good — the caller's clear-and-redirect, as for any other call. */
   onUnauthorized(): void;
-  /** The stream has dropped too often. The caller polls instead, for the page's lifetime. */
+  /**
+   * The stream has dropped too often and the watch is over. The caller polls instead, and
+   * decides for itself when a stream is worth trying again.
+   */
   onUnavailable(): void;
   /** Injectable for tests only; production waits on a real timer. */
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -45,10 +49,16 @@ export interface WatchMeetingFilesOptions {
  * of five minutes cannot produce three of them in sixty seconds, and a stream that is
  * genuinely broken produces them at once.
  *
- * After `MAX_STREAM_DROPS` inside the window it stops trying and tells the caller, which is
- * what turns the three second poll back on for the rest of the page's life. Nothing turns
- * the stream back on: a page that has proved it cannot hold one is not improved by asking
- * every minute, and a reload is the user's own retry.
+ * **The list is the caller's to refetch, and `onOpen` is when.** Anything committed between
+ * one stream ending and the next being subscribed on the server reaches nobody, and the only
+ * repair is a list requested *after* the server is subscribed again. Refetching at the drop,
+ * before the reconnect, would leave whatever happened during the wait unseen.
+ *
+ * After `MAX_STREAM_DROPS` inside the window it stops and tells the caller, whose poll takes
+ * over. Stopping is not final, and must not be: an API restart looks exactly like a broken
+ * stream from here — one close, then two refused connections — so the caller tries again
+ * after a while (`useMeetingFiles` does, a minute later) rather than treating three drops as
+ * proof that this page can never hold a stream.
  *
  * Resolves rather than throwing, on every path. A caller's `catch` would only ever be able
  * to do what `onUnavailable` already does.
@@ -57,8 +67,8 @@ export async function watchMeetingFiles({
   token,
   meetingId,
   signal,
+  onOpen,
   onFile,
-  onDropped,
   onUnauthorized,
   onUnavailable,
   wait = sleep,
@@ -90,10 +100,6 @@ export async function watchMeetingFiles({
       return;
     }
 
-    // Before the wait, not after: the list is stale from the moment the stream stopped
-    // carrying events, and the delay is for the connection, not for the data.
-    onDropped();
-
     const delayMs =
       outcome === 'ended'
         ? RECONNECT_DELAYS_MS[0]
@@ -111,6 +117,15 @@ export async function watchMeetingFiles({
     try {
       const response = await openMeetingFileEvents(token, meetingId, { signal });
       failures = 0;
+
+      if (signal.aborted) {
+        return 'stop';
+      }
+
+      // A 200 with the stream's content type means Nest has committed the headers, which it
+      // does on the first write — after the route subscribed this connection to the meeting.
+      // From here on every change is an event, so this is the moment a list is worth fetching.
+      onOpen();
 
       await readEventStream(response, receive, signal);
 
