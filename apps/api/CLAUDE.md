@@ -59,9 +59,10 @@ nothing to write needs no commands.
 both sides: `POST /meetings` is a command, while the two reads stay on a plain service.
 
 `src/modules/user` is the third, and the one to read before splitting a module in two. It
-owns the user record — the insert, the lookups, the public shape — and has no controller, no
-routes, and no exports. Two modules deep in a request path talk to it entirely over the
-buses; see the module boundary section below for why that is not the same as importing it.
+owns the user record — the insert, the lookups, the public shape, and the one route that
+changes a user's own profile — and exports nothing. Two modules deep in a request path talk
+to it entirely over the buses; see the module boundary section below for why that is not the
+same as importing it.
 
 `src/modules/meeting-files` is the fourth and the largest: two commands, a read service, a
 storage service over `fs`, and a polling worker. It has its own section below because most of
@@ -206,6 +207,37 @@ Two rules keep the boundary honest, and neither is enforced by a type:
 while authenticating, `@CurrentUser` returns what it attached, and the controller does no
 second read. That is one query per authenticated request, in the guard, where the lookup
 already was.
+
+### The display name — registration derives it, the user owns it
+
+`PATCH /api/users/me` (`UserController` → `UpdateDisplayNameCommand`) is the user module's
+first route. `UserModule` imports `AuthModule` for `JwtAuthGuard` exactly as the meetings
+modules do; the dependency runs that way and never the other, so the bus-only boundary above
+is untouched.
+
+Two rules it enforces, neither of which a type carries:
+
+- **Registration derives the initial name and nothing else overwrites it.**
+  `displayNameFromEmail` runs in `CreateUserHandler` and is the only place that ever writes a
+  name the user did not choose. A future profile sync or login path that "refreshes" the name
+  from the address would silently undo a name someone set.
+- **The endpoint acts on the caller and on nobody else.** `me` is a literal segment, not a
+  parameter, so there is no route here that takes a user id — the PRD's rule is a property of
+  the routing table rather than a check each new handler must remember. An `id` in the body is
+  a 400 from `forbidNonWhitelisted`, not a field quietly dropped. `test/users-me.e2e-spec.ts`
+  asserts both, including that `PATCH /api/users/<id>` is a 404 rather than a refusal.
+
+The trim-and-bounds rule is stated twice, in `UpdateDisplayNameDto` and in the handler, and
+that is not redundancy to remove: the DTO is the HTTP layer's rejection, carrying the one
+message `@repo/shared` exports so a field that turns red in the browser says exactly what the
+server would, while the handler is the use case's own invariant, because a command has to be
+safe whatever dispatched it. Both trim **before** measuring, so whitespace-only fails the
+minimum without needing a rule of its own and a padded name is not rejected for characters
+that were never going to be stored.
+
+**A bound pair sharing one message is `@Length`, not `@MinLength` plus `@MaxLength`.** Both of
+the pair fail on a value that is not a string at all, so a non-string body answered with the
+same sentence printed twice — one custom message, one decorator.
 
 ### The second boundary — meetings and meeting-files
 
@@ -617,6 +649,9 @@ Revisit it when:
 - **The auth contract changes** — the status codes, the single shared 401 message, and the
   argon2id choice are each asserted by an e2e spec. Changing one means changing its test on
   purpose, not discovering it failed.
+- **The `user` module grows a second route** — the display name section states that `me` is a
+  literal segment and that registration is the only thing that derives a name. A new route can
+  break either without failing to compile.
 - **The `apps/api/**` lint overrides in `.oxlintrc.json` change** — those are documented
   with their reasons because they contradict the workspace defaults.
 - **The environment contract grows** — the process (class, `.env.example`, compose file) is
