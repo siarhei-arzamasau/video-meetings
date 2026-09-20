@@ -17,6 +17,9 @@ export const MEETINGS_URL = '/api/meetings';
  */
 export const USERS_ME_URL = '/api/users/me';
 
+/** The caller's own credential. A literal path for the same reason `users/me` is one. */
+export const CHANGE_PASSWORD_URL = '/api/auth/password';
+
 export function meetingFilesUrl(meetingId: string): string {
   return `${MEETINGS_URL}/${meetingId}/files`;
 }
@@ -119,6 +122,22 @@ export const DISPLAY_NAME_MESSAGE = 'Your display name must be 1\u201380 charact
 
 /** The shortest password the API accepts. One character less must be a 400. */
 export const MIN_PASSWORD_LENGTH = 8;
+
+/** The longest. Restated rather than imported, as everything else here is. */
+export const MAX_PASSWORD_LENGTH = 256;
+
+/**
+ * The change-password copy from `@repo/shared`, restated for the same reason as
+ * `DISPLAY_NAME_MESSAGE`: the browser tells a wrong current password from an expired token by
+ * this exact sentence, so a spec that spelt it out of the constant could not notice the day
+ * the wording drifts.
+ */
+export const CURRENT_PASSWORD_MESSAGE = 'That is not your current password.';
+export const PASSWORD_UNCHANGED_MESSAGE =
+  'Your new password must be different from your current one.';
+
+/** A second password for the rotation specs, distinct from `PASSWORD`. */
+export const NEW_PASSWORD = 'a-different-battery-43';
 
 /** RFC 5321's maximum forward path. Anything longer must be a 400, not a 500. */
 export const MAX_EMAIL_LENGTH = 254;

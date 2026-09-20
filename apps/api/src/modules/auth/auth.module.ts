@@ -4,6 +4,7 @@ import { CqrsModule } from '@nestjs/cqrs';
 import { JwtModule } from '@nestjs/jwt';
 
 import { AuthController } from './auth.controller';
+import { ChangePasswordHandler } from './commands/handlers/change-password.handler';
 import { LoginHandler } from './commands/handlers/login.handler';
 import { RegisterHandler } from './commands/handlers/register.handler';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -40,7 +41,14 @@ import { TokenService } from './services/token.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [RegisterHandler, LoginHandler, PasswordService, TokenService, JwtAuthGuard],
+  providers: [
+    RegisterHandler,
+    LoginHandler,
+    ChangePasswordHandler,
+    PasswordService,
+    TokenService,
+    JwtAuthGuard,
+  ],
   exports: [JwtModule, JwtAuthGuard],
 })
 export class AuthModule {}

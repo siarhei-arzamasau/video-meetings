@@ -1,10 +1,8 @@
 import { IQueryHandler, QueryHandler } from '@nestjs/cqrs';
 
 import { PrismaService } from '../../../prisma/prisma.service';
-import {
-  FindUserCredentialsByEmailQuery,
-  UserCredentials,
-} from '../find-user-credentials-by-email.query';
+import { FindUserCredentialsByEmailQuery } from '../find-user-credentials-by-email.query';
+import type { UserCredentials } from '../user-credentials';
 
 @QueryHandler(FindUserCredentialsByEmailQuery)
 export class FindUserCredentialsByEmailHandler implements IQueryHandler<

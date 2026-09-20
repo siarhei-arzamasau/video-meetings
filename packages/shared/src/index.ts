@@ -4,8 +4,15 @@ export {
   MAX_DISPLAY_NAME_LENGTH,
   MIN_DISPLAY_NAME_LENGTH,
 } from './types/user';
-export type { AuthResponse, Credentials } from './types/auth';
-export { MAX_EMAIL_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from './types/auth';
+export type { AuthResponse, ChangePasswordRequest, Credentials } from './types/auth';
+export {
+  CURRENT_PASSWORD_MESSAGE,
+  MAX_EMAIL_LENGTH,
+  MAX_PASSWORD_LENGTH,
+  MIN_PASSWORD_LENGTH,
+  PASSWORD_MISMATCH_MESSAGE,
+  PASSWORD_UNCHANGED_MESSAGE,
+} from './types/auth';
 export type { CreateMeetingRequest, Meeting, MeetingStatus } from './types/meeting';
 export { MEETING_STATUSES } from './types/meeting';
 export type { ApiErrorResponse } from './types/error';

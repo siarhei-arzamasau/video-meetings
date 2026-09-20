@@ -4,8 +4,10 @@ import { CqrsModule } from '@nestjs/cqrs';
 import { AuthModule } from '../auth/auth.module';
 import { CreateUserHandler } from './commands/handlers/create-user.handler';
 import { UpdateDisplayNameHandler } from './commands/handlers/update-display-name.handler';
+import { UpdatePasswordHashHandler } from './commands/handlers/update-password-hash.handler';
 import { FindUserByIdHandler } from './queries/handlers/find-user-by-id.handler';
 import { FindUserCredentialsByEmailHandler } from './queries/handlers/find-user-credentials-by-email.handler';
+import { FindUserCredentialsByIdHandler } from './queries/handlers/find-user-credentials-by-id.handler';
 import { UserController } from './user.controller';
 
 /**
@@ -29,8 +31,10 @@ import { UserController } from './user.controller';
   providers: [
     CreateUserHandler,
     UpdateDisplayNameHandler,
+    UpdatePasswordHashHandler,
     FindUserByIdHandler,
     FindUserCredentialsByEmailHandler,
+    FindUserCredentialsByIdHandler,
   ],
 })
 export class UserModule {}
