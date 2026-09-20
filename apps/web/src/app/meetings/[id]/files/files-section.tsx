@@ -11,6 +11,8 @@ import { fingerprint, uploadInChunks } from '@/lib/chunked-upload';
 import {
   acceptAttribute,
   isChunkedUpload,
+  isProcessing,
+  processingAnnouncement,
   sortNewestFirst,
   validateFileBeforeUpload,
 } from '@/lib/meeting-files';
@@ -55,6 +57,7 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
   const [uploads, setUploads] = useState<QueuedUpload[]>([]);
   const [deleting, setDeleting] = useState<MeetingFile | null>(null);
   const [dragDepth, setDragDepth] = useState(0);
+  const [announcement, setAnnouncement] = useState('');
   const input = useRef<HTMLInputElement>(null);
   // A counter, not `crypto.randomUUID()`: that exists only in secure contexts, and a dev
   // server opened over plain HTTP from a phone is not one. The id only has to be unique
@@ -216,11 +219,26 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
   }
 
   const files = list.state === 'ready' ? sortNewestFirst(list.files) : [];
+  const processingCount = files.filter((file) => isProcessing([file])).length;
   const isEmpty = list.state === 'ready' && files.length === 0 && uploads.length === 0;
   // The queue is shown whenever it has rows, even while the list is loading or failed to load:
   // an upload the user just started must show its progress, its Cancel, or its rejection.
   const showRows = uploads.length > 0 || (list.state === 'ready' && !isEmpty);
   const isDragging = dragDepth > 0;
+
+  // Announced only on a change, never on the first render: a live region that reads the
+  // page's opening state aloud is noise. Derived from the list rather than from stream
+  // events, so the poll fallback announces the same thing.
+  const previousProcessing = useRef<number | null>(null);
+
+  useEffect(() => {
+    const previous = previousProcessing.current;
+    previousProcessing.current = processingCount;
+
+    if (previous !== null && previous !== processingCount) {
+      setAnnouncement(processingAnnouncement(processingCount));
+    }
+  }, [processingCount]);
 
   return (
     <Card
@@ -231,6 +249,14 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
+      {/* One polite region for the whole section. Since the page follows its files over a
+          stream, a row settles, arrives, or vanishes with no action from the reader, and the
+          chip going is a change only a sighted one sees. `aria-atomic`, so the phrase is read
+          whole rather than as whatever word changed. */}
+      <output className="sr-only" aria-atomic="true">
+        {announcement}
+      </output>
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-0.5">
           <h2 className="text-lg font-semibold tracking-tight">Files</h2>

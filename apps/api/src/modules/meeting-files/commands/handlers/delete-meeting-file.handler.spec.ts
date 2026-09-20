@@ -1,7 +1,8 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { QueryBus } from '@nestjs/cqrs';
+import { EventBus, QueryBus } from '@nestjs/cqrs';
 import { Test } from '@nestjs/testing';
 
+import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
 import { MeetingFileRepository } from '../../services/meeting-file.repository';
 import type { MeetingFileRecord } from '../../services/meeting-file.mapper';
 import { DeleteMeetingFileCommand } from '../delete-meeting-file.command';
@@ -47,18 +48,21 @@ describe('DeleteMeetingFileHandler', () => {
   const execute = jest.fn();
   const findOneOf = jest.fn();
   const transition = jest.fn();
+  const publish = jest.fn();
   let handler: DeleteMeetingFileHandler;
 
   beforeEach(async () => {
     execute.mockReset().mockResolvedValue(MEETING);
     findOneOf.mockReset().mockResolvedValue(RECORD);
     transition.mockReset().mockResolvedValue(true);
+    publish.mockReset();
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         DeleteMeetingFileHandler,
         { provide: QueryBus, useValue: { execute } },
         { provide: MeetingFileRepository, useValue: { findOneOf, transition } },
+        { provide: EventBus, useValue: { publish } },
       ],
     }).compile();
 
@@ -154,5 +158,49 @@ describe('DeleteMeetingFileHandler', () => {
     await expect(
       handler.execute(new DeleteMeetingFileCommand(UPLOADER_ID, MEETING_ID, FILE_ID)),
     ).rejects.toThrow(new NotFoundException('File not found'));
+  });
+
+  it('announces the deleted file once the transition has resolved', async () => {
+    const order: string[] = [];
+    transition.mockImplementation(async () => {
+      await Promise.resolve();
+      order.push('transition');
+
+      return true;
+    });
+    publish.mockImplementation(() => order.push('publish'));
+
+    await handler.execute(new DeleteMeetingFileCommand(UPLOADER_ID, MEETING_ID, FILE_ID));
+
+    expect(order).toEqual(['transition', 'publish']);
+    expect(publish).toHaveBeenCalledTimes(1);
+
+    const [event] = publish.mock.calls[0] as [MeetingFileChangedEvent];
+    expect(event).toBeInstanceOf(MeetingFileChangedEvent);
+    expect(event.meetingId).toBe(MEETING_ID);
+    // `deleted` is what tells a subscriber to take the row out of its list.
+    expect(event.file).toMatchObject({ id: FILE_ID, status: 'deleted' });
+  });
+
+  it('announces once, not twice, when the first attempt lost its race', async () => {
+    transition.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    findOneOf
+      .mockResolvedValueOnce(RECORD)
+      .mockResolvedValueOnce({ ...RECORD, status: 'processing' });
+
+    await handler.execute(new DeleteMeetingFileCommand(UPLOADER_ID, MEETING_ID, FILE_ID));
+
+    // The attempt that changed nothing announced nothing; the one that won did.
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('announces nothing when neither attempt changes a row', async () => {
+    transition.mockResolvedValue(false);
+
+    await expect(
+      handler.execute(new DeleteMeetingFileCommand(UPLOADER_ID, MEETING_ID, FILE_ID)),
+    ).rejects.toThrow(ConflictException);
+
+    expect(publish).not.toHaveBeenCalled();
   });
 });

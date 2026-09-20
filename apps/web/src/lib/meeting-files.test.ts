@@ -8,6 +8,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   acceptAttribute,
+  applyFileEvent,
+  processingAnnouncement,
   formatFileSize,
   isChunkedUpload,
   isProcessing,
@@ -138,6 +140,59 @@ describe('isProcessing', () => {
   it('is false for ready and failed only, and for an empty list', () => {
     expect(isProcessing([file({ status: 'ready' }), file({ status: 'failed' })])).toBe(false);
     expect(isProcessing([])).toBe(false);
+  });
+});
+
+describe('processingAnnouncement', () => {
+  it('names the count, because a bare number announced on its own says nothing', () => {
+    expect(processingAnnouncement(1)).toBe('1 file is processing.');
+    expect(processingAnnouncement(3)).toBe('3 files are processing.');
+  });
+
+  it('says the work is over rather than announcing zero', () => {
+    expect(processingAnnouncement(0)).toBe('All files have finished processing.');
+  });
+});
+
+describe('applyFileEvent', () => {
+  const ready = file({ id: 'a', status: 'ready', createdAt: '2026-09-02T10:00:00.000Z' });
+  const other = file({ id: 'b', createdAt: '2026-09-01T10:00:00.000Z' });
+
+  it('replaces a known file where it is, not at the top', () => {
+    const processing = { ...other, status: 'processing' as const };
+
+    const files = applyFileEvent([ready, other], processing);
+
+    // The list is newest first; a row that jumped to the top would jump back at the next
+    // refetch, which reads as the page losing its place.
+    expect(files.map(({ id }) => id)).toEqual(['a', 'b']);
+    expect(files[1]).toEqual(processing);
+  });
+
+  it('re-sorts an unknown file in rather than prepending it', () => {
+    const oldest = file({ id: 'c', createdAt: '2026-08-01T10:00:00.000Z' });
+
+    // Somebody else's upload of an older file lands exactly where a refetch would put it.
+    expect(applyFileEvent([ready, other], oldest).map(({ id }) => id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('removes a file the event reports as deleted', () => {
+    expect(applyFileEvent([ready, other], { ...other, status: 'deleted' })).toEqual([ready]);
+  });
+
+  it('is idempotent for a delete it has already applied', () => {
+    const files = [ready];
+
+    // The worker announces the purge after the soft delete, with the same status.
+    expect(applyFileEvent(files, { ...other, status: 'deleted' })).toBe(files);
+  });
+
+  it('leaves the array it was given alone', () => {
+    const files = [ready, other];
+
+    applyFileEvent(files, { ...other, status: 'deleted' });
+
+    expect(files.map(({ id }) => id)).toEqual(['a', 'b']);
   });
 });
 

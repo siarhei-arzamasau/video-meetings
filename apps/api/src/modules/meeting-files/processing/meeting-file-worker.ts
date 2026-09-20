@@ -7,13 +7,16 @@ import {
   Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EventBus } from '@nestjs/cqrs';
+import type { MeetingFileStatus } from '@repo/shared';
 import { MEETING_FILE_PROCESSING_FAILED_MESSAGE } from '@repo/shared';
 
+import { MeetingFileChangedEvent } from '../events/meeting-file-changed.event';
 import { MeetingFileUploadRepository } from '../services/meeting-file-upload.repository';
 import type { MeetingFileUploadRecord } from '../services/meeting-file-upload.mapper';
-import { thumbnailKeyOf, transcriptKeyOf } from '../services/meeting-file.mapper';
+import { thumbnailKeyOf, toMeetingFile, transcriptKeyOf } from '../services/meeting-file.mapper';
 import { MeetingFileRepository } from '../services/meeting-file.repository';
-import type { ClaimedFile } from '../services/meeting-file.repository';
+import type { ClaimedFile, TransitionPatch } from '../services/meeting-file.repository';
 import { MeetingFileStorage } from '../storage/meeting-file-storage';
 import { PIPELINE } from './pipeline';
 import { StepError } from './step';
@@ -70,6 +73,7 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     private readonly files: MeetingFileRepository,
     private readonly uploads: MeetingFileUploadRepository,
     private readonly storage: MeetingFileStorage,
+    private readonly events: EventBus,
     @Optional() @Inject(PIPELINE_STEPS) steps?: ReadonlyArray<ProcessingStep>,
   ) {
     this.enabled = config.get<boolean>('MEETING_FILES_WORKER_ENABLED', true);
@@ -176,6 +180,8 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     const lease = claimed.leasedUntil;
 
     this.logTransition(claimed, claimed.previousStatus, 'processing', startedAt);
+    // `claimNext` committed this one; the claim returning a row is its "one row changed".
+    this.publish(claimed, 'processing');
 
     if (claimed.attempts > MAX_ATTEMPTS) {
       this.logger.error(
@@ -231,16 +237,12 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     }
 
     const { patch } = outcome;
-    const changed = await this.files.transition(
-      claimed.id,
-      'processing',
-      'ready',
-      { ...patch, processedAt: new Date(), leasedUntil: null },
-      held,
-    );
+    const ready = { ...patch, processedAt: new Date(), leasedUntil: null };
+    const changed = await this.files.transition(claimed.id, 'processing', 'ready', ready, held);
 
     if (changed) {
       this.logTransition(claimed, 'processing', 'ready', startedAt);
+      this.publish(claimed, 'ready', ready);
     } else {
       this.logLost(claimed, 'ready');
       await this.discard(patch);
@@ -357,6 +359,7 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
 
     if (changed) {
       this.logTransition(claimed, 'processing', 'uploaded', startedAt);
+      this.publish(claimed, 'uploaded', { leasedUntil: null });
     } else {
       this.logLost(claimed, 'uploaded');
     }
@@ -394,16 +397,12 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     startedAt: number,
     patch: StepPatch = {},
   ): Promise<void> {
-    const changed = await this.files.transition(
-      claimed.id,
-      'processing',
-      'failed',
-      { ...patch, failureReason, leasedUntil: null },
-      lease,
-    );
+    const failed = { ...patch, failureReason, leasedUntil: null };
+    const changed = await this.files.transition(claimed.id, 'processing', 'failed', failed, lease);
 
     if (changed) {
       this.logTransition(claimed, 'processing', 'failed', startedAt);
+      this.publish(claimed, 'failed', failed);
     } else {
       this.logLost(claimed, 'failed');
       await this.discard(patch);
@@ -425,7 +424,7 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
       this.logger.error(
         `File ${claimed.id} claimed ${String(claimed.attempts)} times for purge; marking it purged with objects possibly left at ${claimed.storageKey}, ${thumbnailKeyOf(claimed.storageKey)} and ${transcriptKeyOf(claimed.storageKey)}`,
       );
-      await this.files.markPurged(claimed.id);
+      await this.purged(claimed);
 
       return;
     }
@@ -433,7 +432,7 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     await this.storage.remove(claimed.storageKey);
     await this.storage.remove(thumbnailKeyOf(claimed.storageKey));
     await this.storage.remove(transcriptKeyOf(claimed.storageKey));
-    await this.files.markPurged(claimed.id);
+    await this.purged(claimed);
     this.logger.log(
       `File ${claimed.id} of meeting ${claimed.meetingId}: purged in ${String(Date.now() - startedAt)}ms`,
     );
@@ -464,6 +463,38 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     await this.uploads.markPurged(upload.id);
     this.logger.log(
       `Upload ${upload.id} of meeting ${upload.meetingId}: chunks purged in ${String(Date.now() - startedAt)}ms`,
+    );
+  }
+
+  /** Marks the bytes gone, and announces it only if the row was still this worker's to purge. */
+  private async purged(claimed: ClaimedFile): Promise<void> {
+    if (await this.files.markPurged(claimed.id)) {
+      // Still `deleted` — the purge is about the bytes, not the row's state. A subscriber
+      // removes the file on this as it did on the delete, which is idempotent by construction.
+      this.publish(claimed, 'deleted');
+    }
+  }
+
+  /**
+   * The one place the worker announces a change, and never before the write that made it has
+   * committed: every caller above publishes on the `true` branch of its conditional update.
+   * A transition that lost its race changed nothing, so there is nothing to announce — and
+   * publishing there would tell a watching page the opposite of what the row says.
+   *
+   * The row is reconstructed from the claim plus the patch just written rather than re-read:
+   * a re-read costs a query per transition and would answer with whatever a later writer has
+   * done since, which is not what this event is about.
+   */
+  private publish(
+    claimed: ClaimedFile,
+    status: MeetingFileStatus,
+    patch: TransitionPatch = {},
+  ): void {
+    this.events.publish(
+      new MeetingFileChangedEvent(
+        claimed.meetingId,
+        toMeetingFile({ ...claimed, ...patch, status }),
+      ),
     );
   }
 

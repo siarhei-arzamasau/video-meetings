@@ -1,7 +1,8 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { QueryBus } from '@nestjs/cqrs';
+import { EventBus, QueryBus } from '@nestjs/cqrs';
 import { Test } from '@nestjs/testing';
 
+import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
 import { MeetingFileRepository } from '../../services/meeting-file.repository';
 import type { MeetingFileRecord } from '../../services/meeting-file.mapper';
 import { RetryMeetingFileCommand } from '../retry-meeting-file.command';
@@ -47,18 +48,21 @@ describe('RetryMeetingFileHandler', () => {
   const execute = jest.fn();
   const findOneOf = jest.fn();
   const transition = jest.fn();
+  const publish = jest.fn();
   let handler: RetryMeetingFileHandler;
 
   beforeEach(async () => {
     execute.mockReset().mockResolvedValue(MEETING);
     findOneOf.mockReset().mockResolvedValue(RECORD);
     transition.mockReset().mockResolvedValue(true);
+    publish.mockReset();
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         RetryMeetingFileHandler,
         { provide: QueryBus, useValue: { execute } },
         { provide: MeetingFileRepository, useValue: { findOneOf, transition } },
+        { provide: EventBus, useValue: { publish } },
       ],
     }).compile();
 
@@ -118,5 +122,39 @@ describe('RetryMeetingFileHandler', () => {
     await expect(
       handler.execute(new RetryMeetingFileCommand(UPLOADER_ID, MEETING_ID, FILE_ID)),
     ).rejects.toThrow(new ConflictException(NOT_FAILED_MESSAGE));
+  });
+
+  it('announces the retried file once the transition has resolved', async () => {
+    const order: string[] = [];
+    transition.mockImplementation(async () => {
+      await Promise.resolve();
+      order.push('transition');
+
+      return true;
+    });
+    publish.mockImplementation(() => order.push('publish'));
+
+    const file = await handler.execute(
+      new RetryMeetingFileCommand(UPLOADER_ID, MEETING_ID, FILE_ID),
+    );
+
+    expect(order).toEqual(['transition', 'publish']);
+    expect(publish).toHaveBeenCalledTimes(1);
+
+    const [event] = publish.mock.calls[0] as [MeetingFileChangedEvent];
+    expect(event).toBeInstanceOf(MeetingFileChangedEvent);
+    expect(event.meetingId).toBe(MEETING_ID);
+    // The same row the caller is answered with: one retry, one truth.
+    expect(event.file).toEqual(file);
+  });
+
+  it('announces nothing when the row is no longer failed', async () => {
+    transition.mockResolvedValue(false);
+
+    await expect(
+      handler.execute(new RetryMeetingFileCommand(UPLOADER_ID, MEETING_ID, FILE_ID)),
+    ).rejects.toThrow(ConflictException);
+
+    expect(publish).not.toHaveBeenCalled();
   });
 });

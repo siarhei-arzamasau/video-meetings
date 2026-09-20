@@ -7,9 +7,10 @@ import {
   ConflictException,
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
-import { QueryBus } from '@nestjs/cqrs';
+import { EventBus, QueryBus } from '@nestjs/cqrs';
 import { Test } from '@nestjs/testing';
 
+import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
 import { ContentSniffer } from '../../services/content-sniffer';
 import { MeetingFileRepository } from '../../services/meeting-file.repository';
 import type { MeetingFileRecord } from '../../services/meeting-file.mapper';
@@ -35,6 +36,7 @@ describe('UploadMeetingFileHandler', () => {
   const put = jest.fn();
   const remove = jest.fn();
   const sniff = jest.fn();
+  const publish = jest.fn();
   let handler: UploadMeetingFileHandler;
   let scratch: string;
   let tempPath: string;
@@ -73,6 +75,7 @@ describe('UploadMeetingFileHandler', () => {
     });
     remove.mockReset().mockResolvedValue(undefined);
     sniff.mockReset().mockResolvedValue('application/pdf');
+    publish.mockReset();
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -81,6 +84,7 @@ describe('UploadMeetingFileHandler', () => {
         { provide: MeetingFileRepository, useValue: { createWithinCap } },
         { provide: MeetingFileStorage, useValue: { put, remove } },
         { provide: ContentSniffer, useValue: { sniff } },
+        { provide: EventBus, useValue: { publish } },
       ],
     }).compile();
 
@@ -195,5 +199,53 @@ describe('UploadMeetingFileHandler', () => {
 
     expect(createWithinCap).not.toHaveBeenCalled();
     expect(fs.existsSync(tempPath)).toBe(false);
+  });
+
+  it('announces the file once the insert has resolved, with the record it wrote', async () => {
+    const order: string[] = [];
+    const insert = createWithinCap.getMockImplementation() as (
+      data: unknown,
+    ) => Promise<MeetingFileRecord>;
+    createWithinCap.mockImplementation(async (data: unknown) => {
+      const record = await insert(data);
+      order.push('insert');
+
+      return record;
+    });
+    publish.mockImplementation(() => order.push('publish'));
+
+    const file = await handler.execute(command());
+
+    expect(order).toEqual(['insert', 'publish']);
+    expect(publish).toHaveBeenCalledTimes(1);
+
+    const [event] = publish.mock.calls[0] as [MeetingFileChangedEvent];
+    expect(event).toBeInstanceOf(MeetingFileChangedEvent);
+    expect(event.meetingId).toBe(MEETING_ID);
+    expect(event.file).toEqual(file);
+  });
+
+  it.each([
+    ['the cap was reached', () => createWithinCap.mockResolvedValue(null)],
+    ['the insert threw', () => createWithinCap.mockRejectedValue(new Error('connection lost'))],
+    ['the bytes never landed', () => put.mockRejectedValue(new Error('disk full'))],
+  ])('announces nothing when %s', async (_why, arrange) => {
+    arrange();
+
+    await expect(handler.execute(command())).rejects.toThrow();
+
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('keeps the bytes when a subscriber throws: the record is committed either way', async () => {
+    publish.mockImplementation(() => {
+      throw new Error('a subscriber blew up');
+    });
+
+    await expect(handler.execute(command())).rejects.toThrow('a subscriber blew up');
+
+    // The insert committed. Removing the object here would leave a record pointing at
+    // nothing, which is the one outcome this handler exists to prevent.
+    expect(remove).not.toHaveBeenCalled();
   });
 });

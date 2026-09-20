@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ApiError,
+  NOT_AN_EVENT_STREAM_MESSAGE,
   abortUpload,
   completeUpload,
   createUpload,
@@ -11,6 +12,7 @@ import {
   getMeeting,
   getUpload,
   listMeetingFiles,
+  openMeetingFileEvents,
   putChunk,
   retryMeetingFile,
   uploadMeetingFile,
@@ -518,5 +520,75 @@ describe('abortUpload', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://api.example.com/api/meetings/m1/files/uploads/up1');
     expect(init.method).toBe('DELETE');
+  });
+});
+
+const eventStream = (headers: Record<string, string> = {}): Response =>
+  new Response('event: ping\n\n', {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream', ...headers },
+  });
+
+describe('openMeetingFileEvents', () => {
+  it('opens the stream with bearer credentials and asks for an event stream', async () => {
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com/api');
+    const fetchMock = stubFetch(eventStream());
+
+    const response = await openMeetingFileEvents('token-1', 'm1');
+
+    expect(fetchMock).toHaveBeenCalledWith('https://api.example.com/api/meetings/m1/files/events', {
+      headers: { authorization: 'Bearer token-1', accept: 'text/event-stream' },
+    });
+    // The body is handed back unread: it is the point of the call.
+    expect(response.body).not.toBeNull();
+  });
+
+  it('passes an abort signal through', async () => {
+    const controller = new AbortController();
+    const fetchMock = stubFetch(eventStream());
+
+    await openMeetingFileEvents('token-1', 'm1', { signal: controller.signal });
+
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ signal: controller.signal });
+  });
+
+  it('turns a 401 into an ApiError, the same as every other call', async () => {
+    stubFetch(jsonResponse(401, { statusCode: 401, message: 'Unauthorized' }));
+
+    // The caller's `onUnauthorized` reads the status; a stream must not be the one place
+    // where an expired token looks like something else.
+    await expect(openMeetingFileEvents('stale', 'm1')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 401,
+    });
+  });
+
+  it("carries the API's own message on a 404", async () => {
+    stubFetch(jsonResponse(404, { statusCode: 404, message: 'Meeting not found' }));
+
+    await expect(openMeetingFileEvents('token-1', 'm1')).rejects.toThrow(
+      new ApiError(404, 'Meeting not found'),
+    );
+  });
+
+  it('rejects a 200 that is not an event stream, and cancels its body', async () => {
+    // A proxy's interstitial. Read as a stream it would look like one that opened and
+    // immediately closed, which is a reconnect loop rather than a visible failure.
+    const html = new Response('<html>Sign in to the network</html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    });
+    stubFetch(html);
+
+    await expect(openMeetingFileEvents('token-1', 'm1')).rejects.toThrow(
+      NOT_AN_EVENT_STREAM_MESSAGE,
+    );
+    expect(html.bodyUsed || html.body?.locked).toBeTruthy();
+  });
+
+  it('accepts a content type that carries a charset', async () => {
+    stubFetch(eventStream({ 'content-type': 'text/event-stream; charset=utf-8' }));
+
+    await expect(openMeetingFileEvents('token-1', 'm1')).resolves.toBeInstanceOf(Response);
   });
 });

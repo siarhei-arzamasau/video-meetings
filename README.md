@@ -48,6 +48,10 @@ volume instead. Files up to 100 MB are uploaded in one request; larger ones, up 
 uploaded in chunks and can be resumed, and an unfinished upload is discarded after
 `MEETING_FILE_UPLOAD_TTL_HOURS` (default 24).
 
+A meeting page follows its files live over Server-Sent Events and falls back to polling when
+the stream cannot be opened; a stream closes after `MEETING_FILES_STREAM_TTL_SECONDS`
+(default 300) and the page reconnects.
+
 Transcription of audio and video is off by default; turning on
 `MEETING_FILES_TRANSCRIPTION_ENABLED` needs `TRANSCRIPTION_API_URL` (an OpenAI-compatible
 `audio/transcriptions` endpoint), optionally `TRANSCRIPTION_API_KEY`, and bounds each request

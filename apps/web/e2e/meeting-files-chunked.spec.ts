@@ -78,8 +78,13 @@ test.describe('uploading a file too large for one request', () => {
     // A percentage, which only a chunked upload can report before the whole file is sent.
     await expect(uploading.getByText(/\d+%/)).toBeVisible();
 
-    // The file arrives as an ordinary meeting file and enters the Phase 1 pipeline.
-    await expect(uploading.getByText('Processing')).toBeVisible({ timeout: 90_000 });
+    // The file arrives as an ordinary meeting file: Download is a control only a stored
+    // file has. **Not the Processing chip** — since Phase 4 the row learns it is `ready`
+    // from the event stream within milliseconds of the worker finishing, so waiting for
+    // that chip is waiting for a state the row may never be seen in.
+    await expect(uploading.getByRole('button', { name: 'Download' })).toBeVisible({
+      timeout: 90_000,
+    });
     await expect(uploading.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
 
     expect(acknowledged.toSorted((a, b) => a - b)).toEqual(
@@ -109,7 +114,9 @@ test.describe('uploading a file too large for one request', () => {
     await context.setOffline(false);
 
     const row = rowFor(page, LARGE_NAME);
-    await expect(row.getByText('Processing')).toBeVisible({ timeout: 90_000 });
+    // Download rather than the Processing chip, for the reason above: the stream can move
+    // the row past `processing` faster than an assertion can catch it.
+    await expect(row.getByRole('button', { name: 'Download' })).toBeVisible({ timeout: 90_000 });
 
     // Every chunk exactly once: the retry re-sent the chunk that was in flight when the
     // connection went, and nothing the server had already acknowledged.
@@ -140,15 +147,17 @@ test.describe('uploading a file too large for one request', () => {
 
     const row = rowFor(page, LARGE_NAME);
     await expect(row.getByText(/Resuming/)).toBeVisible({ timeout: 60_000 });
-    await expect(row.getByText('Processing')).toBeVisible({ timeout: 90_000 });
+    await expect(row.getByRole('button', { name: 'Download' })).toBeVisible({ timeout: 90_000 });
 
     // The run after the reload sent fewer chunks than the file has: the ones the server
     // already held were not sent again.
     expect(requested.length - sentBeforeReload).toBeLessThan(CHUNKS);
-    // And no chunk was sent twice across the two runs. An exact count per run would be a
-    // race — a chunk can land in the moment between the snapshot and the reload — but "never
-    // twice" is the claim resume actually makes.
-    expect(new Set(requested).size).toBe(requested.length);
+    // At most one chunk was sent twice: the one in flight when the reload cancelled it,
+    // which the server never acknowledged and the resume therefore has to send again. That
+    // is resume working. An exact count per run would be a race either way — a chunk can
+    // land in the moment between the snapshot and the reload — and the claim resume makes
+    // is about what the server *holds*, which is the assertion below.
+    expect(requested.length - new Set(requested).size).toBeLessThanOrEqual(1);
     expect(new Set(acknowledged).size).toBe(acknowledged.length);
 
     await host.context.close();

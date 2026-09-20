@@ -7,7 +7,7 @@ import {
   Logger,
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
-import { CommandHandler, ICommandHandler, QueryBus } from '@nestjs/cqrs';
+import { CommandHandler, EventBus, ICommandHandler, QueryBus } from '@nestjs/cqrs';
 import type { MeetingFile } from '@repo/shared';
 import {
   MAX_MEETING_FILES,
@@ -16,8 +16,10 @@ import {
   MEETING_FILE_TYPE_MESSAGE,
 } from '@repo/shared';
 
+import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
 import { ContentSniffer } from '../../services/content-sniffer';
 import { MeetingFileRepository } from '../../services/meeting-file.repository';
+import type { NewMeetingFile } from '../../services/meeting-file.repository';
 import { normaliseFileName, storageKeyOf, toMeetingFile } from '../../services/meeting-file.mapper';
 import { requireVisibleMeeting } from '../../services/visible-meeting';
 import { MeetingFileStorage } from '../../storage/meeting-file-storage';
@@ -50,6 +52,7 @@ export class UploadMeetingFileHandler implements ICommandHandler<
     private readonly files: MeetingFileRepository,
     private readonly storage: MeetingFileStorage,
     private readonly sniffer: ContentSniffer,
+    private readonly events: EventBus,
   ) {}
 
   async execute(command: UploadMeetingFileCommand): Promise<MeetingFile> {
@@ -93,24 +96,41 @@ export class UploadMeetingFileHandler implements ICommandHandler<
 
     await this.storage.put(storageKey, tempPath);
 
+    const file = await this.insert(
+      { id: fileId, meetingId, uploaderId: userId, name, contentType, size, storageKey },
+      contentType,
+      size,
+    );
+
+    // Outside the insert's own try, and after it: a subscriber that throws must not be
+    // mistaken for a failed insert and take the bytes of a committed record with it.
+    // A chunked upload arrives here too, which is why completion needs no publisher.
+    this.events.publish(new MeetingFileChangedEvent(meetingId, file));
+
+    return file;
+  }
+
+  /** The record, or nothing at all: a failed insert takes the bytes it would have described. */
+  private async insert(
+    data: NewMeetingFile,
+    contentType: string,
+    size: number,
+  ): Promise<MeetingFile> {
     try {
-      const record = await this.files.createWithinCap(
-        { id: fileId, meetingId, uploaderId: userId, name, contentType, size, storageKey },
-        MAX_MEETING_FILES,
-      );
+      const record = await this.files.createWithinCap(data, MAX_MEETING_FILES);
 
       if (record === null) {
         throw new ConflictException(COUNT_MESSAGE);
       }
 
       this.logger.log(
-        `Stored file ${fileId} (${contentType}, ${String(size)} bytes) for meeting ${meetingId}`,
+        `Stored file ${data.id} (${contentType}, ${String(size)} bytes) for meeting ${data.meetingId}`,
       );
 
       return toMeetingFile(record);
     } catch (error) {
       // The record was not written, so the bytes must not stay either.
-      await this.storage.remove(storageKey);
+      await this.storage.remove(data.storageKey);
       throw error;
     }
   }

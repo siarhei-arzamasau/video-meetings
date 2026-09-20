@@ -122,6 +122,36 @@ aliases in sync if either changes.
   the thumbnail with the bearer header, turns the blob into `URL.createObjectURL`, and revokes
   it on unmount. Downloads work the same way: a blob, an object URL, a programmatic
   `<a download>`. Both collapse into plain URLs once the token is an `HttpOnly` cookie.
+- **The meeting page follows its files over Server-Sent Events, and the three second poll is
+  the fallback that must not be deleted.** `useMeetingFiles` opens
+  `GET /meetings/:id/files/events` at mount beside the first list fetch and applies what
+  arrives — `applyFileEvent`: replace a known id **where it is**, re-sort an unknown one in,
+  remove a `deleted` one — so the Processing chip disappears the moment the worker finishes
+  rather than up to three seconds later. **The list is fetched again every time a stream
+  opens, and events that arrive while a fetch is in flight are replayed on top of the
+  snapshot it brings back.** Both follow from one fact: an event says what a row is now, a
+  list says what every row was when the server ran the query, and the client cannot order
+  the two — so only a list requested after the server subscribed this connection is trusted
+  to hold what no event will repeat, and a snapshot never overwrites an event that may be
+  newer than it. Do not "simplify" either away; the first is what closes the gap at mount and
+  after every reconnect, the second what stops a slow refetch from putting a settled row
+  back to Processing with nothing left to move it. **`EventSource` is not used**, and cannot
+  be while the token is in `localStorage`: it cannot send an `Authorization` header, and a
+  token in the URL is logged by every proxy. The stream is opened with `fetch` and
+  `src/lib/sse.ts` parses the format; the `HttpOnly` cookie migration is what deletes that
+  file. `watchMeetingFiles` reopens a dropped stream (1, 2, 4 seconds); the TTL close is an
+  ordinary drop, not an error. After three drops inside a minute it gives up and the poll
+  takes over — **for a minute (`STREAM_RETRY_MS`), not for good**: an API restart is one
+  close and two refused connections, exactly three drops, and a page that never tried again
+  would sit on the poll until reloaded, which for a quiet page means never seeing anyone
+  else's upload again. **The poll is still there because a stream is the first thing a
+  corporate proxy or a captive portal breaks**, and removing it would make those pages stop
+  updating altogether. **The section carries one
+  polite `role="status"` region** (`FilesSection`, visually hidden) announcing how many files
+  are processing and when none are: the list now changes with no action from the reader, and
+  the chip going is a change only a sighted one sees. One region for the section, not one per
+  row — several rows announcing the same transition is the anti-pattern — and it stays empty
+  on the first render, so nothing is read aloud for arriving on the page.
 - **Retry on a failed row is gated exactly like Delete.** `FileRow` takes one `canManage`
   flag — the uploader or the host — because the API applies one rule to both actions and two
   flags could only ever disagree with it. The retry itself needs no local state machine: the
@@ -177,6 +207,15 @@ place where that exception lives. Everything else about them matches `apiFetch` 
 `ApiError` with the API's message on a non-2xx, `AbortSignal` support, a 204 resolving to
 `undefined` — and both are tested with a small fake `XMLHttpRequest`. A third caller belongs in
 `sendWithProgress` too, or in `apiFetch`; nothing else in the app may open an `XMLHttpRequest`.
+
+**One more call is neither `apiFetch` nor an `XMLHttpRequest`: `openMeetingFileEvents`.** It
+hands back the `Response` unread, because the body is a `text/event-stream` the caller reads
+with `readEventStream` rather than something to parse. It is still the same boundary —
+`buildApiUrl`, the bearer header, a non-2xx as an `ApiError` carrying the API's own message,
+so a 401 there reaches `onUnauthorized` exactly as every other call's does. It also checks
+the content type, which no other wrapper needs to: a proxy or a misconfigured dev server can
+answer 200 with HTML, and read as a stream that is a connection which opened and closed at
+once — a reconnect loop rather than a visible failure.
 
 **Next inlines that value into the client bundle at boot, which is why the root `pnpm dev`
 resolves ports before starting anything** — see

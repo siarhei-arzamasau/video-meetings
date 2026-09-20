@@ -1,5 +1,8 @@
 import { ConfigService } from '@nestjs/config';
+import { EventBus } from '@nestjs/cqrs';
 import { Test } from '@nestjs/testing';
+
+import { MeetingFileChangedEvent } from '../events/meeting-file-changed.event';
 
 import { MeetingFileUploadRepository } from '../services/meeting-file-upload.repository';
 import type { MeetingFileUploadRecord } from '../services/meeting-file-upload.mapper';
@@ -68,6 +71,7 @@ describe('MeetingFileWorker', () => {
   const markUploadPurged = jest.fn();
   const removeTree = jest.fn();
   const remove = jest.fn();
+  const publish = jest.fn();
   const first = jest.fn();
   const second = jest.fn();
   const config = {
@@ -105,6 +109,7 @@ describe('MeetingFileWorker', () => {
           provide: MeetingFileStorage,
           useValue: { remove, removeTree, pathOf: (key: string) => key },
         },
+        { provide: EventBus, useValue: { publish } },
         { provide: PIPELINE_STEPS, useValue: steps },
       ],
     }).compile();
@@ -121,6 +126,7 @@ describe('MeetingFileWorker', () => {
     markUploadPurged.mockReset().mockResolvedValue(true);
     removeTree.mockReset().mockResolvedValue(undefined);
     remove.mockReset().mockResolvedValue(undefined);
+    publish.mockReset();
     first.mockReset().mockResolvedValue({ checksum: 'abc' });
     second.mockReset().mockResolvedValue({ thumbnailKey: 'thumb' });
     worker = await build();
@@ -138,6 +144,7 @@ describe('MeetingFileWorker', () => {
         { provide: MeetingFileRepository, useValue: {} },
         { provide: MeetingFileUploadRepository, useValue: {} },
         { provide: MeetingFileStorage, useValue: {} },
+        { provide: EventBus, useValue: { publish } },
       ],
     }).compile();
 
@@ -352,6 +359,109 @@ describe('MeetingFileWorker', () => {
       await expect(worker.drain()).rejects.toThrow('EACCES');
 
       expect(markUploadPurged).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('publishing transitions', () => {
+    /** The `MeetingFile`s the worker announced, in order. */
+    const published = (): Array<{ status: string; id: string; thumbnailPath?: string }> =>
+      publish.mock.calls.map(([event]: [MeetingFileChangedEvent]) => event.file);
+
+    it('announces processing and then ready, each carrying the whole file', async () => {
+      await worker.drain();
+
+      expect(published()).toEqual([
+        expect.objectContaining({ id: FILE_ID, status: 'processing' }),
+        expect.objectContaining({
+          id: FILE_ID,
+          status: 'ready',
+          // The patch the steps produced, not a re-read: the event is the row as it was
+          // just written.
+          thumbnailPath: `/meetings/${MEETING_ID}/files/${FILE_ID}/thumbnail`,
+        }),
+      ]);
+      expect(publish.mock.calls[0]?.[0]).toBeInstanceOf(MeetingFileChangedEvent);
+      expect(publish.mock.calls[0]?.[0].meetingId).toBe(MEETING_ID);
+    });
+
+    it('announces after the repository call resolves, never before it', async () => {
+      const order: string[] = [];
+      transition.mockImplementation(async () => {
+        await settle(5);
+        order.push('transition');
+
+        return true;
+      });
+      publish.mockImplementation(() => order.push('publish'));
+
+      await worker.drain();
+
+      // The claim's own `processing` is published first; what matters is that the `ready`
+      // announcement follows the write that made it true.
+      expect(order).toEqual(['publish', 'transition', 'publish']);
+    });
+
+    it('says nothing when the ready transition reports zero rows', async () => {
+      transition.mockResolvedValue(false);
+
+      await worker.drain();
+
+      // The claim happened, so `processing` stands; the result was discarded, so `ready`
+      // never reaches anyone. Announcing it would tell a watching page the opposite of
+      // what the row says.
+      expect(published()).toEqual([expect.objectContaining({ status: 'processing' })]);
+    });
+
+    it('announces a failure with its reason, and nothing when that transition misses', async () => {
+      second.mockRejectedValue(new StepError('The image could not be read'));
+
+      await worker.drain();
+
+      expect(published()[1]).toMatchObject({
+        status: 'failed',
+        failureReason: 'The image could not be read',
+      });
+
+      publish.mockClear();
+      claimNext.mockReset().mockResolvedValueOnce(CLAIMED).mockResolvedValue(null);
+      transition.mockResolvedValue(false);
+
+      await worker.drain();
+
+      expect(published()).toEqual([expect.objectContaining({ status: 'processing' })]);
+    });
+
+    it('announces the purge of a deleted row, and only once it is marked purged', async () => {
+      claimNext
+        .mockReset()
+        .mockResolvedValueOnce({ ...CLAIMED, status: 'deleted', previousStatus: 'deleted' })
+        .mockResolvedValue(null);
+
+      await worker.drain();
+
+      // Still `deleted`: the purge is about the bytes. A subscriber removes the row on it,
+      // which it has already done for the soft delete.
+      expect(published()).toEqual([expect.objectContaining({ id: FILE_ID, status: 'deleted' })]);
+
+      publish.mockClear();
+      claimNext
+        .mockReset()
+        .mockResolvedValueOnce({ ...CLAIMED, status: 'deleted', previousStatus: 'deleted' })
+        .mockResolvedValue(null);
+      markPurged.mockResolvedValue(false);
+
+      await worker.drain();
+
+      expect(publish).not.toHaveBeenCalled();
+    });
+
+    it('says nothing about an expired upload session: it is not a file', async () => {
+      claimNext.mockReset().mockResolvedValue(null);
+      claimExpired.mockResolvedValueOnce(EXPIRED_UPLOAD).mockResolvedValue(null);
+
+      await worker.drain();
+
+      expect(publish).not.toHaveBeenCalled();
     });
   });
 
