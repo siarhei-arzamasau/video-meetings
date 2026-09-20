@@ -32,7 +32,7 @@ export class ApiError extends Error {
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(buildApiUrl(path), {
     ...init,
-    headers: { 'content-type': 'application/json', ...init?.headers },
+    headers: jsonHeadersUnlessMultipart(init),
   });
 
   if (!response.ok) {
@@ -44,6 +44,20 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   }
 
   return (await response.json()) as T;
+}
+
+/**
+ * `content-type: application/json` for every request but a multipart one.
+ *
+ * A `FormData` body must be left to `fetch`, which sets `multipart/form-data` **with the
+ * boundary it generated**. Declaring the type here would send a boundary-less header the
+ * server cannot parse, and the failure reads as a malformed upload rather than a wrong
+ * header. A caller may still override the default; nothing here replaces an explicit value.
+ */
+function jsonHeadersUnlessMultipart(init?: RequestInit): HeadersInit {
+  return init?.body instanceof FormData
+    ? { ...init.headers }
+    : { 'content-type': 'application/json', ...init?.headers };
 }
 
 /** The same boundary for a binary response: the body as a `Blob`, the failure as an `ApiError`. */

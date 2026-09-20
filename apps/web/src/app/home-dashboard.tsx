@@ -17,7 +17,7 @@ import { useEffect, useState } from 'react';
 import { CalendarIcon, PlusIcon, SignOutIcon, WarningIcon } from '@/components/icons';
 import { MeetingStatusChip } from '@/components/meeting-status-chip';
 import { ThemeToggle } from '@/components/theme-toggle';
-import { UserInitials } from '@/components/user-initials';
+import { UserAvatar } from '@/components/user-avatar';
 import { Wordmark } from '@/components/wordmark';
 import { ApiError, listMeetings } from '@/lib/api-client';
 import { formatMeetingTime } from '@/lib/date-time';
@@ -129,7 +129,7 @@ export function HomeDashboard() {
               href="/profile"
               className="text-muted hover:text-foreground hover:bg-surface-secondary focus-visible:ring-focus flex items-center gap-2 rounded-full p-1 transition-colors outline-none focus-visible:ring-2 sm:pr-3"
             >
-              <UserInitials displayName={session.user.displayName} />
+              <UserAvatar token={session.token} user={session.user} />
               {/* The visible text is the name, so the accessible name has to contain it —
                   `aria-label="Your profile"` would replace it and break "label in name". It is
                   also what labels the link on a phone, where the name itself does not fit. */}

@@ -6,7 +6,7 @@ import Link from 'next/link';
 
 import { ArrowLeftIcon, SignOutIcon, WarningIcon } from '@/components/icons';
 import { ThemeToggle } from '@/components/theme-toggle';
-import { UserInitials } from '@/components/user-initials';
+import { UserAvatar } from '@/components/user-avatar';
 import { Wordmark } from '@/components/wordmark';
 import { formatJoinDate } from '@/lib/date-time';
 import { useSignedIn } from '@/lib/use-signed-in';
@@ -70,16 +70,17 @@ export function ProfilePage() {
 
       {session.state === 'loading' && <LoadingShell />}
 
-      {session.state === 'ready' && <AccountCard user={session.user} />}
+      {session.state === 'ready' && <AccountCard user={session.user} token={session.token} />}
     </main>
   );
 }
 
-function AccountCard({ user }: { user: User }) {
+function AccountCard({ user, token }: { user: User; token: string }) {
   return (
     <Card className="p-6">
       <div className="flex flex-wrap items-center gap-5">
-        <UserInitials displayName={user.displayName} size="lg" />
+        {/* Large here, small in the home header, initials in both when there is no picture. */}
+        <UserAvatar token={token} user={user} size="lg" />
 
         <div className="flex min-w-0 flex-col gap-0.5">
           {/* A `p`, not an `h2`: the name is the page's subject, which `h1` has already

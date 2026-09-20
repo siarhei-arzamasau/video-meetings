@@ -41,6 +41,11 @@ export const DISPLAY_NAME_MESSAGE = 'Your display name must be 1–80 characters
  * not notice the day one side reworded it and started signing users out for a typo.
  */
 export const CURRENT_PASSWORD_MESSAGE = 'That is not your current password.';
+
+/** The avatar contract, restated for the same reason. */
+export const MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024;
+export const AVATAR_SIZE_MESSAGE = 'Your picture must be 5 MB or smaller.';
+export const AVATAR_TYPE_MESSAGE = 'Your picture must be a PNG, JPEG, or WebP image.';
 export const PASSWORD_MISMATCH_MESSAGE = 'The two passwords do not match.';
 
 export const MAX_CHUNKED_MEETING_FILE_SIZE_BYTES = 1024 ** 3;
@@ -71,6 +76,26 @@ export function sparsePdf(name: string, size: number): string {
   if (!fs.existsSync(file) || fs.statSync(file).size !== size) {
     const handle = fs.openSync(file, 'w');
     fs.writeSync(handle, Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', 'latin1'));
+    fs.ftruncateSync(handle, size);
+    fs.closeSync(handle);
+  }
+
+  return file;
+}
+
+/**
+ * A PNG one byte over the avatar cap, so the form refuses it for its size rather than its
+ * type. Written once per run beside the other generated fixtures: a real PNG header followed
+ * by a hole, which costs no disk.
+ */
+export function oversizedPng(): string {
+  const file = path.join(os.tmpdir(), 'avatar-e2e-oversized.png');
+  const size = MAX_AVATAR_SIZE_BYTES + 1;
+
+  if (!fs.existsSync(file) || fs.statSync(file).size !== size) {
+    const header = fs.readFileSync(SAMPLE_PNG);
+    const handle = fs.openSync(file, 'w');
+    fs.writeSync(handle, header);
     fs.ftruncateSync(handle, size);
     fs.closeSync(handle);
   }

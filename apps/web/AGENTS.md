@@ -275,8 +275,9 @@ gate is the whole of what they render.
 **Everything the user can change goes in a section on `/profile/edit`, not in a route of its
 own.** The page owns the gate; each section owns its request and its own state. That is why
 the display name's save state lives inside `DisplayNameSection` rather than on the page, and
-why `ChangePasswordSection` beside it holds no user at all. It is where the avatar section
-belongs when its phase arrives.
+why `ChangePasswordSection` beside it holds no user at all. The three sections are picture, name, then
+password: the picture first because it is the one result the reader can see, the password last
+because a form that can lock someone out does not belong at the top of a page.
 
 **A 401 from `PATCH /auth/password` does not always mean "signed out", and that is the one
 trap on this page.** The API answers a wrong current password with 401 — login's shape, so
@@ -299,13 +300,32 @@ whole updated record, so the page that saved puts it straight back into the hook
 refetching. The hook is not a shared store — every page mounts its own copy — and nothing
 about that needs fixing: a page navigated to afterwards loads the user for itself.
 
-**`UserInitials` is the avatar.** One or two letters from the display name, and the component
-exists rather than a `<span>` per page so the header and the profile cannot disagree about a
-person's circle. It stays as the fallback once phase 6 uploads real ones. Two things in
-`initialsOf` look like fussiness and are not: characters come out with `Array.from` because a
-letter outside the BMP is two code units, and each initial is uppercased **separately**
-because uppercasing can lengthen (`'ß'` becomes `'SS'`), which would put three glyphs in a
-circle sized for two. A name with nothing renderable in it falls back to `?`.
+**`UserAvatar` is the circle, and `UserInitials` is its fallback.** Pages draw `UserAvatar`,
+which is the only thing that imports `UserInitials`. It exists rather than a
+`<span>` per page so the header and the profile cannot disagree about what a person looks like.
+Two things in `initialsOf` look like fussiness and are not: characters come out with
+`Array.from` because a letter outside the BMP is two code units, and each initial is uppercased
+**separately** because uppercasing can lengthen (`'ß'` becomes `'SS'`), which would put three
+glyphs in a circle sized for two. A name with nothing renderable in it falls back to `?`.
+
+**The picture is fetched, never pointed at, and `avatarVersion` is what makes a new one
+appear.** An `<img src>` cannot carry the bearer header the avatar route requires, so the bytes
+come back as a blob — the same shape the meeting-file thumbnail uses, and one more thing the
+`HttpOnly` cookie migration would delete. The API's avatar path is the _same string_ for every
+picture an account will ever have, so the fetch is keyed on `avatarVersion` instead; a fetch
+keyed on the path would keep drawing the picture that was replaced.
+
+**`UserAvatar` revokes its object URL in a second effect, and that is load-bearing.** React runs
+that cleanup only after the DOM already holds the next URL, so the browser never has an `<img>`
+pointing at a freed blob. Revoking inside the fetch effect — the obvious single-effect version,
+and what `file-row.tsx`'s thumbnail does — releases the picture on screen the moment a
+replacement starts loading, and the user watches a broken image until it arrives. A unit test
+pins the ordering.
+
+**A `FormData` body is the one case `apiFetch` does not label.** It leaves the `content-type` to
+the browser, which is the only thing that can produce the multipart boundary; declaring it would
+send a boundary-less header the server cannot parse, and the failure reads as a broken upload
+rather than a wrong header.
 
 ## Tests
 

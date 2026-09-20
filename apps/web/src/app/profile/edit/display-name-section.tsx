@@ -41,7 +41,7 @@ const NO_FIELD_ERRORS: Record<string, string> = {};
 /**
  * The display name, and nothing else this phase touches.
  *
- * One file per section, because the page is where phases 4 and 6 add password and avatar: the
+ * One file per section, because the page carries three of them — picture, name, password: the
  * page owns the gate and decides which sections exist, and each section owns its request, its
  * state, and the skeleton that stands in for its own shape.
  *
@@ -114,8 +114,8 @@ export function DisplayNameSection({
     <Card className="p-6">
       <Card.Header className="gap-1.5 p-0">
         {/* An `h2`, not the `h3` `Card.Title` defaults to: this page's only heading above it is
-            the `h1`, so a section that stayed an `h3` would skip a level — and this page is
-            where phases 4 and 6 add sibling sections, each with a heading of its own. */}
+            the `h1`, so a section that stayed an `h3` would skip a level — and the picture and
+            the password beside it are siblings, each with a heading of its own. */}
         <Card.Title
           className="text-lg"
           render={({ children, ...props }) => <h2 {...props}>{children}</h2>}

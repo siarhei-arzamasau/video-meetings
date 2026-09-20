@@ -7,9 +7,9 @@ import { initialsOf } from '@/lib/user';
  * initials would read the same person twice — and a screen reader spelling out "AL" next to
  * "Ada Lovelace" tells the listener nothing the name did not.
  *
- * This is the whole avatar until phase 6 uploads one, and the fallback after it, which is why
- * it is a component rather than a `<span>` in each page: the header and the profile must not
- * be able to disagree about what a person's circle looks like.
+ * `UserAvatar` is what pages draw and this is what it falls back to, so it is reached only
+ * through that component rather than imported page by page: the header and the profile must
+ * not be able to disagree about what a person's circle looks like.
  */
 export function UserInitials({
   displayName,

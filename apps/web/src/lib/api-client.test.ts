@@ -9,6 +9,8 @@ import {
   ApiError,
   buildApiUrl,
   changePassword,
+  deleteAvatar,
+  fetchAvatar,
   getApiBaseUrl,
   getHealth,
   getMe,
@@ -16,6 +18,7 @@ import {
   login,
   register,
   updateDisplayName,
+  uploadAvatar,
 } from './api-client';
 
 afterEach(() => {
@@ -400,6 +403,109 @@ describe('changePassword', () => {
     stubFetch(new Response('upstream exploded', { status: 500 }));
 
     await expect(change()).rejects.toMatchObject({ status: 500 });
+  });
+});
+
+/** The file every upload case sends. A function, so no two tests share one `File`. */
+const picture = () => new File(['bytes'], 'ada.png', { type: 'image/png' });
+
+describe('the avatar endpoints', () => {
+  const USER = {
+    id: '11111111-1111-4111-8111-111111111111',
+    email: 'ada@example.com',
+    displayName: 'Ada Lovelace',
+    avatarPath: '/users/me/avatar',
+    avatarVersion: 4,
+    createdAt: '2026-07-30T00:00:00.000Z',
+  };
+
+  describe('uploadAvatar', () => {
+    it('posts the file as multipart under the field the API reads', async () => {
+      vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com/api');
+      const fetchMock = stubFetch(jsonResponse(200, USER));
+
+      await expect(uploadAvatar('a-signed-jwt', picture())).resolves.toEqual(USER);
+
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+      expect(url).toBe('https://api.example.com/api/users/me/avatar');
+      expect(init.method).toBe('POST');
+      expect(init.body).toBeInstanceOf(FormData);
+      expect((init.body as FormData).get('avatar')).toBeInstanceOf(File);
+    });
+
+    it('leaves the content type to the browser', async () => {
+      const fetchMock = stubFetch(jsonResponse(200, USER));
+
+      await uploadAvatar('a-signed-jwt', picture());
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+      // A declared `multipart/form-data` would carry no boundary, and the server could not
+      // parse the body — a failure that reads as a broken upload rather than a wrong header.
+      expect(init.headers).toEqual({ authorization: 'Bearer a-signed-jwt' });
+    });
+
+    it('surfaces the 415 for a type the server refuses', async () => {
+      stubFetch(jsonResponse(415, { statusCode: 415, message: 'That is not an image' }));
+
+      await expect(uploadAvatar('a-signed-jwt', picture())).rejects.toMatchObject({ status: 415 });
+    });
+
+    it('surfaces the 400 for an image the server cannot decode', async () => {
+      stubFetch(jsonResponse(400, { statusCode: 400, message: 'broken' }));
+
+      await expect(uploadAvatar('a-signed-jwt', picture())).rejects.toMatchObject({ status: 400 });
+    });
+  });
+
+  describe('fetchAvatar', () => {
+    it('asks for the bytes with the bearer header and resolves to a blob', async () => {
+      vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com/api');
+      const fetchMock = stubFetch(
+        new Response(new Blob(['webp bytes']), {
+          status: 200,
+          headers: { 'content-type': 'image/webp' },
+        }),
+      );
+
+      const blob = await fetchAvatar('a-signed-jwt');
+
+      expect(blob).toBeInstanceOf(Blob);
+
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+      // No `content-type` on the request: this one only reads. The bearer header is the
+      // reason an `<img src>` cannot do this job.
+      expect(url).toBe('https://api.example.com/api/users/me/avatar');
+      expect(init.headers).toEqual({ authorization: 'Bearer a-signed-jwt' });
+    });
+
+    it('rejects a 404 as an ApiError, so the caller can fall back to initials', async () => {
+      stubFetch(jsonResponse(404, { statusCode: 404, message: 'No avatar' }));
+
+      await expect(fetchAvatar('a-signed-jwt')).rejects.toMatchObject({ status: 404 });
+    });
+  });
+
+  describe('deleteAvatar', () => {
+    it('deletes and returns the updated user', async () => {
+      const cleared = { ...USER, avatarPath: undefined, avatarVersion: 5 };
+      const fetchMock = stubFetch(jsonResponse(200, cleared));
+
+      await expect(deleteAvatar('a-signed-jwt')).resolves.toMatchObject({ avatarVersion: 5 });
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+      expect(init.method).toBe('DELETE');
+      expect(init.headers).toMatchObject({ authorization: 'Bearer a-signed-jwt' });
+    });
+
+    it('rejects a 401 so the caller can sign the user out', async () => {
+      stubFetch(jsonResponse(401, { statusCode: 401, message: 'Unauthorized' }));
+
+      await expect(deleteAvatar('an-expired-jwt')).rejects.toMatchObject({ status: 401 });
+    });
   });
 });
 
