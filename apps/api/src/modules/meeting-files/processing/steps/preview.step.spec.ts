@@ -30,6 +30,7 @@ describe('PreviewStep', () => {
     storageKey: KEY,
     checksum: null,
     thumbnailKey: null,
+    transcriptKey: null,
     status: 'processing',
     failureReason: null,
     attempts: 1,

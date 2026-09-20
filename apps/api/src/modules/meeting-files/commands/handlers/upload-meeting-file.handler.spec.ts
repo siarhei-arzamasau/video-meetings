@@ -56,6 +56,7 @@ describe('UploadMeetingFileHandler', () => {
         storageKey: data.storageKey ?? '',
         checksum: null,
         thumbnailKey: null,
+        transcriptKey: null,
         status: 'uploaded',
         failureReason: null,
         attempts: 0,

@@ -277,8 +277,8 @@ the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-p
   worker took) and discards its result rather than overwriting — including removing the
   thumbnail it wrote, which nothing else will ever find.
 - **`purgedAt` is the purge marker the PRD's schema lacked.** Delete is soft; the worker
-  claims `deleted` rows that are not yet purged, removes the object and the thumbnail, and sets
-  `purged_at`. Without the column, "deleted rows still holding bytes" would be unknowable and
+  claims `deleted` rows that are not yet purged, removes the object, the thumbnail and the
+  transcript, and sets `purged_at`. Without the column, "deleted rows still holding bytes" would be unknowable and
   a crash mid-`unlink` unrecoverable. The thumbnail is removed by the key `thumbnailKeyOf`
   derives, not the one on the row: a file deleted while processing is purged before the row
   has learned its key, and the thumbnail written afterwards would otherwise be orphaned.
@@ -350,6 +350,38 @@ the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-p
   retry is the uploader or the host, the delete rule, with the same 404 for everyone else.
   `attempts` going back to 0 is deliberate: a retry is a fresh chance, not a fourth attempt
   against the cap of three.
+- **Transcription is one more `PIPELINE` entry, and that was the point of the list.** Adding
+  `TranscribeStep` changed no status, no route, and nothing in the worker except the
+  heartbeat below. It is behind `MEETING_FILES_TRANSCRIPTION_ENABLED`, **off by default**, and
+  the flag is read from `ConfigService` **when the step runs, not at boot** — turning
+  transcription on is a configuration change, not a deployment. `TRANSCRIPTION_API_URL` is
+  still validated at boot when the flag is on, so a process cannot start in a state where
+  turning it on would fail every file. A file the step does not apply to — a PDF, or anything
+  uploaded while the flag was off — is **skipped, not failed**: it reaches `ready` with no
+  transcript and no reason. Turning the flag on later does not reprocess those files; retry
+  does, one file at a time.
+- **The provider is a port with one adapter.** `TranscriptionProvider` is
+  `transcribe(stream, contentType, signal)` and nothing else, bound under the string token
+  `TRANSCRIPTION_PROVIDER` so a spec can substitute a fake without importing the module. The
+  adapter posts an OpenAI-compatible `audio/transcriptions` request — served by hosted
+  providers and self-hosted Whisper servers alike, which is what makes the vendor
+  configuration rather than code. The object is **streamed** into the multipart body, never
+  buffered, so a gigabyte of video costs a chunk of memory; that is why it is `fetch` with
+  `duplex: 'half'` and not a `FormData` of `Blob`s. The endpoint's filename is derived from
+  the sniffed type (`recording.mp3`), never the user's name: an OpenAI-compatible endpoint
+  routes on that extension, and the user's text has no business on a third party's wire.
+  Every failure — non-2xx, timeout, dropped connection — is one `StepError` with one message;
+  the vendor's own words stay in the log.
+- **A slow step keeps its lease with a heartbeat.** Transcribing an hour of audio outlasts the
+  60 second lease, and a lapsed lease is reclaimed by another worker — after which the first
+  one's result must be thrown away. So while the steps run, the worker renews `leased_until`
+  every `lease / 3` seconds through `MeetingFileRepository.renewLease`, **the module's second
+  raw statement**, which returns the lease the row now holds. That return value is why it is
+  raw: the final `transition` is conditional on `leased_until`, so it has to match the value
+  the _last renewal_ set, not the one the claim did. A renewal that updates zero rows means
+  the row is no longer ours; the heartbeat then reports `null`, both conditional updates miss
+  on purpose, and the patch — thumbnail and transcript alike — is discarded and its bytes
+  removed.
 - **Downloads declare the object's real length.** `Content-Length` is the `stat` size, not the
   record's; they differ only for a truncated object, which is already `failed` with a reason,
   and declaring the record's length would turn that download into an aborted transfer instead

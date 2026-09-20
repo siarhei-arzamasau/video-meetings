@@ -32,6 +32,7 @@ const RECORD: MeetingFileRecord = {
   storageKey: `${MEETING_ID}/${FILE_ID}`,
   checksum: null,
   thumbnailKey: null,
+  transcriptKey: null,
   status: 'failed',
   failureReason: 'The stored file is incomplete',
   attempts: 3,

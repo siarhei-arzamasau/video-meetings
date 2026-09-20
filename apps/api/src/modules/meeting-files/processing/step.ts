@@ -13,6 +13,7 @@ export interface StepContext {
 export interface StepPatch {
   checksum?: string;
   thumbnailKey?: string;
+  transcriptKey?: string;
 }
 
 export interface ProcessingStep {

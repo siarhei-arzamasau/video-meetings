@@ -22,6 +22,7 @@ const RECORD: MeetingFileRecord = {
   storageKey: `${MEETING_ID}/${FILE_ID}`,
   checksum: 'sha',
   thumbnailKey: null,
+  transcriptKey: null,
   status: 'uploaded',
   failureReason: null,
   attempts: 0,

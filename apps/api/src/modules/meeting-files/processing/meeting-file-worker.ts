@@ -11,7 +11,7 @@ import { MEETING_FILE_PROCESSING_FAILED_MESSAGE } from '@repo/shared';
 
 import { MeetingFileUploadRepository } from '../services/meeting-file-upload.repository';
 import type { MeetingFileUploadRecord } from '../services/meeting-file-upload.mapper';
-import { thumbnailKeyOf } from '../services/meeting-file.mapper';
+import { thumbnailKeyOf, transcriptKeyOf } from '../services/meeting-file.mapper';
 import { MeetingFileRepository } from '../services/meeting-file.repository';
 import type { ClaimedFile } from '../services/meeting-file.repository';
 import { MeetingFileStorage } from '../storage/meeting-file-storage';
@@ -176,11 +176,26 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
       return;
     }
 
-    let patch: StepPatch;
+    // The lease this claim was given, extended while the steps run. A step slower than the
+    // lease — transcribing an hour of audio — would otherwise have its row reclaimed by
+    // another worker and its result thrown away for no reason.
+    const heartbeat = this.startHeartbeat(claimed, lease);
+    let outcome: { patch: StepPatch } | { error: unknown };
 
     try {
-      patch = await this.runSteps(claimed);
+      outcome = { patch: await this.runSteps(claimed) };
     } catch (error) {
+      outcome = { error };
+    }
+
+    // Stopped exactly once, whichever way the steps ended, and before anything is written:
+    // the lease it hands back is the one the row actually holds. A renewal that found the row
+    // was no longer ours leaves `null`, which makes both conditional updates below miss on
+    // purpose and the result be discarded.
+    const held = heartbeat.stop();
+
+    if ('error' in outcome) {
+      const { error } = outcome;
       const cause = error instanceof StepFailure ? error.cause : error;
       const reason = cause instanceof StepError ? cause.userMessage : GENERIC_FAILURE;
 
@@ -190,17 +205,18 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
       );
       // Whatever the earlier steps produced is kept: a checksum from verify is still true of
       // the bytes even when preview could not read them.
-      await this.fail(claimed, lease, reason, startedAt, patchBefore(error));
+      await this.fail(claimed, held, reason, startedAt, patchBefore(error));
 
       return;
     }
 
+    const { patch } = outcome;
     const changed = await this.files.transition(
       claimed.id,
       'processing',
       'ready',
       { ...patch, processedAt: new Date(), leasedUntil: null },
-      lease,
+      held,
     );
 
     if (changed) {
@@ -219,6 +235,66 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     if (patch.thumbnailKey !== undefined) {
       await this.storage.remove(patch.thumbnailKey);
     }
+
+    if (patch.transcriptKey !== undefined) {
+      await this.storage.remove(patch.transcriptKey);
+    }
+  }
+
+  /**
+   * Extends the claim's lease every `lease / 3` seconds until `stop()` is called, and hands
+   * back the lease the row actually holds — `null` once a renewal has found the row is no
+   * longer ours, which makes the caller's conditional update miss and its result be discarded.
+   *
+   * A third of the lease, so two renewals may be lost before it expires. The timer is
+   * `unref`ed: a heartbeat must never be the reason the process stays alive.
+   */
+  private startHeartbeat(claimed: ClaimedFile, lease: Date | null): { stop(): Date | null } {
+    const everyMs = Math.max(1_000, Math.floor((this.leaseSeconds / 3) * 1_000));
+    let current = lease;
+    let running = true;
+
+    const beat = async (): Promise<void> => {
+      if (!running || current === null) {
+        return;
+      }
+
+      try {
+        const renewed = await this.files.renewLease(claimed.id, current, this.leaseSeconds);
+
+        if (renewed === null) {
+          // Deleted, or reclaimed after an expiry this heartbeat did not prevent. Stop
+          // renewing; the result will be discarded when the step finishes.
+          this.logger.warn(
+            `File ${claimed.id} of meeting ${claimed.meetingId}: lease lost while processing`,
+          );
+          current = null;
+
+          return;
+        }
+
+        current = renewed;
+      } catch (error) {
+        // A failed renewal is not a lost lease: the next beat tries again, and the transition
+        // at the end is the real check.
+        this.logger.error(
+          `File ${claimed.id}: renewing the lease failed`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
+    };
+
+    const timer = setInterval(() => void beat(), everyMs);
+    timer.unref();
+
+    return {
+      stop: () => {
+        running = false;
+        clearInterval(timer);
+
+        return current;
+      },
+    };
   }
 
   /**
@@ -263,8 +339,8 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
   }
 
   /**
-   * Removes the object and the thumbnail — by the key the preview step derives, not only the
-   * one on the row: a file deleted while it was processing can be purged before the step has
+   * Removes the object, the thumbnail and the transcript — by the keys the steps derive, not
+   * only the ones on the row: a file deleted while it was processing can be purged before the step has
    * written the thumbnail, and the row never learns the key. `remove` is idempotent, so a
    * thumbnail that never existed costs one `rm -f`.
    *
@@ -275,7 +351,7 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
   private async purge(claimed: ClaimedFile, startedAt: number): Promise<void> {
     if (claimed.attempts > MAX_ATTEMPTS) {
       this.logger.error(
-        `File ${claimed.id} claimed ${String(claimed.attempts)} times for purge; marking it purged with objects possibly left at ${claimed.storageKey} and ${thumbnailKeyOf(claimed.storageKey)}`,
+        `File ${claimed.id} claimed ${String(claimed.attempts)} times for purge; marking it purged with objects possibly left at ${claimed.storageKey}, ${thumbnailKeyOf(claimed.storageKey)} and ${transcriptKeyOf(claimed.storageKey)}`,
       );
       await this.files.markPurged(claimed.id);
 
@@ -284,6 +360,7 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
 
     await this.storage.remove(claimed.storageKey);
     await this.storage.remove(thumbnailKeyOf(claimed.storageKey));
+    await this.storage.remove(transcriptKeyOf(claimed.storageKey));
     await this.files.markPurged(claimed.id);
     this.logger.log(
       `File ${claimed.id} of meeting ${claimed.meetingId}: purged in ${String(Date.now() - startedAt)}ms`,

@@ -29,6 +29,13 @@ cp .env.example .env
 cp apps/api/.env.example apps/api/.env
 cp apps/web/.env.example apps/web/.env.local
 
+pnpm start:dev                  # Postgres, Prisma client, migrations, then both apps
+```
+
+`pnpm start:dev` is the one-command version. The steps it wraps, if you would rather run them
+yourself:
+
+```bash
 docker compose up -d postgres   # PostgreSQL on :5433
 pnpm --filter=@repo/api prisma:generate  # generate the client (gitignored; `dev` does not do it)
 pnpm --filter=@repo/api prisma:migrate   # create the schema
@@ -40,6 +47,11 @@ boot; set `MEETING_FILES_DIR` to move it). Under `docker compose` the API keeps 
 volume instead. Files up to 100 MB are uploaded in one request; larger ones, up to 1 GB, are
 uploaded in chunks and can be resumed, and an unfinished upload is discarded after
 `MEETING_FILE_UPLOAD_TTL_HOURS` (default 24).
+
+Transcription of audio and video is off by default; turning on
+`MEETING_FILES_TRANSCRIPTION_ENABLED` needs `TRANSCRIPTION_API_URL` (an OpenAI-compatible
+`audio/transcriptions` endpoint), optionally `TRANSCRIPTION_API_KEY`, and bounds each request
+with `TRANSCRIPTION_TIMEOUT_SECONDS`.
 
 `pnpm dev` prints the ports it chose. Those two are preferences rather than requirements: when
 something else already holds one, it moves up to the next free port and points the frontend at
@@ -68,6 +80,7 @@ Run from the repository root:
 | Script                              | Does                                                    |
 | ----------------------------------- | ------------------------------------------------------- |
 | `pnpm dev`                          | Starts every app in watch mode, on the first free ports |
+| `pnpm start:dev`                    | The same, after starting Postgres and migrating it      |
 | `pnpm build`                        | Builds `@repo/shared`, then both apps                   |
 | `pnpm typecheck`                    | `tsc --noEmit` across every package                     |
 | `pnpm test`                         | Vitest (web) and Jest (api)                             |

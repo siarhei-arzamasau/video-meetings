@@ -14,7 +14,15 @@ import { StoreChunkHandler } from './commands/handlers/store-chunk.handler';
 import { UploadMeetingFileHandler } from './commands/handlers/upload-meeting-file.handler';
 import { MeetingFileUploadsController } from './meeting-file-uploads.controller';
 import { MeetingFilesController } from './meeting-files.controller';
-import { MEETING_FILE_WORKER, MeetingFileWorker } from './processing/meeting-file-worker';
+import {
+  MEETING_FILE_WORKER,
+  MeetingFileWorker,
+  PIPELINE_STEPS,
+} from './processing/meeting-file-worker';
+import { buildPipeline } from './processing/pipeline';
+import { TranscribeStep } from './processing/steps/transcribe.step';
+import { HttpTranscriptionProvider } from './processing/transcription/http-transcription.provider';
+import { TRANSCRIPTION_PROVIDER } from './processing/transcription/transcription-provider';
 import { ContentSniffer } from './services/content-sniffer';
 import { MeetingFileUploadRepository } from './services/meeting-file-upload.repository';
 import { MeetingFileUploadsService } from './services/meeting-file-uploads.service';
@@ -54,6 +62,17 @@ import { MeetingFileUploadInterceptor } from './storage/meeting-file-upload.inte
     MeetingFileStorage,
     MeetingFileUploadInterceptor,
     ContentSniffer,
+    TranscribeStep,
+    // The port's one implementation. A deployment swaps vendors through
+    // TRANSCRIPTION_API_URL; swapping *protocols* is this one line.
+    { provide: TRANSCRIPTION_PROVIDER, useClass: HttpTranscriptionProvider },
+    // The step list the worker runs. A provider rather than the module-level `PIPELINE`,
+    // because the transcription step has dependencies and `pipeline.ts` cannot `new` it.
+    {
+      provide: PIPELINE_STEPS,
+      useFactory: (transcribe: TranscribeStep) => buildPipeline(transcribe),
+      inject: [TranscribeStep],
+    },
     MeetingFileWorker,
     // Also under a string token, so the e2e spec can `app.get('MEETING_FILE_WORKER')` and
     // call `drain()` without importing anything from this module — which is what lets that

@@ -31,6 +31,7 @@ describe('VerifyStep', () => {
     storageKey: `${MEETING_ID}/${FILE_ID}`,
     checksum: null,
     thumbnailKey: null,
+    transcriptKey: null,
     status: 'processing',
     failureReason: null,
     attempts: 1,

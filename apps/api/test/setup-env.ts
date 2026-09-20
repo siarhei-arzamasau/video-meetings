@@ -25,4 +25,11 @@ process.env['JWT_EXPIRES_IN_SECONDS'] = String(TEST_JWT_EXPIRES_IN_SECONDS);
 const meetingFilesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'meeting-files-'));
 process.env['MEETING_FILES_DIR'] = meetingFilesDir;
 process.env['MEETING_FILES_WORKER_ENABLED'] = 'false';
+/**
+ * Five seconds — the shortest the environment contract allows — rather than the sixty a
+ * deployment gets: the worker renews a lease every third of it, and a spec for the heartbeat
+ * cannot wait twenty seconds for the first renewal. Safe for every other spec, because each
+ * one that cares about a lease seeds `leased_until` itself.
+ */
+process.env['MEETING_FILES_LEASE_SECONDS'] = '5';
 process.on('exit', () => fs.rmSync(meetingFilesDir, { recursive: true, force: true }));

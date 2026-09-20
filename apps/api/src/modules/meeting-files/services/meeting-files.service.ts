@@ -11,8 +11,11 @@ import type { MeetingFileRecord } from './meeting-file.mapper';
 import { FILE_NOT_FOUND, requireVisibleMeeting } from './visible-meeting';
 
 export const THUMBNAIL_NOT_FOUND = 'Thumbnail not found';
+export const TRANSCRIPT_NOT_FOUND = 'Transcript not found';
 export const OBJECT_MISSING = 'The stored file is missing';
 export const THUMBNAIL_TYPE = 'image/webp';
+/** The charset is part of it: a transcript is text in whatever language was spoken. */
+export const TRANSCRIPT_TYPE = 'text/plain; charset=utf-8';
 
 /** What the controller needs to stream an object: the headers' inputs and the bytes. */
 export interface OpenedFile {
@@ -83,6 +86,28 @@ export class MeetingFilesService {
       contentType: THUMBNAIL_TYPE,
       size,
       stream: this.storage.openRead(record.thumbnailKey),
+    };
+  }
+
+  /**
+   * The transcript, for anyone who can see the meeting — the same audience as the file. A
+   * file with no transcript is a 404 rather than an empty body: it is the difference between
+   * "not transcribed" and "transcribed to silence", and only one of those is worth polling.
+   */
+  async openTranscript(userId: string, meetingId: string, fileId: string): Promise<OpenedFile> {
+    const record = await this.visibleRecord(userId, meetingId, fileId);
+
+    if (record.transcriptKey === null) {
+      throw new NotFoundException(TRANSCRIPT_NOT_FOUND);
+    }
+
+    const { size } = await this.statObject(record.transcriptKey);
+
+    return {
+      name: `${record.name}.transcript.txt`,
+      contentType: TRANSCRIPT_TYPE,
+      size,
+      stream: this.storage.openRead(record.transcriptKey),
     };
   }
 

@@ -19,7 +19,7 @@ const ID = String.raw`[0-9a-f-]{36}`;
  * exactly one key and a resend cannot land beside the chunk it was meant to replace.
  */
 const KEY_PATTERN = new RegExp(
-  String.raw`^(${ID}\/${ID}(\.thumb\.webp)?|uploads\/${ID}\/(0|[1-9]\d{0,8}))$`,
+  String.raw`^(${ID}\/${ID}(\.thumb\.webp|\.transcript\.txt)?|uploads\/${ID}\/(0|[1-9]\d{0,8}))$`,
 );
 
 /** The id segment of an upload's chunk directory, for `removeTree`. */
@@ -106,6 +106,18 @@ export class MeetingFileStorage implements OnModuleInit {
     }
 
     await rm(path.join(this.root, UPLOADS_DIR, uploadId), { recursive: true, force: true });
+  }
+
+  /**
+   * Text beside an object — the transcription step's output, written as UTF-8. Here rather
+   * than an `fs.writeFile` at the call site, so every filesystem call stays behind the key
+   * check: a step writes by key or not at all.
+   */
+  async writeText(key: string, contents: string): Promise<void> {
+    const destination = this.pathOf(key);
+
+    await mkdir(path.dirname(destination), { recursive: true });
+    await writeFile(destination, contents, 'utf8');
   }
 
   openRead(key: string): fs.ReadStream {

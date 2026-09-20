@@ -8,6 +8,7 @@ import type { MeetingFileRecord } from './meeting-file.mapper';
 /** The columns a status change may set alongside the status itself. */
 export interface TransitionPatch {
   checksum?: string | null;
+  transcriptKey?: string | null;
   /** Only the retry sets this, back to 0; every other writer leaves the claim count alone. */
   attempts?: number;
   thumbnailKey?: string | null;
@@ -171,6 +172,33 @@ export class MeetingFileRepository {
     `;
 
     return rows[0] ?? null;
+  }
+
+  /**
+   * Extends the lease of a row this worker is still holding, and answers with the lease it
+   * now has — or `null` when the row was not ours any more.
+   *
+   * The heartbeat a slow step needs: transcribing an hour of audio outlasts a 60 second
+   * lease, and a lease that lapses mid-step is reclaimed by another worker, after which the
+   * first one's result must be thrown away. Matching `leased_until` as well as the status is
+   * what makes that detectable — a reclaim keeps the status at `processing`, so status alone
+   * cannot tell the current holder from the one it replaced.
+   *
+   * Raw, and the second statement in this module that has to be: the new lease is computed by
+   * the database (`now()`, as `claimNext` does) and returned in the same statement, so the
+   * caller's next conditional update matches without trusting the application's clock.
+   */
+  async renewLease(id: string, lease: Date | null, leaseSeconds: number): Promise<Date | null> {
+    const rows = await this.prisma.$queryRaw<Array<{ leasedUntil: Date }>>`
+      UPDATE "meeting_files"
+      SET leased_until = now() + make_interval(secs => ${leaseSeconds})
+      WHERE id = ${id}::uuid
+        AND status = 'processing'
+        AND leased_until IS NOT DISTINCT FROM ${lease}::timestamptz
+      RETURNING leased_until AS "leasedUntil"
+    `;
+
+    return rows[0]?.leasedUntil ?? null;
   }
 
   /** Marks a deleted row's bytes gone and releases its lease. Returns whether the row was still deleted. */

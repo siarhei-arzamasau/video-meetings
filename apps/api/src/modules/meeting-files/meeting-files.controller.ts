@@ -108,6 +108,23 @@ export class MeetingFilesController {
     );
   }
 
+  /**
+   * The transcript the pipeline wrote, inline as plain text. `nosniff` and `no-store` as for
+   * every other stream here: what is served is the output of a third party, and a browser
+   * must not be given the chance to decide it is something other than text.
+   */
+  @Get(':fileId/transcript')
+  async transcript(
+    @CurrentUser() user: User,
+    @Param('id', UUID_V4) meetingId: string,
+    @Param('fileId', UUID_V4) fileId: string,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<StreamableFile> {
+    const opened = await this.files.openTranscript(user.id, meetingId, fileId);
+
+    return stream(response, opened, 'inline');
+  }
+
   /** Soft delete by the uploader or the host; the worker purges the bytes later. */
   @Delete(':fileId')
   @HttpCode(204)

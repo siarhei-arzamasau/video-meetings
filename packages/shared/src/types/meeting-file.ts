@@ -27,6 +27,8 @@ export interface MeetingFile {
   failureReason?: string;
   /** Present when a thumbnail exists; a relative API path. */
   thumbnailPath?: string;
+  /** Present when a transcript exists; a relative API path. */
+  transcriptPath?: string;
   /** ISO 8601 instants, UTC. */
   createdAt: string;
   processedAt?: string;
