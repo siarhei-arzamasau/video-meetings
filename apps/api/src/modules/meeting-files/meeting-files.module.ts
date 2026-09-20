@@ -24,6 +24,7 @@ import { TranscribeStep } from './processing/steps/transcribe.step';
 import { HttpTranscriptionProvider } from './processing/transcription/http-transcription.provider';
 import { TRANSCRIPTION_PROVIDER } from './processing/transcription/transcription-provider';
 import { ContentSniffer } from './services/content-sniffer';
+import { MeetingFileEventsService } from './services/meeting-file-events.service';
 import { MeetingFileUploadRepository } from './services/meeting-file-upload.repository';
 import { MeetingFileUploadsService } from './services/meeting-file-uploads.service';
 import { MeetingFileRepository } from './services/meeting-file.repository';
@@ -56,6 +57,7 @@ import { MeetingFileUploadInterceptor } from './storage/meeting-file-upload.inte
     CompleteUploadHandler,
     AbortUploadHandler,
     MeetingFilesService,
+    MeetingFileEventsService,
     MeetingFileUploadsService,
     MeetingFileRepository,
     MeetingFileUploadRepository,
