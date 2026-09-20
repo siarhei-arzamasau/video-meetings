@@ -50,7 +50,11 @@ test.describe('retrying a failed file', () => {
 
     const row = await uploadBrokenImage(page);
 
-    // The reason the worker stored, in the chip's tooltip.
+    // The reason the worker stored, in the chip's tooltip. The pointer is nudged first: on a
+    // fresh page Playwright's mouse jumps from its initial position straight onto the chip,
+    // and React Aria does not count an arrival it never saw travel as a hover — a person has
+    // always moved the mouse across the page before reaching the chip. Any movement suffices.
+    await page.mouse.move(1, 1);
     await failedChip(row).hover();
     await expect(page.getByText('The image could not be read')).toBeVisible();
 
