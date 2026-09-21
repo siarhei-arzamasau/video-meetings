@@ -194,9 +194,9 @@ collaborator gets. There are currently three, each a reviewer for one concern:
 `security-reviewer` for vulnerabilities, `performance-reviewer` for N+1 queries and similar
 waste, and `test-coverage-reviewer` for untested paths and missing edge cases. The
 `review-all` skill runs all three in parallel and merges their findings into one report.
-The `security-review` skill (vendored from `getsentry/skills`, OWASP-derived references
-beside it) is the deeper, confidence-gated pass: it reports only what it has traced to
-attacker-controlled input.
+`security-reviewer` preloads the `security-review` skill (vendored from `getsentry/skills`,
+OWASP-derived references beside it), so its pass — alone or under `review-all` — is
+confidence-gated: it reports only what it has traced to attacker-controlled input.
 Put one here only when the whole team should have it — `~/.claude/agents/` is the personal
 scope, and a subagent that encodes one person's habits belongs there.
 
