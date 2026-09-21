@@ -2,8 +2,10 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CqrsModule } from '@nestjs/cqrs';
 import { JwtModule } from '@nestjs/jwt';
+import { ThrottlerModule } from '@nestjs/throttler';
 
 import { AuthController } from './auth.controller';
+import { authThrottlerOptions } from './auth-throttle.options';
 import { ChangePasswordHandler } from './commands/handlers/change-password.handler';
 import { LoginHandler } from './commands/handlers/login.handler';
 import { RegisterHandler } from './commands/handlers/register.handler';
@@ -38,6 +40,34 @@ import { TokenService } from './services/token.service';
         // it accepts `alg: none`, so the safe value is the default here as well.
         verifyOptions: { algorithms: ['HS256'] },
       }),
+    }),
+    /**
+     * Rate limiting for the credential routes. Registered here rather than globally because
+     * this module owns the endpoints worth limiting; `ThrottlerModule` is `@Global()` of its
+     * own accord, so the guard resolves wherever it is used, but nothing else is throttled
+     * until a controller asks to be.
+     *
+     * **The tracker is the socket address, and the app does not trust `X-Forwarded-For`.**
+     * That is the right default — a header-derived key is a key an attacker picks per
+     * request, which is no limit at all. It also means that behind a reverse proxy every
+     * client arrives as the proxy and shares one budget, so a deployment that terminates TLS
+     * elsewhere must set Express's `trust proxy` before this limit is per-client again.
+     *
+     * Storage is in-process, so each replica counts its own. One API container counts
+     * everything; a scaled-out deployment multiplies the effective limit by its replica count
+     * and wants a shared store (`ThrottlerStorageRedisService`) instead.
+     *
+     * The options are a function in `auth-throttle.options.ts` rather than a literal here, so
+     * `auth-rate-limit.e2e-spec.ts` can narrow the budget to something a test can spend
+     * without restating the key strategy it exists to check.
+     */
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) =>
+        authThrottlerOptions(
+          config.getOrThrow<number>('AUTH_RATE_LIMIT_WINDOW_SECONDS'),
+          config.getOrThrow<number>('AUTH_RATE_LIMIT_ATTEMPTS'),
+        ),
     }),
   ],
   controllers: [AuthController],

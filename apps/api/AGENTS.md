@@ -241,9 +241,31 @@ already refused it once), then the current password, and only then whether the n
 it. Asking "is this actually a change?" before verifying would tell someone holding a stolen
 token whether a guessed password is the account's current one.
 
-**The PRD's "rate-limited the same way login is, if login is" resolves to nothing today.**
-There is no throttler in this app — `/auth/login` is unlimited — so this endpoint inherits
-the same absence. Adding rate limiting means adding it to both in the same change.
+**The PRD's "rate-limited the same way login is, if login is" resolves to one budget for the
+three credential routes.** `AuthController` carries `@UseGuards(ThrottlerGuard)` at class
+level, so a route added to it is limited by default and has to opt out on purpose — `me` is
+the only one that does, because the web app calls it to gate every page and would otherwise
+spend a budget meant for password attempts. Four things about it are worth knowing before
+changing it:
+
+- **The key deliberately ignores the handler** (`auth-throttle.options.ts`). The throttler's
+  default counts per route, which would hand register, login, and the password change an
+  allowance each — three times the stated limit, collectable by rotating endpoints.
+- **The budget is also a cost limit, not only an anti-guessing one.** Every login attempt
+  spends a full argon2id verification even when no account matches, because `LoginHandler`
+  hashes a dummy on the miss path to close the timing oracle. Unlimited, that turns a stream
+  of tiny unauthenticated POSTs into memory-hard work on the libuv threadpool.
+- **The tracker is the socket address, and Express is not configured to trust
+  `X-Forwarded-For`.** That is correct — a header-derived key is one the caller chooses — but
+  behind a reverse proxy every client arrives as the proxy and shares one budget. A deployment
+  that terminates TLS elsewhere has to set `trust proxy` before the limit is per-client again.
+- **Storage is in-process**, so replicas do not share a counter and N replicas mean N times the
+  limit. A scaled-out deployment wants a shared store.
+
+`auth-rate-limit.e2e-spec.ts` pins all of it, and does it by overriding the throttler's
+options provider with `authThrottlerOptions(...)` at a budget a test can spend — the run's own
+limit (`test/setup-env.ts`) is deliberately unreachable, because every auth request in a spec
+file shares one counter and `beforeEach` truncates the database, not the throttler.
 
 **A stateless JWT is not revoked by a password change.** The token that made the change keeps
 working, and so does every other token issued for that account, until `JWT_EXPIRES_IN_SECONDS`

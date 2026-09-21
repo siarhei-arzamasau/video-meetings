@@ -5,6 +5,13 @@
 export const TEST_JWT_SECRET = 'e2e-only-secret-do-not-use-in-production';
 export const TEST_JWT_EXPIRES_IN_SECONDS = 3600;
 
+/**
+ * Auth rate limit for the run, applied by `test/setup-env.ts`. Wide enough that no spec meets
+ * it by accident; `auth-rate-limit.e2e-spec.ts` explains why that matters and overrides it.
+ */
+export const TEST_AUTH_RATE_LIMIT_WINDOW_SECONDS = 1;
+export const TEST_AUTH_RATE_LIMIT_ATTEMPTS = 1000;
+
 export const REGISTER_URL = '/api/auth/register';
 export const LOGIN_URL = '/api/auth/login';
 export const ME_URL = '/api/auth/me';

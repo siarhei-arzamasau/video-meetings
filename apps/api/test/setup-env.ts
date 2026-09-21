@@ -2,7 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { TEST_JWT_EXPIRES_IN_SECONDS, TEST_JWT_SECRET } from './utils/fixtures';
+import {
+  TEST_AUTH_RATE_LIMIT_ATTEMPTS,
+  TEST_AUTH_RATE_LIMIT_WINDOW_SECONDS,
+  TEST_JWT_EXPIRES_IN_SECONDS,
+  TEST_JWT_SECRET,
+} from './utils/fixtures';
 
 /**
  * Jest `setupFiles` entry — this must run before anything imports `AppModule`.
@@ -32,4 +37,19 @@ process.env['MEETING_FILES_WORKER_ENABLED'] = 'false';
  * one that cares about a lease seeds `leased_until` itself.
  */
 process.env['MEETING_FILES_LEASE_SECONDS'] = '5';
+
+/**
+ * A budget no spec can exhaust, over a window too short to accumulate one.
+ *
+ * Every auth request in a spec file shares one counter — one address, one in-process store,
+ * and `beforeEach` truncates the database, not the throttler — so a deployment's ten a minute
+ * would fail whichever test happened to run eleventh, in whichever file. A thousand a second
+ * cannot be reached by a suite whose auth requests each spend an argon2id hash.
+ *
+ * `auth-rate-limit.e2e-spec.ts` is the one file that wants a reachable limit, and it overrides
+ * the options rather than these: the throttler reads them at module init, long before a spec
+ * runs.
+ */
+process.env['AUTH_RATE_LIMIT_WINDOW_SECONDS'] = String(TEST_AUTH_RATE_LIMIT_WINDOW_SECONDS);
+process.env['AUTH_RATE_LIMIT_ATTEMPTS'] = String(TEST_AUTH_RATE_LIMIT_ATTEMPTS);
 process.on('exit', () => fs.rmSync(meetingFilesDir, { recursive: true, force: true }));

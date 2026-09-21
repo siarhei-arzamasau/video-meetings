@@ -143,4 +143,22 @@ describe('validate', () => {
       expect(() => validate({ ...VALID, JWT_SECRET: '' })).toThrow(/JWT_SECRET/);
     });
   });
+
+  describe('the auth rate limit', () => {
+    it('defaults to ten attempts a minute', () => {
+      const env = validate(VALID);
+
+      expect(env.AUTH_RATE_LIMIT_WINDOW_SECONDS).toBe(60);
+      expect(env.AUTH_RATE_LIMIT_ATTEMPTS).toBe(10);
+    });
+
+    it('rejects a budget or a window of zero, which would be no limit or no window', () => {
+      expect(() => validate({ ...VALID, AUTH_RATE_LIMIT_ATTEMPTS: '0' })).toThrow(
+        /AUTH_RATE_LIMIT_ATTEMPTS/,
+      );
+      expect(() => validate({ ...VALID, AUTH_RATE_LIMIT_WINDOW_SECONDS: '0' })).toThrow(
+        /AUTH_RATE_LIMIT_WINDOW_SECONDS/,
+      );
+    });
+  });
 });

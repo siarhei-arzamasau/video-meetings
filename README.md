@@ -73,6 +73,11 @@ placeholder this repository used to ship in its examples. A signing key publishe
 repository is one anybody can mint tokens with, and it is long enough to pass the length rule,
 so the length rule alone would let a deployment boot on it. `openssl rand -base64 32`.
 
+Credential requests are rate-limited: `AUTH_RATE_LIMIT_ATTEMPTS` (default 10) per
+`AUTH_RATE_LIMIT_WINDOW_SECONDS` (default 60), per client address, shared across registering,
+logging in, and changing a password. The session check the web app makes on every page is
+outside that budget.
+
 The host port is 5433 rather than the usual 5432, so the container does not collide with a
 PostgreSQL you already run locally. To use a different one, set `POSTGRES_PORT` in `.env`
 and point `DATABASE_URL` at the same port:

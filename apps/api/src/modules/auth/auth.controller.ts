@@ -9,6 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CommandBus } from '@nestjs/cqrs';
+import { SkipThrottle, ThrottlerGuard } from '@nestjs/throttler';
 import type { AuthResponse, User } from '@repo/shared';
 
 import { ChangePasswordCommand } from './commands/change-password.command';
@@ -20,7 +21,14 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
+/**
+ * The throttle guard is on the class, not on the three credential routes, so a route added
+ * here is rate-limited by default and has to opt out on purpose. `AUTH_RATE_LIMIT_ATTEMPTS`
+ * per `AUTH_RATE_LIMIT_WINDOW_SECONDS` per client address; `auth.module.ts` explains the
+ * budget and what it does not cover.
+ */
 @Controller('auth')
+@UseGuards(ThrottlerGuard)
 export class AuthController {
   constructor(private readonly commandBus: CommandBus) {}
 
@@ -63,8 +71,16 @@ export class AuthController {
     );
   }
 
-  /** Served entirely by the guard: it loads the user, this returns it. No bus involved. */
+  /**
+   * Served entirely by the guard: it loads the user, this returns it. No bus involved.
+   *
+   * The only route here outside the rate limit, and it is the one route that must be: the web
+   * app calls it to gate every page it renders, so a person clicking around normally would
+   * spend a credential budget meant for password attempts. It verifies a signature and reads
+   * one row — it guesses nothing and costs nothing worth starving.
+   */
   @Get('me')
+  @SkipThrottle()
   @UseGuards(JwtAuthGuard)
   me(@CurrentUser() user: User): User {
     return user;

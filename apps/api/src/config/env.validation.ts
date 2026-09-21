@@ -70,6 +70,30 @@ export class EnvironmentVariables {
   JWT_EXPIRES_IN_SECONDS: number = 3600;
 
   /**
+   * The window, and the number of credential attempts one client may spend inside it, on
+   * `/api/auth` — register, login, and the password change.
+   *
+   * Two problems share one budget. Password guessing is the obvious one: without a limit the
+   * login route is an oracle an attacker may consult for ever. The cheaper one is cost
+   * asymmetry — every login attempt spends a full argon2id verification even when no account
+   * matches, because `LoginHandler` deliberately hashes a dummy on the miss path to close the
+   * timing oracle. That defence turns each tiny unauthenticated POST into ~100ms of
+   * memory-hard work on the libuv threadpool, so the request budget is also what keeps a few
+   * dozen connections from starving it.
+   *
+   * Ten a minute is generous for a person and useless to a brute force. The counter is keyed
+   * on the socket address, never on a forwarded header — see the note in `auth.module.ts`
+   * about what that means behind a proxy.
+   */
+  @IsInt()
+  @Min(1)
+  AUTH_RATE_LIMIT_WINDOW_SECONDS: number = 60;
+
+  @IsInt()
+  @Min(1)
+  AUTH_RATE_LIMIT_ATTEMPTS: number = 10;
+
+  /**
    * Root of meeting file storage, resolved relative to the working directory. Created at boot
    * and checked for writability then, so a bad path fails startup rather than the first upload.
    */
