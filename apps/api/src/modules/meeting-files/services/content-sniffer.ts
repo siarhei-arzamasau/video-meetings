@@ -15,8 +15,18 @@ const ALIASES: Readonly<Record<string, string>> = {
   'audio/x-m4a': 'audio/mp4',
 };
 
-/** How much of an undetected file is read to decide whether it is text. */
+/** How much of a file is read up front: enough to decide whether an undetected one is text. */
 const TEXT_SAMPLE_BYTES = 8 * 1024;
+
+/**
+ * The first bytes of an ASF header's GUID — all `file-type` 16 checks before it walks the
+ * header's sub-objects by their declared sizes, and a sub-object that declares a size of zero
+ * rewinds that walk onto itself forever (GHSA-5v7r-6r5c-r473). A 64-byte upload is enough to
+ * leave a loop running for good. The fix shipped in 21.3.1, beyond the version this build can
+ * load (see the class comment), so the prefix is refused before the parser runs. ASF is not on
+ * the allow-list, so the answer is the 415 it would have been anyway, without the loop.
+ */
+const ASF_HEADER_PREFIX = Buffer.from([0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11, 0xa6, 0xd9]);
 
 /**
  * Plain text, Markdown, and CSV have no magic bytes. When `file-type` detects nothing and the
@@ -34,14 +44,21 @@ const TEXT_TYPES_BY_EXTENSION: Readonly<Record<string, string>> = {
 /**
  * Decides a stored file's media type from its bytes, never from what the client claimed.
  *
- * `file-type` is pinned to 16.5.4, the last CJS release: 17+ is ESM-only, which the CJS build
- * and ts-jest cannot load without dynamic-import gymnastics. It detects every binary type on
- * the allow-list, including DOCX/XLSX/PPTX by reading the zip's entries.
+ * `file-type` is pinned to 16.5.4, the last CJS release. 17+ is ESM-only: Node 24 would
+ * `require()` it, but Jest's module loader cannot, and loading it there takes dynamic-import
+ * gymnastics in both suites. It detects every binary type on the allow-list, including
+ * DOCX/XLSX/PPTX by reading the zip's entries.
  */
 @Injectable()
 export class ContentSniffer {
   /** The allow-listed media type, or `null` for anything the API will not store. */
   async sniff(filePath: string, originalName: string): Promise<string | null> {
+    const head = await readHead(filePath);
+
+    if (head.subarray(0, ASF_HEADER_PREFIX.length).equals(ASF_HEADER_PREFIX)) {
+      return null;
+    }
+
     const detected = await fromFile(filePath);
 
     if (detected !== undefined) {
@@ -50,7 +67,7 @@ export class ContentSniffer {
       return MEETING_FILE_ALLOWED_TYPES.includes(mediaType) ? mediaType : null;
     }
 
-    if (!(await looksLikeText(filePath))) {
+    if (!looksLikeText(head)) {
       return null;
     }
 
@@ -58,28 +75,32 @@ export class ContentSniffer {
   }
 }
 
-async function looksLikeText(filePath: string): Promise<boolean> {
+/** The file's first `TEXT_SAMPLE_BYTES`, or all of it when it is shorter. */
+async function readHead(filePath: string): Promise<Buffer> {
   const handle = await open(filePath, 'r');
 
   try {
     const buffer = Buffer.alloc(TEXT_SAMPLE_BYTES);
     const { bytesRead } = await handle.read(buffer, 0, TEXT_SAMPLE_BYTES, 0);
-    const sample = buffer.subarray(0, bytesRead);
 
-    if (sample.includes(0)) {
-      return false;
-    }
-
-    try {
-      // `stream: true` tolerates a multi-byte sequence cut off at the sample boundary; anything
-      // else that is not valid UTF-8 throws because of `fatal`.
-      new TextDecoder('utf-8', { fatal: true }).decode(sample, { stream: true });
-
-      return true;
-    } catch {
-      return false;
-    }
+    return buffer.subarray(0, bytesRead);
   } finally {
     await handle.close();
+  }
+}
+
+function looksLikeText(sample: Buffer): boolean {
+  if (sample.includes(0)) {
+    return false;
+  }
+
+  try {
+    // `stream: true` tolerates a multi-byte sequence cut off at the sample boundary; anything
+    // else that is not valid UTF-8 throws because of `fatal`.
+    new TextDecoder('utf-8', { fatal: true }).decode(sample, { stream: true });
+
+    return true;
+  } catch {
+    return false;
   }
 }

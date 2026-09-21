@@ -379,12 +379,17 @@ get wrong.
   before pipes and the handler, so without that check `MeetingFileUploadInterceptor` would
   write up to 100 MB for a non-UUID id or an invisible meeting and then reject it. The handler
   checks visibility again — a command has to be safe whatever dispatched it — and that second
-  indexed read is the cost of not writing 100 MB.
+  indexed read is the cost of not writing 100 MB. The check is
+  `requireVisibleMeetingBeforeBody`, which the chunk route's interceptor shares.
 - **The type is sniffed from the bytes, never the client's header.** `file-type` is pinned to
-  **16.5.4** because 17+ is ESM-only and this is a CJS build; do not "upgrade" it. Text has no
-  magic bytes, so an undetected file that decodes as UTF-8 with no NUL is typed by extension —
-  among `.txt`/`.md`/`.csv` only. An extension never elevates a file to a binary type, so
-  `page.html` renamed `page.pdf` is a 415 while renamed `notes.txt` it is stored as
+  **16.5.4** because 17+ is ESM-only: Node 24 would `require()` it, but Jest's loader cannot —
+  both suites fail with `Cannot use import statement outside a module` — so moving past it
+  means changing how Jest runs, not bumping a version; do not "upgrade" it. Its one advisory
+  since (GHSA-5v7r-6r5c-r473, an ASF-parser loop that a 64-byte upload starts) is closed by
+  refusing the ASF header prefix before the parser runs; ASF is not on the allow-list. Text
+  has no magic bytes, so an undetected file that decodes as UTF-8 with no NUL is typed by
+  extension — among `.txt`/`.md`/`.csv` only. An extension never elevates a file to a binary
+  type, so `page.html` renamed `page.pdf` is a 415 while renamed `notes.txt` it is stored as
   `text/plain` and served as an attachment with `nosniff`.
 - **Multer needs two options that look optional.** `defParamCharset: 'utf8'` — busboy decodes
   filenames as latin1 and `отчёт.pdf` arrives as mojibake without it — and `preservePath: true`,
@@ -488,18 +493,23 @@ get wrong.
   but the last must be exactly `chunk_size`, the last is the remainder. That is what makes a
   truncated chunk a 400 instead of a hole only the checksum would catch, and why the client
   never chooses the chunk size.
-- **Three things about the chunked routes are not visible in the controller.** The chunk body is
-  parsed by a raw middleware declared in `MeetingFilesModule.configure` — which is why `express`
-  is a direct dependency and not only a transitive one: pnpm's strict layout means an undeclared
-  import compiles and fails at boot. It is scoped to `MeetingFileUploadsController` (rather than
-  a path string, so it cannot drift from the route or miss the global prefix) and to `PUT` (so
-  the sibling `POST` keeps the global JSON parser), and its limit is one chunk, which rejects an
-  oversized body before it is buffered. `MeetingFileUploadsController` is listed **before**
-  `MeetingFilesController`, so `files/uploads/…` is never matched as a file id by the routes one
-  segment shorter. And a session is private to whoever opened it — the host may delete anyone's
-  file but has no business resuming anyone's upload — so `requireOwnedUpload` matches on
-  `uploaderId` and answers the same 404 for expired, purged, another meeting's, and another
-  user's.
+- **The chunk body is parsed by `MeetingFileChunkInterceptor`, and must never move back into
+  middleware.** Middleware runs before guards, so a parser there buffers up to a whole chunk of
+  every `PUT` before `JwtAuthGuard` can answer — when it was middleware, an anonymous caller with
+  a made-up path held 8 MiB of memory per connection. The interceptor answers the 401, 400, and
+  404 first (`requireVisibleMeetingBeforeBody`, shared with the single-request interceptor so the
+  two cannot drift), then parses with a one-chunk limit and inflation off; a body over the limit
+  is the contract's `Chunk length does not match`, since it is the wrong length for every index.
+  `express` is a direct dependency for `raw`: pnpm's strict layout means an undeclared import
+  compiles and fails at boot. The specs pinning this order use `putHeadersOnly`, which declares
+  a body and never sends it — supertest always sends one, and a server that rightly answers
+  early fails that upload with `EPIPE`.
+- **Two things about the chunked routes are not visible in the controller.**
+  `MeetingFileUploadsController` is listed **before** `MeetingFilesController`, so
+  `files/uploads/…` is never matched as a file id by the routes one segment shorter. And a
+  session is private to whoever opened it — the host may delete anyone's file but has no
+  business resuming anyone's upload — so `requireOwnedUpload` matches on `uploaderId` and
+  answers the same 404 for expired, purged, another meeting's, and another user's.
 
 **Events and the SSE stream**
 

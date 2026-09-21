@@ -218,10 +218,11 @@ scope, and a subagent that encodes one person's habits belongs there.
   what changed. `--no-verify` defers these checks to CI rather than skipping them.
 - **New dependencies with install scripts** must be listed under `allowBuilds` in
   `pnpm-workspace.yaml`; pnpm 11 blocks lifecycle scripts otherwise.
-- **`overrides` in `pnpm-workspace.yaml` force one version on every dependant.** Each entry says
-  why it exists and what retires it — read it before upgrading the package that pins the older
-  version. The one there now lifts multer past what Nest 11 pins; the API guide's meeting-files
-  section has what that costs.
+- **`overrides` in `pnpm-workspace.yaml` force one version on every dependant** — or, keyed on
+  a range (`'js-yaml@<3.15.2'`), on only the copies inside it. Each entry says why it exists and
+  what retires it — read it before upgrading the package that pins the older version. One lifts
+  multer past what Nest 11 pins (the API guide's meeting-files section has what that costs);
+  the other floors the js-yaml 3 copy Jest's coverage loader uses, leaving the 4.x line alone.
 - **Env files are gitignored** except `*.env.example`. When adding a variable, update the
   matching `.env.example` and, for the API, `apps/api/src/config/env.validation.ts`.
 

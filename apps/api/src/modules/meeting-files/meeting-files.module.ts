@@ -1,8 +1,5 @@
-import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { CqrsModule } from '@nestjs/cqrs';
-import { MEETING_FILE_CHUNK_SIZE_BYTES } from '@repo/shared';
-import { raw } from 'express';
-import type { NextFunction, Request, Response } from 'express';
 
 import { AuthModule } from '../auth/auth.module';
 import { AbortUploadHandler } from './commands/handlers/abort-upload.handler';
@@ -29,6 +26,7 @@ import { MeetingFileUploadRepository } from './services/meeting-file-upload.repo
 import { MeetingFileUploadsService } from './services/meeting-file-uploads.service';
 import { MeetingFileRepository } from './services/meeting-file.repository';
 import { MeetingFilesService } from './services/meeting-files.service';
+import { MeetingFileChunkInterceptor } from './storage/meeting-file-chunk.interceptor';
 import { MeetingFileStorage } from './storage/meeting-file-storage';
 import { MeetingFileUploadInterceptor } from './storage/meeting-file-upload.interceptor';
 import { VisibleMeetingGuard } from './visible-meeting.guard';
@@ -64,6 +62,7 @@ import { VisibleMeetingGuard } from './visible-meeting.guard';
     MeetingFileUploadRepository,
     MeetingFileStorage,
     MeetingFileUploadInterceptor,
+    MeetingFileChunkInterceptor,
     VisibleMeetingGuard,
     ContentSniffer,
     TranscribeStep,
@@ -84,29 +83,4 @@ import { VisibleMeetingGuard } from './visible-meeting.guard';
     { provide: MEETING_FILE_WORKER, useExisting: MeetingFileWorker },
   ],
 })
-export class MeetingFilesModule implements NestModule {
-  /**
-   * The chunk body is raw bytes, not JSON, so the route needs its own parser with a limit of
-   * one chunk — a body over it is rejected before it is buffered, which is the whole reason
-   * the limit is here and not a length check in the handler.
-   *
-   * Scoped to the controller rather than to a path string, so it cannot drift from the route
-   * or miss the global `api` prefix, and applied only to `PUT`: the sibling `POST` on the
-   * same controller takes JSON and must keep the global body parser's output.
-   */
-  configure(consumer: MiddlewareConsumer): void {
-    const chunk = raw({ type: () => true, limit: MEETING_FILE_CHUNK_SIZE_BYTES });
-
-    consumer
-      .apply((request: Request, response: Response, next: NextFunction) => {
-        if (request.method !== 'PUT') {
-          next();
-
-          return;
-        }
-
-        chunk(request, response, next);
-      })
-      .forRoutes(MeetingFileUploadsController);
-  }
-}
+export class MeetingFilesModule {}

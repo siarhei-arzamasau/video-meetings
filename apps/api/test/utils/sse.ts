@@ -1,7 +1,7 @@
 import http from 'node:http';
-import type { AddressInfo } from 'node:net';
 
 import type { ApiSuite } from './api-suite';
+import { listeningPort } from './http';
 
 /** One parsed `text/event-stream` event. `data` is the raw text; the caller parses JSON. */
 export interface SseEvent {
@@ -43,8 +43,8 @@ const DEFAULT_WAIT_MS = 5_000;
  * assert about ordering, and every test costs the TTL. This holds the response open, parses
  * each event as it lands, and hands the spec one at a time.
  *
- * The suite's server is not listening (supertest listens per request), so the first call
- * binds it to an ephemeral port. `app.close()` in the suite's `afterAll` closes it again.
+ * The suite's server is not listening (supertest listens per request), so `listeningPort`
+ * binds it on the first call.
  */
 export async function openSse(
   suite: Pick<ApiSuite, 'app'>,
@@ -96,16 +96,6 @@ export async function openSse(
 
 function bearer(token: string): http.OutgoingHttpHeaders {
   return { authorization: `Bearer ${token}`, accept: 'text/event-stream' };
-}
-
-async function listeningPort(server: http.Server): Promise<number> {
-  if (!server.listening) {
-    await new Promise<void>((resolve) => {
-      server.listen(0, '127.0.0.1', resolve);
-    });
-  }
-
-  return (server.address() as AddressInfo).port;
 }
 
 function readAll(response: http.IncomingMessage): Promise<string> {

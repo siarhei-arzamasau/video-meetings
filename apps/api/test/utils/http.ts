@@ -1,4 +1,22 @@
+import type http from 'node:http';
+import type { AddressInfo } from 'node:net';
+
 import type request from 'supertest';
+
+/**
+ * The port of the suite's server, binding it to an ephemeral one first if need be — for a
+ * client that speaks `node:http` directly, because supertest listens per request and leaves
+ * the server unbound. `app.close()` in the suite's `afterAll` closes it again.
+ */
+export async function listeningPort(server: http.Server): Promise<number> {
+  if (!server.listening) {
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', resolve);
+    });
+  }
+
+  return (server.address() as AddressInfo).port;
+}
 
 /**
  * Asserts the success contract — a body of exactly `{ accessToken }` holding something

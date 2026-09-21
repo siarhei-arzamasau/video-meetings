@@ -98,4 +98,16 @@ describe('ContentSniffer', () => {
 
     await expect(sniffer.sniff(zip, 'a.zip')).resolves.toBeNull();
   });
+
+  it('refuses an ASF header before file-type walks it, which never returns on this file', async () => {
+    // GHSA-5v7r-6r5c-r473: past the ASF header GUID, file-type 16 walks sub-objects by their
+    // declared size, and a size of zero rewinds it onto the same sub-object forever. Without
+    // the guard this test does not fail an assertion — it times out.
+    const asf = Buffer.alloc(64);
+    Buffer.from([0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11, 0xa6, 0xd9]).copy(asf);
+    asf.fill(0x11, 30, 46);
+    asf.writeBigUInt64LE(0n, 46);
+
+    await expect(sniffer.sniff(scratchFile('loop.wmv', asf), 'loop.wmv')).resolves.toBeNull();
+  }, 2_000);
 });
