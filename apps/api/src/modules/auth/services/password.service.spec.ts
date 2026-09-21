@@ -21,6 +21,12 @@ describe('PasswordService', () => {
     expect(await passwords.verify(passwordHash, 'correct horse battery')).toBe(true);
   });
 
+  it("carries OWASP's parameters — 19 MiB, two passes, one lane — in every hash", async () => {
+    const passwordHash = await passwords.hash('correct horse battery');
+
+    expect(passwordHash.startsWith('$argon2id$v=19$m=19456,t=2,p=1$')).toBe(true);
+  });
+
   it('rejects a different password', async () => {
     const passwordHash = await passwords.hash('correct horse battery');
 

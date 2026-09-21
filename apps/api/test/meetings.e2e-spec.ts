@@ -6,6 +6,7 @@ import type request from 'supertest';
 import { useApiSuite } from './utils/api-suite';
 import {
   EMAIL,
+  MAX_MEETINGS_LIMIT,
   MAX_PARTICIPANTS,
   MAX_TITLE_LENGTH,
   MEETINGS_URL,
@@ -43,8 +44,11 @@ describe('Meetings API', () => {
   const createMeeting = (token: string, body: object) =>
     suite.post(MEETINGS_URL, body).set('Authorization', `Bearer ${token}`);
 
-  const listMeetings = (token: string) =>
-    suite.get(MEETINGS_URL).set('Authorization', `Bearer ${token}`);
+  const listMeetings = (token: string, query = '') =>
+    suite.get(`${MEETINGS_URL}${query}`).set('Authorization', `Bearer ${token}`);
+
+  const fetchMeetingCount = (token: string) =>
+    suite.get(`${MEETINGS_URL}/count`).set('Authorization', `Bearer ${token}`);
 
   const getMeeting = (token: string, meetingId: string) =>
     suite.get(`${MEETINGS_URL}/${meetingId}`).set('Authorization', `Bearer ${token}`);
@@ -298,6 +302,85 @@ describe('Meetings API', () => {
         [first.body as Meeting, second.body as Meeting].toSorted((a, b) => (a.id < b.id ? -1 : 1)),
       );
     });
+
+    it('returns the latest first, as many as `limit` asks for', async () => {
+      const host = await registerUser(EMAIL);
+      const inDays = async (days: number): Promise<Meeting> => {
+        const response = await createMeeting(host.token, {
+          title: `In ${String(days)} days`,
+          scheduledAt: futureInstant(days),
+          participantIds: [],
+        }).expect(201);
+
+        return response.body as Meeting;
+      };
+      const soon = await inDays(1);
+      const latest = await inDays(3);
+      const later = await inDays(2);
+
+      const limited = await listMeetings(host.token, '?order=desc&limit=2').expect(200);
+      const everything = await listMeetings(host.token, '?order=desc').expect(200);
+
+      expect(limited.body).toEqual([latest, later]);
+      expect(everything.body).toEqual([latest, later, soon]);
+    });
+
+    it.each([
+      ['a limit of zero', '?limit=0'],
+      [`a limit over ${String(MAX_MEETINGS_LIMIT)}`, `?limit=${String(MAX_MEETINGS_LIMIT + 1)}`],
+      ['a fractional limit', '?limit=1.5'],
+      ['a limit that is not a number', '?limit=ten'],
+      ['an order it does not know', '?order=newest'],
+      ['a parameter it does not know', '?page=2'],
+    ])('rejects %s with 400', async (_description, query) => {
+      const user = await registerUser(EMAIL);
+
+      await listMeetings(user.token, query).expect(400);
+    });
+
+    it(`accepts a limit of exactly ${String(MAX_MEETINGS_LIMIT)}`, async () => {
+      const user = await registerUser(EMAIL);
+
+      await listMeetings(user.token, `?limit=${String(MAX_MEETINGS_LIMIT)}`).expect(200);
+    });
+  });
+
+  describe(`GET ${MEETINGS_URL}/count`, () => {
+    it('counts hosted and joined meetings but not unrelated ones', async () => {
+      const ada = await registerUser(EMAIL);
+      const grace = await registerUser(OTHER_EMAIL);
+      const charles = await registerUser(THIRD_EMAIL);
+      await createMeeting(ada.token, {
+        title: 'Hosted by Ada',
+        scheduledAt: futureInstant(1),
+        participantIds: [grace.id],
+      }).expect(201);
+      await createMeeting(grace.token, {
+        title: 'Hosted by Grace',
+        scheduledAt: futureInstant(2),
+        participantIds: [ada.id],
+      }).expect(201);
+      await createMeeting(charles.token, {
+        title: 'Unrelated meeting',
+        scheduledAt: futureInstant(3),
+        participantIds: [],
+      }).expect(201);
+
+      await expect(fetchMeetingCount(ada.token).expect(200)).resolves.toMatchObject({
+        body: { total: 2 },
+      });
+      await expect(fetchMeetingCount(charles.token).expect(200)).resolves.toMatchObject({
+        body: { total: 1 },
+      });
+    });
+
+    it('is zero for someone with no meetings, not a 404', async () => {
+      const user = await registerUser(EMAIL);
+
+      const response = await fetchMeetingCount(user.token).expect(200);
+
+      expect(response.body).toEqual({ total: 0 });
+    });
   });
 
   describe(`GET ${MEETINGS_URL}/:id`, () => {
@@ -381,6 +464,8 @@ describe('Meetings API', () => {
 
       await expectRejected(suite.post(MEETINGS_URL, {}));
       await expectRejected(suite.get(MEETINGS_URL));
+      await expectRejected(suite.get(`${MEETINGS_URL}?limit=not-a-number`));
+      await expectRejected(suite.get(`${MEETINGS_URL}/count`));
       await expectRejected(suite.get(`${MEETINGS_URL}/${randomUUID()}`));
     };
 

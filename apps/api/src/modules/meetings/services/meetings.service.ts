@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type { Meeting } from '@repo/shared';
+import type { Meeting, MeetingsOrder } from '@repo/shared';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { PARTICIPANTS_INCLUDE, toMeeting, visibleTo } from './meeting.mapper';
@@ -13,16 +13,27 @@ import { PARTICIPANTS_INCLUDE, toMeeting, visibleTo } from './meeting.mapper';
 export class MeetingsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(userId: string): Promise<Meeting[]> {
+  /** Every meeting the user hosts or attends — or the first `limit` of them in `order`. */
+  async findAll(
+    userId: string,
+    { limit, order = 'asc' }: { limit?: number; order?: MeetingsOrder } = {},
+  ): Promise<Meeting[]> {
     const meetings = await this.prisma.meeting.findMany({
       where: visibleTo(userId),
       // `id` breaks ties: two meetings at the same instant would otherwise come back in
       // whatever order the planner chose, so a caller could not diff two identical responses.
-      orderBy: [{ scheduledAt: 'asc' }, { id: 'asc' }],
+      // Ascending in both orders, which is the tie-break the web app's own sort uses.
+      orderBy: [{ scheduledAt: order }, { id: 'asc' }],
+      take: limit,
       include: PARTICIPANTS_INCLUDE,
     });
 
     return meetings.map(toMeeting);
+  }
+
+  /** How many meetings the user hosts or attends, without reading any of them. */
+  async count(userId: string): Promise<number> {
+    return this.prisma.meeting.count({ where: visibleTo(userId) });
   }
 
   async findOne(userId: string, meetingId: string): Promise<Meeting> {

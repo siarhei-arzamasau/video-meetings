@@ -113,14 +113,18 @@ converts all of them, not a second convention alongside the first.
 A handler owns its use case; a shared service owns anything two handlers must not implement
 differently. `PasswordService` is the example: **hashing is argon2id (`@node-rs/argon2`),
 never bcrypt** — bcrypt truncates input at 72 bytes, which silently makes every password
-sharing a 72-byte prefix the same credential; an e2e test enforces this. Login must not become
+sharing a 72-byte prefix the same credential; an e2e test enforces this. Its cost parameters
+are stated there too — OWASP's 19 MiB, two passes, one lane — although they are the library's
+native defaults: its own typings document 4 MiB and three passes, which is enough to mislead
+a review, and a default can move under a version bump. Login must not become
 an account-enumeration oracle either, and that guarantee is split across two files on purpose:
 
 - `LoginHandler` owns the single shared failure message — both the unknown-email and
   wrong-password paths throw the same `INVALID_CREDENTIALS` constant. Give either its own
   message and the endpoint starts answering "does this address have an account?".
 - `PasswordService` owns the timing half — `verifyDummy` spends a real argon2 verification
-  against a dummy hash built at startup, so a miss costs what a hit costs. The no-account path
+  against a dummy hash built at startup by `hash` itself, so it carries a stored hash's
+  parameters and a miss costs what a hit costs. The no-account path
   must keep calling it, and keep `await`ing it. **No test catches its removal**; all four login
   specs stay green while the defence is gone.
 
@@ -354,11 +358,14 @@ from the API.
 
 ### The second boundary — meetings and meeting-files
 
-`FindVisibleMeetingQuery(userId, meetingId) → Meeting | null` is the read every file route
-dispatches before touching a file, so a stranger, a guessed id, and a missing meeting all get
-the same 404 from the same place. `MeetingFilesModule` does not import `MeetingsModule`, and
-`MeetingsController.findOne` still reads from `MeetingsService` — two near-identical reads is
-the accepted price of the in-module read staying off the bus.
+`FindVisibleMeetingQuery(userId, meetingId) → { id, hostId } | null` is the read every file
+route dispatches before touching a file, so a stranger, a guessed id, and a missing meeting all
+get the same 404 from the same place. It selects those two columns and nothing else — whether
+the meeting exists for this user, and who may manage anyone's file in it — because it runs on
+every file route and twice per chunk, and a participants join there buys nothing. Widen it
+only for a field a file route actually decides with. `MeetingFilesModule` does not import
+`MeetingsModule`, and `MeetingsController.findOne` still reads from `MeetingsService` — two
+reads sharing one `visibleTo` is the accepted price of the in-module read staying off the bus.
 
 ## Meeting files (`src/modules/meeting-files`)
 
@@ -385,8 +392,11 @@ get wrong.
   **16.5.4** because 17+ is ESM-only: Node 24 would `require()` it, but Jest's loader cannot —
   both suites fail with `Cannot use import statement outside a module` — so moving past it
   means changing how Jest runs, not bumping a version; do not "upgrade" it. Its one advisory
-  since (GHSA-5v7r-6r5c-r473, an ASF-parser loop that a 64-byte upload starts) is closed by
-  refusing the ASF header prefix before the parser runs; ASF is not on the allow-list. Text
+  since (GHSA-5v7r-6r5c-r473, an ASF-parser loop that a 64-byte upload starts) is closed in the
+  tokenizer the sniffer hands it: a skip of negative length throws, and the file is a 415.
+  Refusing the ASF header at byte 0 was not enough — detection starts over after every ID3
+  tag, so the header can sit at any offset. That tokenizer is why `strtok3` is a direct
+  dependency, pinned to the 6.x line `file-type` 16 uses. Text
   has no magic bytes, so an undetected file that decodes as UTF-8 with no NUL is typed by
   extension — among `.txt`/`.md`/`.csv` only. An extension never elevates a file to a binary
   type, so `page.html` renamed `page.pdf` is a 415 while renamed `notes.txt` it is stored as
@@ -582,8 +592,15 @@ in `main.ts`.
   `"12345678"` and passes `@IsString()` — the API would accept credentials of any JSON type.
   The cost is that a numeric query or param DTO needs an explicit `@Type(() => Number)`.
 - **`HttpExceptionFilter`** and **`LoggingInterceptor`** from `src/common/`.
-- **CORS reflects the requesting origin** — fine locally, must be narrowed to an allowlist
-  before any public deployment.
+- **Security headers from `helmet`, first in the chain** so a CORS preflight carries them too.
+  The policy is `default-src 'none'` with no framing, because nothing here should ever render;
+  a response that did would load, run and embed nothing. **HSTS is off on purpose** — it
+  belongs to whatever terminates TLS, which this process cannot see. `security-headers.e2e-spec.ts`
+  pins the set, on a refusal as well as an open route.
+- **CORS names only `CORS_ORIGINS`** — see [Environment](#environment) for the development
+  default and who sets it explicitly. A foreign origin still gets
+  `Access-Control-Allow-Credentials` from the `cors` package; what it never gets is
+  `Access-Control-Allow-Origin`, the header a browser actually checks.
 - **Shutdown hooks** are enabled in `main.ts`, which is what lets `PrismaService` disconnect
   cleanly. Deliberately not in `configureApp`: the test harness must not install them.
 
@@ -600,6 +617,15 @@ is too short: the old compose default was 44 characters, so the length rule pass
 deployment that never set the variable booted and signed real tokens with a key that is in
 git. Any value that ships in an example belongs in `PUBLISHED_JWT_SECRETS`, and no example
 should carry a usable one — both `.env.example` files leave it empty.
+
+**`CORS_ORIGINS` is required in production and defaulted everywhere else**, and the default is
+the part that bites. Unset or blank outside production it is the web app `pnpm dev` runs —
+`localhost` and `127.0.0.1` on `WEB_PORT`, which `scripts/dev.mjs` hands both apps, so it
+follows the web app when 3000 is taken. Anything else is set explicitly: a phone reaching the
+dev server over the network, the compose stack (`docker-compose.yml` sets the local web
+service), and both test runs — `setup-env.ts` and `start:e2e-web` allow the browser suite's
+3100 and nothing else. Entries are exact origins because the `cors` package compares them
+exactly; the contract refuses a path or trailing slash rather than let an entry match nothing.
 
 `ConfigModule` is global and reads `.env.local` then `.env`. Neither overrides a variable
 already in `process.env`, which is what lets the root `pnpm dev` decide `PORT` — and why an

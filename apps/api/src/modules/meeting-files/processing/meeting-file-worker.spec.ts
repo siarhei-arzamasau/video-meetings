@@ -300,6 +300,22 @@ describe('MeetingFileWorker', () => {
     expect(markPurged).not.toHaveBeenCalled();
   });
 
+  it('removes the transcript too, and marks nothing purged while any removal fails', async () => {
+    claimNext
+      .mockReset()
+      .mockResolvedValueOnce({ ...CLAIMED, status: 'deleted', previousStatus: 'deleted' })
+      .mockResolvedValue(null);
+    // The three removals run together, so the one that fails need not be the first.
+    remove.mockImplementation((key: string) =>
+      key.endsWith('.transcript.txt') ? Promise.reject(new Error('EBUSY')) : Promise.resolve(),
+    );
+
+    await expect(worker.drain()).rejects.toThrow('EBUSY');
+
+    expect(remove).toHaveBeenCalledWith(`${CLAIMED.storageKey}.transcript.txt`);
+    expect(markPurged).not.toHaveBeenCalled();
+  });
+
   describe('expired upload sessions', () => {
     it('removes the chunk tree and only then marks the session purged', async () => {
       claimNext.mockReset().mockResolvedValue(null);

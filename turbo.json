@@ -21,7 +21,7 @@
       "dependsOn": ["^build"],
       "cache": false,
       "persistent": true,
-      "env": ["PORT", "WEB_PORT", "NEXT_PUBLIC_API_URL"]
+      "env": ["PORT", "WEB_PORT", "NEXT_PUBLIC_API_URL", "CORS_ORIGINS"]
     },
     "clean": {
       "cache": false

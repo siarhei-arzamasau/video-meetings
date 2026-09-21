@@ -192,4 +192,41 @@ describe('MeetingFilesService', () => {
       expect(openRead).toHaveBeenCalledWith(thumbnailKey);
     });
   });
+
+  describe('openTranscript', () => {
+    it('answers 404 Transcript not found when the record has no transcript key', async () => {
+      await expect(service.openTranscript(USER_ID, MEETING_ID, FILE_ID)).rejects.toThrow(
+        new NotFoundException('Transcript not found'),
+      );
+      expect(stat).not.toHaveBeenCalled();
+    });
+
+    it('opens the transcript as UTF-8 text with its own size', async () => {
+      const transcriptKey = `${RECORD.storageKey}.transcript.txt`;
+      findOneOf.mockResolvedValue({ ...RECORD, transcriptKey });
+      stat.mockResolvedValue({ size: 7 });
+
+      await expect(service.openTranscript(USER_ID, MEETING_ID, FILE_ID)).resolves.toEqual({
+        name: 'deck.pdf.transcript.txt',
+        contentType: 'text/plain; charset=utf-8',
+        size: 7,
+        stream: STREAM,
+      });
+
+      expect(stat).toHaveBeenCalledWith(transcriptKey);
+      expect(openRead).toHaveBeenCalledWith(transcriptKey);
+    });
+
+    it('answers 404 for an invisible meeting without touching storage', async () => {
+      execute.mockResolvedValue(null);
+      findOneOf.mockResolvedValue({ ...RECORD, transcriptKey: `${RECORD.storageKey}.txt` });
+
+      await expect(service.openTranscript(USER_ID, MEETING_ID, FILE_ID)).rejects.toThrow(
+        new NotFoundException('Meeting not found'),
+      );
+      expect(findOneOf).not.toHaveBeenCalled();
+      expect(stat).not.toHaveBeenCalled();
+      expect(openRead).not.toHaveBeenCalled();
+    });
+  });
 });

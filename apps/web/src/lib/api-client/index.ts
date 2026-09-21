@@ -11,7 +11,8 @@ export { ApiError, buildApiUrl, getApiBaseUrl, apiFetch } from './core';
 export type { UploadOptions } from './core';
 export { getHealth, register, login, getMe, changePassword } from './auth';
 export { deleteAvatar, fetchAvatar, updateDisplayName, uploadAvatar } from './user';
-export { listMeetings, getMeeting } from './meetings';
+export { countMeetings, listMeetings, getMeeting } from './meetings';
+export type { MeetingsQuery } from './meetings';
 export {
   NOT_AN_EVENT_STREAM_MESSAGE,
   deleteMeetingFile,

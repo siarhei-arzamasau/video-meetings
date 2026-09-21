@@ -1,9 +1,12 @@
+import type http from 'node:http';
+
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 
 import { PrismaService } from '../../src/modules/prisma/prisma.service';
 import { createTestApp } from './create-test-app';
 import type { TestAppOptions } from './create-test-app';
+import { listeningPort } from './http';
 import { truncateUsers } from './users-table';
 
 export interface ApiSuite {
@@ -54,6 +57,11 @@ export function useApiSuite(options: TestAppOptions = {}): ApiSuite {
   beforeAll(async () => {
     app = await createTestApp(options);
     prisma = app.get(PrismaService);
+    // Bound here, once, rather than by supertest: given an unbound server, supertest binds it
+    // for the first request of a burst and closes it when that request ends, resetting every
+    // connection still waiting to be accepted. A slow machine loses that race — the file-cap
+    // spec's fifty parallel uploads came back `read ECONNRESET`.
+    await listeningPort(app.getHttpServer() as http.Server);
   });
 
   afterAll(async () => {

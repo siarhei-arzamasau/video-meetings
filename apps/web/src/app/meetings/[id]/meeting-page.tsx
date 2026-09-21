@@ -34,7 +34,9 @@ export function MeetingPage() {
   const { session, signOut } = useSignedIn();
   const [meeting, setMeeting] = useState<MeetingState>({ state: 'loading' });
   const [reloadCount, setReloadCount] = useState(0);
-  const token = session.state === 'ready' ? session.token : null;
+  // From `loading` on, not only `ready`: this page's own requests go out beside `getMe`.
+  const token =
+    session.state === 'ready' || session.state === 'loading' ? (session.token ?? null) : null;
 
   useEffect(() => {
     if (token === null || !UUID_V4.test(meetingId)) {

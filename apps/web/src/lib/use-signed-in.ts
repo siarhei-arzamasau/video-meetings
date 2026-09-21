@@ -9,12 +9,14 @@ import { clearAccessToken, readAccessToken } from './auth-token';
 
 /**
  * `loading` covers both "is there a token?" and "who is it?": they differ in the effect's
- * control flow, not on screen. `signedOut` is its own state because the page stays mounted
- * while Next navigates away, and in that window it must render neither the user nor a
- * spinner captioned with their data.
+ * control flow, not on screen. It carries the token from the moment the effect has read it, so
+ * a page can send its own requests beside `getMe` instead of after it — one round trip less on
+ * every protected page — while still rendering nothing of their data until `ready`.
+ * `signedOut` is its own state because the page stays mounted while Next navigates away, and in
+ * that window it must render neither the user nor a spinner captioned with their data.
  */
 export type SignedIn =
-  | { state: 'loading' }
+  | { state: 'loading'; token?: string }
   | { state: 'signedOut' }
   | { state: 'ready'; user: User; token: string }
   | { state: 'failed'; message: string; retry(): void };
@@ -74,6 +76,10 @@ export function useSignedIn(): {
 
       return;
     }
+
+    // Handed out now rather than with the user, so a page's own requests need not wait on
+    // `getMe`. Updater form, like every write here: only over a session that is still loading.
+    setSession((current) => (current.state === 'loading' ? { state: 'loading', token } : current));
 
     // Ignores a response from a torn-down run. Strict Mode invokes this effect twice in
     // development, and "Try again" starts a second run while the first may still be in

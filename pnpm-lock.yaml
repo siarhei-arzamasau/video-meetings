@@ -87,6 +87,9 @@ importers:
       file-type:
         specifier: 16.5.4
         version: 16.5.4
+      helmet:
+        specifier: 8.3.0
+        version: 8.3.0
       multer:
         specifier: 2.4.0
         version: 2.4.0
@@ -102,6 +105,9 @@ importers:
       sharp:
         specifier: 0.35.4
         version: 0.35.4(@types/node@24.13.3)
+      strtok3:
+        specifier: 6.3.0
+        version: 6.3.0
     devDependencies:
       '@nestjs/cli':
         specifier: 11.0.24
@@ -3567,6 +3573,10 @@ packages:
   hasown@2.0.4:
     resolution: {integrity: sha512-T2UbfbBEF32wiepXIsMlTW9+dDYC6wMh/t/vYA4tuOMKqWz/n3vr1NFSxQiyP+zk2mXsoMA/i/7qV6LKut1t1A==}
     engines: {node: '>= 0.4'}
+
+  helmet@8.3.0:
+    resolution: {integrity: sha512-Qgpiaws3Sm30Av8Eah6sjMCZZwjlBu+E68rhpCWBshY1lb09HtLwj5GviX0OyQIn+ulUS0iX0AxN5n3tLZzz1w==}
+    engines: {node: '>=18.0.0'}
 
   html-encoding-sniffer@6.0.0:
     resolution: {integrity: sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==}
@@ -8771,6 +8781,8 @@ snapshots:
   hasown@2.0.4:
     dependencies:
       function-bind: 1.1.2
+
+  helmet@8.3.0: {}
 
   html-encoding-sniffer@6.0.0(@noble/hashes@1.8.0):
     dependencies:

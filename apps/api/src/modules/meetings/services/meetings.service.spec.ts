@@ -34,16 +34,18 @@ const MEETING = {
 describe('MeetingsService', () => {
   const findMany = jest.fn();
   const findFirst = jest.fn();
+  const count = jest.fn();
   let meetings: MeetingsService;
 
   beforeEach(async () => {
     findMany.mockReset().mockResolvedValue([RECORD]);
     findFirst.mockReset().mockResolvedValue(RECORD);
+    count.mockReset().mockResolvedValue(1);
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         MeetingsService,
-        { provide: PrismaService, useValue: { meeting: { findMany, findFirst } } },
+        { provide: PrismaService, useValue: { meeting: { findMany, findFirst, count } } },
       ],
     }).compile();
 
@@ -73,6 +75,34 @@ describe('MeetingsService', () => {
       findMany.mockResolvedValue([]);
 
       await expect(meetings.findAll(USER_ID)).resolves.toEqual([]);
+    });
+
+    it('reads every meeting when no limit is asked for', async () => {
+      await meetings.findAll(USER_ID);
+
+      expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ take: undefined }));
+    });
+
+    it('takes the first `limit` in the order asked for, breaking ties ascending either way', async () => {
+      await meetings.findAll(USER_ID, { limit: 3, order: 'desc' });
+
+      expect(findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: VISIBLE_TO_USER,
+          orderBy: [{ scheduledAt: 'desc' }, { id: 'asc' }],
+          take: 3,
+        }),
+      );
+    });
+  });
+
+  describe('count', () => {
+    it('counts by the same visibility rule, without reading a meeting', async () => {
+      count.mockResolvedValue(7);
+
+      await expect(meetings.count(USER_ID)).resolves.toBe(7);
+      expect(count).toHaveBeenCalledWith({ where: VISIBLE_TO_USER });
+      expect(findMany).not.toHaveBeenCalled();
     });
   });
 

@@ -59,11 +59,11 @@ export function thumbnailPathOf(meetingId: string, fileId: string): string {
   return `/meetings/${meetingId}/files/${fileId}/thumbnail`;
 }
 
-/** Where the object lives under the storage root. Opaque: never the user's name. */
 export function transcriptPathOf(meetingId: string, fileId: string): string {
   return `/meetings/${meetingId}/files/${fileId}/transcript`;
 }
 
+/** Where the object lives under the storage root. Opaque: never the user's name. */
 export function storageKeyOf(meetingId: string, fileId: string): string {
   return `${meetingId}/${fileId}`;
 }

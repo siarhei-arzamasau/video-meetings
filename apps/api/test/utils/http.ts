@@ -5,8 +5,9 @@ import type request from 'supertest';
 
 /**
  * The port of the suite's server, binding it to an ephemeral one first if need be — for a
- * client that speaks `node:http` directly, because supertest listens per request and leaves
- * the server unbound. `app.close()` in the suite's `afterAll` closes it again.
+ * client that speaks `node:http` directly. `useApiSuite` binds it before the first test, so
+ * supertest never binds and closes it per request; the bind here covers a caller outside that
+ * suite. `app.close()` in the suite's `afterAll` closes it again.
  */
 export async function listeningPort(server: http.Server): Promise<number> {
   if (!server.listening) {
