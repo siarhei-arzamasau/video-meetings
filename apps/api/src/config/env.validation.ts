@@ -82,8 +82,7 @@ export class EnvironmentVariables {
    * dozen connections from starving it.
    *
    * Ten a minute is generous for a person and useless to a brute force. The counter is keyed
-   * on the socket address, never on a forwarded header — see the note in `auth.module.ts`
-   * about what that means behind a proxy.
+   * on the client address, which `TRUST_PROXY_HOPS` below decides.
    */
   @IsInt()
   @Min(1)
@@ -92,6 +91,21 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(1)
   AUTH_RATE_LIMIT_ATTEMPTS: number = 10;
+
+  /**
+   * How many reverse proxies you control stand in front of the API — Express's `trust proxy`, as
+   * a hop count. It decides what `req.ip` is, and so whose budget a credential attempt spends.
+   *
+   * `0`, the default, trusts none: the client is the socket's address and `X-Forwarded-For` is
+   * ignored. That is right for an API exposed directly and wrong behind a proxy, where every
+   * client arrives as the proxy and shares one budget — ten requests a minute from anybody would
+   * lock everybody out of signing in. Set it to exactly the number of proxies in front, and no
+   * more: one hop too many and an address the caller wrote into `X-Forwarded-For` becomes its
+   * identity, which hands every request a fresh budget.
+   */
+  @IsInt()
+  @Min(0)
+  TRUST_PROXY_HOPS: number = 0;
 
   /**
    * Root of meeting file storage, resolved relative to the working directory. Created at boot

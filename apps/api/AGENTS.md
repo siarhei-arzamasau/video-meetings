@@ -255,17 +255,24 @@ changing it:
   spends a full argon2id verification even when no account matches, because `LoginHandler`
   hashes a dummy on the miss path to close the timing oracle. Unlimited, that turns a stream
   of tiny unauthenticated POSTs into memory-hard work on the libuv threadpool.
-- **The tracker is the socket address, and Express is not configured to trust
-  `X-Forwarded-For`.** That is correct — a header-derived key is one the caller chooses — but
-  behind a reverse proxy every client arrives as the proxy and shares one budget. A deployment
-  that terminates TLS elsewhere has to set `trust proxy` before the limit is per-client again.
+- **The tracker is `req.ip`, and `TRUST_PROXY_HOPS` decides what that is.** At the default of
+  zero it is the socket address and `X-Forwarded-For` is ignored — correct, because a
+  header-derived key is one the caller chooses. Behind a reverse proxy that default puts every
+  client on the proxy's single budget, so a deployment that terminates TLS elsewhere sets the
+  hop count to the number of proxies in front — **exactly**: one too many and an address the
+  caller wrote becomes its key, a fresh budget per request.
 - **Storage is in-process**, so replicas do not share a counter and N replicas mean N times the
   limit. A scaled-out deployment wants a shared store.
 
 `auth-rate-limit.e2e-spec.ts` pins all of it, and does it by overriding the throttler's
 options provider with `authThrottlerOptions(...)` at a budget a test can spend — the run's own
-limit (`test/setup-env.ts`) is deliberately unreachable, because every auth request in a spec
-file shares one counter and `beforeEach` truncates the database, not the throttler.
+limit (`test/setup-env.ts`, and `start:e2e-web` for the browser suite) is deliberately
+unreachable, because every auth request in a spec file shares one counter and `beforeEach`
+truncates the database, not the throttler. The 429's sentence is built from the same
+`timeToBlockExpire` the guard sends as `Retry-After`, so the spec asserts the two agree rather
+than pinning a string. The one-proxy case is `auth-rate-limit-proxy.e2e-spec.ts`, a file of its
+own because `configureApp` installs the hop count once; it passes `TRUST_PROXY_HOPS` through
+`createTestApp`'s `config`, which sets it on `ConfigService` before `configureApp` reads it.
 
 **A stateless JWT is not revoked by a password change.** The token that made the change keeps
 working, and so does every other token issued for that account, until `JWT_EXPIRES_IN_SECONDS`
@@ -552,6 +559,8 @@ that had quietly diverged. Only process-level concerns (`enableShutdownHooks`, `
 in `main.ts`.
 
 - **Global prefix `api`** — a controller at `@Controller('health')` serves `/api/health`.
+- **Express's `trust proxy`, from `TRUST_PROXY_HOPS`** (default 0) — what `req.ip` is, and so
+  whose budget the auth throttle charges. Here and not in `main.ts` so the e2e app has it too.
 - **`ValidationPipe`** with `whitelist`, `forbidNonWhitelisted`, and `transform`. Bodies and
   queries should be class-validator DTO classes; unknown properties are rejected rather than
   silently dropped.
@@ -643,7 +652,9 @@ Six things about that setup are easy to get wrong:
   early enough. The same file points `MEETING_FILES_DIR` at a per-run temp directory and sets
   `MEETING_FILES_WORKER_ENABLED=false`.
 - **`start:e2e-web` must stay in step with it**: the same temp-dir idea, but the worker **on**
-  with a fast poll, because the web app's browser suite watches the Processing chip disappear.
+  with a fast poll, because the web app's browser suite watches the Processing chip disappear —
+  and the same out-of-reach auth rate limit, because that suite registers through the UI in
+  every spec and would meet a deployment's ten a minute part-way through a run.
 - **`maxWorkers: 1` is load-bearing**, for the same reason: Jest parallelises across spec
   files, and in parallel they delete each other's fixtures and a seeded `register` starts
   returning 409. Remove it only alongside per-worker database isolation.

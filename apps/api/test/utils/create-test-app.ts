@@ -1,4 +1,5 @@
 import { INestApplication } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 
 import { AppModule } from '../../src/app.module';
@@ -22,10 +23,18 @@ export interface TestAppOptions {
    * spec can bind a fake without importing the module it belongs to.
    */
   overrides?: ReadonlyArray<{ token: unknown; value: unknown }>;
+  /**
+   * Environment values to set before `configureApp` reads them — for the globals it configures
+   * from the environment, which `test/setup-env.ts` can set only once for the whole run.
+   * `TRUST_PROXY_HOPS` is the one so far. They go in through `ConfigService.set`, which is also
+   * how the file specs change a flag between tests.
+   */
+  config?: Readonly<Record<string, unknown>>;
 }
 
 export async function createTestApp({
   overrides = [],
+  config = {},
 }: TestAppOptions = {}): Promise<INestApplication> {
   const builder = Test.createTestingModule({ imports: [AppModule] });
 
@@ -37,6 +46,11 @@ export async function createTestApp({
 
   // `logger: false` keeps LoggingInterceptor's per-request output off the test report.
   const app = moduleRef.createNestApplication({ logger: false });
+  const configService = app.get(ConfigService);
+
+  for (const [key, value] of Object.entries(config)) {
+    configService.set(key, value);
+  }
 
   configureApp(app);
 

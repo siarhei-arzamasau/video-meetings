@@ -47,11 +47,12 @@ import { TokenService } from './services/token.service';
      * own accord, so the guard resolves wherever it is used, but nothing else is throttled
      * until a controller asks to be.
      *
-     * **The tracker is the socket address, and the app does not trust `X-Forwarded-For`.**
-     * That is the right default — a header-derived key is a key an attacker picks per
-     * request, which is no limit at all. It also means that behind a reverse proxy every
-     * client arrives as the proxy and shares one budget, so a deployment that terminates TLS
-     * elsewhere must set Express's `trust proxy` before this limit is per-client again.
+     * **The tracker is `req.ip`, which `TRUST_PROXY_HOPS` decides.** At its default of zero it
+     * is the socket address and `X-Forwarded-For` is ignored — the right default, because a
+     * header-derived key is a key an attacker picks per request, which is no limit at all.
+     * Behind a reverse proxy, though, every client then arrives as the proxy and shares one
+     * budget, so a deployment that terminates TLS elsewhere sets the hop count to the number
+     * of proxies in front, and no higher (`env.validation.ts` says what one too many costs).
      *
      * Storage is in-process, so each replica counts its own. One API container counts
      * everything; a scaled-out deployment multiplies the effective limit by its replica count

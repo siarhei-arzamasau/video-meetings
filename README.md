@@ -76,7 +76,9 @@ so the length rule alone would let a deployment boot on it. `openssl rand -base6
 Credential requests are rate-limited: `AUTH_RATE_LIMIT_ATTEMPTS` (default 10) per
 `AUTH_RATE_LIMIT_WINDOW_SECONDS` (default 60), per client address, shared across registering,
 logging in, and changing a password. The session check the web app makes on every page is
-outside that budget.
+outside that budget. Behind a reverse proxy, set `TRUST_PROXY_HOPS` to the number of proxies in
+front of the API: left at 0, every client arrives as the proxy and shares one budget; set higher
+than the real count, a client can choose its own address and with it a fresh budget.
 
 The host port is 5433 rather than the usual 5432, so the container does not collide with a
 PostgreSQL you already run locally. To use a different one, set `POSTGRES_PORT` in `.env`

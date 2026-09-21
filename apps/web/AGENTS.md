@@ -382,7 +382,9 @@ The browser suite below is still the stronger check, and the one a flow belongs 
 
 `pnpm --filter=@repo/web test:e2e` runs Playwright (Chromium only) over `e2e/*.spec.ts`.
 `playwright.config.ts` starts both servers itself — the API through its `start:e2e-web` script
-on **3101** (worker on, fast poll, temp storage) and this app on **3100** — with
+on **3101** (worker on, fast poll, temp storage, and an auth rate limit no run can reach: every
+spec registers through the UI and several sign in again, well past a deployment's ten a minute)
+and this app on **3100** — with
 `reuseExistingServer` off, one worker, and no retries. It needs `docker compose up -d postgres`,
 a migrated schema, and `pnpm exec playwright install chromium` once. `E2E_SERVER_TIMEOUT_MS`
 raises the two-minute wait per server; a wait that times out even at several minutes is the

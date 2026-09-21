@@ -36,6 +36,8 @@ services:
       JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-3600}
       AUTH_RATE_LIMIT_WINDOW_SECONDS: ${AUTH_RATE_LIMIT_WINDOW_SECONDS:-60}
       AUTH_RATE_LIMIT_ATTEMPTS: ${AUTH_RATE_LIMIT_ATTEMPTS:-10}
+      # 0 while this container is reached directly; the number of proxies once one fronts it.
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-0}
       MEETING_FILES_DIR: /data/meeting-files
     ports:
       - '3001:3001'

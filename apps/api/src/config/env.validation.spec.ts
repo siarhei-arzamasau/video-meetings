@@ -161,4 +161,18 @@ describe('validate', () => {
       );
     });
   });
+
+  describe('TRUST_PROXY_HOPS', () => {
+    it('trusts no proxy unless told to, so a forwarded header cannot choose the client', () => {
+      expect(validate(VALID).TRUST_PROXY_HOPS).toBe(0);
+    });
+
+    it('reads a hop count from the environment string', () => {
+      expect(validate({ ...VALID, TRUST_PROXY_HOPS: '1' }).TRUST_PROXY_HOPS).toBe(1);
+    });
+
+    it.each(['-1', '1.5', 'true'])('rejects %s, which is not a number of proxies', (hops) => {
+      expect(() => validate({ ...VALID, TRUST_PROXY_HOPS: hops })).toThrow(/TRUST_PROXY_HOPS/);
+    });
+  });
 });
