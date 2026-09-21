@@ -592,8 +592,15 @@ in `main.ts`.
   `"12345678"` and passes `@IsString()` — the API would accept credentials of any JSON type.
   The cost is that a numeric query or param DTO needs an explicit `@Type(() => Number)`.
 - **`HttpExceptionFilter`** and **`LoggingInterceptor`** from `src/common/`.
-- **CORS reflects the requesting origin** — fine locally, must be narrowed to an allowlist
-  before any public deployment.
+- **Security headers from `helmet`, first in the chain** so a CORS preflight carries them too.
+  The policy is `default-src 'none'` with no framing, because nothing here should ever render;
+  a response that did would load, run and embed nothing. **HSTS is off on purpose** — it
+  belongs to whatever terminates TLS, which this process cannot see. `security-headers.e2e-spec.ts`
+  pins the set, on a refusal as well as an open route.
+- **CORS names only `CORS_ORIGINS`** — see [Environment](#environment) for the development
+  default and who sets it explicitly. A foreign origin still gets
+  `Access-Control-Allow-Credentials` from the `cors` package; what it never gets is
+  `Access-Control-Allow-Origin`, the header a browser actually checks.
 - **Shutdown hooks** are enabled in `main.ts`, which is what lets `PrismaService` disconnect
   cleanly. Deliberately not in `configureApp`: the test harness must not install them.
 

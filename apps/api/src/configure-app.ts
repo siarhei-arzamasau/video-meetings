@@ -1,9 +1,25 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Express } from 'express';
+import helmet from 'helmet';
 
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+
+/**
+ * The response headers every answer carries. This API serves JSON and attachments and nothing
+ * a browser should render, so the policy allows nothing at all: were some response ever shown
+ * as a page, no script, style, frame or request could come of it. HSTS is left to whatever
+ * terminates TLS — this process cannot know whether anything does.
+ */
+const SECURITY_HEADERS = helmet({
+  contentSecurityPolicy: {
+    useDefaults: false,
+    directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"] },
+  },
+  strictTransportSecurity: false,
+  xFrameOptions: { action: 'deny' },
+});
 
 /**
  * Every global that shapes request handling, in one function.
@@ -26,6 +42,9 @@ export function configureApp(app: INestApplication): void {
   const express: Express = app.getHttpAdapter().getInstance();
 
   express.set('trust proxy', app.get(ConfigService).getOrThrow<number>('TRUST_PROXY_HOPS'));
+
+  // Before CORS, so a preflight answer carries them too.
+  app.use(SECURITY_HEADERS);
 
   // Exactly the origins `CORS_ORIGINS` names; any other is answered without an
   // `Access-Control-Allow-Origin`, so its page cannot read the response. `env.validation.ts`
