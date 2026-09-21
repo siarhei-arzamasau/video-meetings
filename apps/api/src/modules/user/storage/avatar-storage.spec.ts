@@ -8,6 +8,10 @@ import { AvatarStorage } from './avatar-storage';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 
+function storageAt(root: string): AvatarStorage {
+  return new AvatarStorage({ getOrThrow: () => root } as unknown as ConfigService);
+}
+
 describe('AvatarStorage', () => {
   let root: string;
   let storage: AvatarStorage;
@@ -23,7 +27,7 @@ describe('AvatarStorage', () => {
 
   beforeEach(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'avatar-storage-'));
-    storage = new AvatarStorage({ getOrThrow: () => root } as unknown as ConfigService);
+    storage = storageAt(root);
     await storage.onModuleInit();
   });
 
@@ -43,14 +47,6 @@ describe('AvatarStorage', () => {
       expect(fs.existsSync(storage.tempDir())).toBe(true);
       // Nothing is left behind by the probe.
       expect(fs.readdirSync(storage.tempDir())).toEqual([]);
-    });
-
-    it('fails startup loudly when the root cannot be written', async () => {
-      const unwritable = new AvatarStorage({
-        getOrThrow: () => '/proc/nonexistent-avatar-root',
-      } as unknown as ConfigService);
-
-      await expect(unwritable.onModuleInit()).rejects.toThrow(/not writable/);
     });
 
     it('gives one user one key, whatever they upload', () => {
@@ -111,4 +107,40 @@ describe('AvatarStorage', () => {
       expect(fs.existsSync(storage.pathOf(key()))).toBe(false);
     });
   });
+
+  /**
+   * Mirrors `meeting-file-storage.spec.ts`, and for its reasons: the case is about mode bits,
+   * which Windows does not have and which root ignores, so it is skipped rather than asserted
+   * on a machine where it cannot be observed. An earlier version of this pointed at a magic
+   * path under `/proc` and hoped the host would refuse it — which passed on macOS, and on
+   * Linux hung until Jest's five-second timeout killed it.
+   */
+  const describeUnlessWindows = process.platform === 'win32' ? describe.skip : describe;
+
+  describeUnlessWindows('an unwritable root', () => {
+    it('rejects init with the resolved path in the message', async () => {
+      if (process.getuid?.() === 0) {
+        // root ignores mode bits, so the case is not observable; nothing to assert.
+        return;
+      }
+
+      const locked = path.join(root, 'locked');
+      fs.mkdirSync(locked, { mode: 0o500 });
+
+      try {
+        await expect(storageAt(locked).onModuleInit()).rejects.toThrow(
+          new RegExp(
+            `Avatar storage at ${escapeForRegExp(path.join(locked, 'avatars'))} is not writable`,
+          ),
+        );
+      } finally {
+        // Restored so `afterEach` can remove the tree.
+        fs.chmodSync(locked, 0o700);
+      }
+    });
+  });
 });
+
+function escapeForRegExp(value: string): string {
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
