@@ -186,6 +186,11 @@ no install step. Add one for everyone with
 `claude mcp add --scope project <name> <command>`; the default local scope stays private to
 you, which is where personal or credential-bearing servers belong.
 
+`.claude/agents/` is committed for the same reason: a subagent defined there is one every
+collaborator gets, currently `security-reviewer` for a vulnerability pass over changed files.
+Put one here only when the whole team should have it — `~/.claude/agents/` is the personal
+scope, and a subagent that encodes one person's habits belongs there.
+
 ## Conventions
 
 - **Tooling is Oxlint + Oxfmt**, not ESLint/Prettier. One `.oxlintrc.json` and
