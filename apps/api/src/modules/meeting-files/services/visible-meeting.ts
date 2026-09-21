@@ -1,8 +1,8 @@
 import { NotFoundException } from '@nestjs/common';
 import { QueryBus } from '@nestjs/cqrs';
-import type { Meeting } from '@repo/shared';
 
 import { FindVisibleMeetingQuery } from '../../meetings/queries/find-visible-meeting.query';
+import type { VisibleMeeting } from '../../meetings/queries/find-visible-meeting.query';
 
 /** The one 404 for a meeting the caller cannot see — the same text the meetings module uses. */
 export const MEETING_NOT_FOUND = 'Meeting not found';
@@ -18,8 +18,8 @@ export async function requireVisibleMeeting(
   queryBus: QueryBus,
   userId: string,
   meetingId: string,
-): Promise<Meeting> {
-  const meeting = await queryBus.execute<FindVisibleMeetingQuery, Meeting | null>(
+): Promise<VisibleMeeting> {
+  const meeting = await queryBus.execute<FindVisibleMeetingQuery, VisibleMeeting | null>(
     new FindVisibleMeetingQuery(userId, meetingId),
   );
 

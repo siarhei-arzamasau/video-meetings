@@ -358,11 +358,14 @@ from the API.
 
 ### The second boundary — meetings and meeting-files
 
-`FindVisibleMeetingQuery(userId, meetingId) → Meeting | null` is the read every file route
-dispatches before touching a file, so a stranger, a guessed id, and a missing meeting all get
-the same 404 from the same place. `MeetingFilesModule` does not import `MeetingsModule`, and
-`MeetingsController.findOne` still reads from `MeetingsService` — two near-identical reads is
-the accepted price of the in-module read staying off the bus.
+`FindVisibleMeetingQuery(userId, meetingId) → { id, hostId } | null` is the read every file
+route dispatches before touching a file, so a stranger, a guessed id, and a missing meeting all
+get the same 404 from the same place. It selects those two columns and nothing else — whether
+the meeting exists for this user, and who may manage anyone's file in it — because it runs on
+every file route and twice per chunk, and a participants join there buys nothing. Widen it
+only for a field a file route actually decides with. `MeetingFilesModule` does not import
+`MeetingsModule`, and `MeetingsController.findOne` still reads from `MeetingsService` — two
+reads sharing one `visibleTo` is the accepted price of the in-module read staying off the bus.
 
 ## Meeting files (`src/modules/meeting-files`)
 
