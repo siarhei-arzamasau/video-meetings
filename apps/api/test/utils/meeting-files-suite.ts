@@ -1,9 +1,11 @@
+import http from 'node:http';
+
 import type { Meeting } from '@repo/shared';
 import request from 'supertest';
 
 import type { ApiSuite } from './api-suite';
 import { MEETINGS_URL, PASSWORD, REGISTER_URL } from './fixtures';
-import { accessTokenOf } from './http';
+import { accessTokenOf, listeningPort } from './http';
 import { findUserRow } from './users-table';
 
 export interface RegisteredUser {
@@ -86,4 +88,69 @@ export function putBytes(
     .set('Authorization', `Bearer ${token}`)
     .set('Content-Type', contentType)
     .send(bytes);
+}
+
+export interface HeadersOnlyAnswer {
+  status: number;
+  body: unknown;
+}
+
+/** How long a headers-only request waits before concluding the server is waiting for the body. */
+const HEADERS_ONLY_DEADLINE_MS = 5_000;
+
+/**
+ * A `PUT` that declares a body of `contentLength` bytes and never sends it, so whatever comes
+ * back was decided from the headers alone. A server that waits for the body answers nothing,
+ * and this rejects after the deadline instead.
+ *
+ * **Supertest cannot ask this.** It always sends the body, and a server that answers early and
+ * closes the socket fails the upload with `EPIPE` before the answer can be read.
+ */
+export async function putHeadersOnly(
+  suite: Pick<ApiSuite, 'app'>,
+  url: string,
+  headers: http.OutgoingHttpHeaders,
+  contentLength: number,
+): Promise<HeadersOnlyAnswer> {
+  const port = await listeningPort(suite.app().getHttpServer() as http.Server);
+
+  return new Promise<HeadersOnlyAnswer>((resolve, reject) => {
+    const outgoing = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        path: url,
+        method: 'PUT',
+        headers: { ...headers, 'content-length': String(contentLength) },
+        // A socket of its own: this one is abandoned mid-request, and must not be pooled.
+        agent: false,
+      },
+      (response) => {
+        let text = '';
+
+        response.setEncoding('utf8');
+        response.on('data', (chunk: string) => {
+          text += chunk;
+        });
+        response.on('end', () => {
+          outgoing.destroy();
+          resolve({
+            status: response.statusCode ?? 0,
+            body: text === '' ? undefined : JSON.parse(text),
+          });
+        });
+      },
+    );
+
+    outgoing.setTimeout(HEADERS_ONLY_DEADLINE_MS, () => {
+      outgoing.destroy();
+      reject(
+        new Error(
+          `No answer in ${String(HEADERS_ONLY_DEADLINE_MS)} ms: the server waited for the body`,
+        ),
+      );
+    });
+    outgoing.on('error', reject);
+    outgoing.flushHeaders();
+  });
 }

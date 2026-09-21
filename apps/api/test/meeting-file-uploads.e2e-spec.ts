@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { gzipSync } from 'node:zlib';
 
 import type { INestApplication } from '@nestjs/common';
 import type { MeetingFile, MeetingFileUpload } from '@repo/shared';
@@ -35,7 +36,7 @@ import {
   findMeetingFileRow,
   insertMeetingFileRow,
 } from './utils/meeting-files-table';
-import { createMeeting, putBytes, registerUser } from './utils/meeting-files-suite';
+import { createMeeting, putBytes, putHeadersOnly, registerUser } from './utils/meeting-files-suite';
 
 const CHUNK = MEETING_FILE_CHUNK_SIZE_BYTES;
 const FIXTURES = path.join(__dirname, 'fixtures');
@@ -443,6 +444,92 @@ describe('chunked upload sessions', () => {
 
       expect(messageOf(response)).toBe('Chunk length does not match');
     }, 30_000);
+
+    describe('what is answered before the body is read', () => {
+      // The first chunk of this session is a whole one, so a chunk's worth of bytes is a body
+      // the parser would accept — and, run before the guard, would hold in memory while it
+      // arrived. It ran before the guard when it was middleware; these cases pin the order.
+      const openSession = async (): Promise<{
+        host: { id: string; token: string };
+        meetingId: string;
+        uploadId: string;
+      }> => {
+        const host = await registerUser(suite, EMAIL);
+        const meeting = await createMeeting(suite, host);
+        const created = await createSession(host.token, meeting.id, {
+          name: 'recording.mp4',
+          size: CHUNK + 1,
+        }).expect(201);
+
+        return { host, meetingId: meeting.id, uploadId: (created.body as MeetingFileUpload).id };
+      };
+
+      // Declared and never sent, so the answer is one the server gave without waiting for the
+      // body: the attack is to declare a chunk and send it slowly, and only a server that
+      // reads first is still waiting.
+      it('401 without a token, from the headers alone', async () => {
+        const { meetingId, uploadId } = await openSession();
+
+        const answer = await putHeadersOnly(
+          suite,
+          meetingFileChunkUrl(meetingId, uploadId, 0),
+          { 'content-type': 'application/octet-stream' },
+          CHUNK,
+        );
+
+        expect(answer.status).toBe(401);
+        expect(chunksOnDisk(uploadId)).toEqual([]);
+      });
+
+      it('404 Meeting not found to a stranger, from the headers alone', async () => {
+        const { meetingId, uploadId } = await openSession();
+        const stranger = await registerUser(suite, OTHER_EMAIL);
+
+        const answer = await putHeadersOnly(
+          suite,
+          meetingFileChunkUrl(meetingId, uploadId, 0),
+          {
+            authorization: `Bearer ${stranger.token}`,
+            'content-type': 'application/octet-stream',
+          },
+          CHUNK,
+        );
+
+        expect(answer).toMatchObject({ status: 404, body: { message: 'Meeting not found' } });
+        expect(chunksOnDisk(uploadId)).toEqual([]);
+      });
+
+      it('400 Chunk length does not match for a body longer than any chunk', async () => {
+        const { host, meetingId, uploadId } = await openSession();
+
+        const response = await sendChunk(
+          host.token,
+          meetingId,
+          uploadId,
+          0,
+          filled(CHUNK + 1, 0x01),
+        ).expect(400);
+
+        expect(messageOf(response)).toBe('Chunk length does not match');
+        expect(chunksOnDisk(uploadId)).toEqual([]);
+      }, 30_000);
+
+      it('415 for a compressed chunk, which is never inflated', async () => {
+        // Inflated, this is exactly the last chunk's one byte and would be stored.
+        const { host, meetingId, uploadId } = await openSession();
+
+        await putBytes(
+          suite,
+          meetingFileChunkUrl(meetingId, uploadId, 1),
+          host.token,
+          gzipSync(filled(1, 0x01)),
+        )
+          .set('Content-Encoding', 'gzip')
+          .expect(415);
+
+        expect(chunksOnDisk(uploadId)).toEqual([]);
+      });
+    });
   });
 
   describe('a session belongs to the one person who opened it', () => {

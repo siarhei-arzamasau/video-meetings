@@ -10,6 +10,7 @@ import {
   Post,
   Put,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import { CommandBus } from '@nestjs/cqrs';
 import type { MeetingFile, MeetingFileUpload, User } from '@repo/shared';
@@ -23,6 +24,7 @@ import { CHUNK_INDEX_MESSAGE } from './commands/handlers/store-chunk.handler';
 import { StoreChunkCommand } from './commands/store-chunk.command';
 import { CreateUploadDto } from './dto/create-upload.dto';
 import { MeetingFileUploadsService } from './services/meeting-file-uploads.service';
+import { MeetingFileChunkInterceptor } from './storage/meeting-file-chunk.interceptor';
 
 const UUID_V4 = new ParseUUIDPipe({ version: '4' });
 
@@ -68,8 +70,9 @@ export class MeetingFileUploadsController {
   }
 
   /**
-   * One chunk, as a raw body. The module's middleware has already parsed it into a `Buffer`
-   * with a one-chunk limit, so a body larger than that never reaches here.
+   * One chunk, as a raw body. `MeetingFileChunkInterceptor` has already parsed it into a
+   * `Buffer` with a one-chunk limit — after the guard, never before — so a body larger than
+   * that never reaches here.
    *
    * 204 and no body: the client learns nothing from a chunk it did not already know, and the
    * status route is there for the set. The index is parsed here rather than by `ParseIntPipe`
@@ -78,6 +81,7 @@ export class MeetingFileUploadsController {
    */
   @Put(':uploadId/chunks/:index')
   @HttpCode(204)
+  @UseInterceptors(MeetingFileChunkInterceptor)
   storeChunk(
     @CurrentUser() user: User,
     @Param('id', UUID_V4) meetingId: string,
@@ -127,9 +131,9 @@ export class MeetingFileUploadsController {
 }
 
 /**
- * The raw body, or an empty buffer. Anything but a `Buffer` means the middleware did not run
- * — a route registered without it, a content type it was not given — and an empty chunk is
- * rejected by the length check, which is the same answer a truncated one gets.
+ * The raw body, or an empty buffer. Anything but a `Buffer` means the interceptor did not parse
+ * it — a route declared without it, or a JSON or form body the global parser read first — and
+ * an empty chunk is rejected by the length check, which is the same answer a truncated one gets.
  */
 function asBuffer(body: unknown): Buffer {
   return Buffer.isBuffer(body) ? body : Buffer.alloc(0);
