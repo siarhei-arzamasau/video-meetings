@@ -60,8 +60,8 @@ function renderQueue() {
 /** A chunked upload that opens its session and then fails, the way a dropped network does. */
 function failAfterSessionOpens(error: unknown) {
   vi.mocked(uploadInChunks).mockImplementationOnce(
-    (_token: string, _meetingId: string, _file: File, options: ChunkedUploadOptions) => {
-      options.onSession?.(UPLOAD_ID);
+    (_token: string, _meetingId: string, _file: File, options?: ChunkedUploadOptions) => {
+      options?.onSession?.(UPLOAD_ID);
 
       return Promise.reject(error);
     },
