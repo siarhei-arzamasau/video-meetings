@@ -1,8 +1,8 @@
 import { ThrottlerStorageService, getOptionsToken, getStorageToken } from '@nestjs/throttler';
 
 import {
-  TOO_MANY_ATTEMPTS_MESSAGE,
   authThrottlerOptions,
+  tooManyAttemptsMessage,
 } from '../src/modules/auth/auth-throttle.options';
 import {
   CHANGE_PASSWORD_URL,
@@ -87,7 +87,8 @@ describe('the /api/auth rate limit', () => {
     const blocked = await login(PASSWORD).expect(429);
 
     expect(blocked.body).toMatchObject({ statusCode: 429 });
-    expect(messageOf(blocked)).toBe(TOO_MANY_ATTEMPTS_MESSAGE);
+    // The same wait the header states, in words — whatever the window is configured to.
+    expect(messageOf(blocked)).toBe(tooManyAttemptsMessage(Number(blocked.headers['retry-after'])));
   });
 
   it('tells the caller when to come back', async () => {
@@ -109,6 +110,14 @@ describe('the /api/auth rate limit', () => {
       .expect(401);
 
     await login(WRONG_PASSWORD).expect(429);
+  });
+
+  it('ignores X-Forwarded-For unless a proxy is configured, so the header buys no budget', async () => {
+    // TRUST_PROXY_HOPS is zero here, as it is by default: the address is the socket's, and a
+    // caller writing a new forwarded address on every request is still one caller.
+    await spendBudget();
+
+    await login(WRONG_PASSWORD).set('X-Forwarded-For', '198.51.100.23').expect(429);
   });
 
   it('leaves the session check outside the budget', async () => {

@@ -1,4 +1,6 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { Express } from 'express';
 
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -17,6 +19,13 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 export function configureApp(app: INestApplication): void {
   // A controller at @Controller('auth') serves /api/auth.
   app.setGlobalPrefix('api');
+
+  // Which address a request comes from, and so whose budget the auth throttle charges it to.
+  // Zero hops unless configured — `TRUST_PROXY_HOPS` in env.validation.ts says why that is the
+  // only safe default, and what one hop too many costs.
+  const express: Express = app.getHttpAdapter().getInstance();
+
+  express.set('trust proxy', app.get(ConfigService).getOrThrow<number>('TRUST_PROXY_HOPS'));
 
   // Reflects the requesting origin, which is what local development needs.
   // Restrict this to a known origin list before deploying anywhere public.

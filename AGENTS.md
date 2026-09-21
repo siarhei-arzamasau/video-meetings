@@ -218,6 +218,10 @@ scope, and a subagent that encodes one person's habits belongs there.
   what changed. `--no-verify` defers these checks to CI rather than skipping them.
 - **New dependencies with install scripts** must be listed under `allowBuilds` in
   `pnpm-workspace.yaml`; pnpm 11 blocks lifecycle scripts otherwise.
+- **`overrides` in `pnpm-workspace.yaml` force one version on every dependant.** Each entry says
+  why it exists and what retires it — read it before upgrading the package that pins the older
+  version. The one there now lifts multer past what Nest 11 pins; the API guide's meeting-files
+  section has what that costs.
 - **Env files are gitignored** except `*.env.example`. When adding a variable, update the
   matching `.env.example` and, for the API, `apps/api/src/config/env.validation.ts`.
 

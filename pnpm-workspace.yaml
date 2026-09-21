@@ -8,8 +8,20 @@ allowBuilds:
   '@tailwindcss/oxide': true # native Tailwind v4 compiler
   esbuild: true # native binary used by Vite/Vitest
   prisma: true # generates the client on install
-  sharp: true # native image pipeline used by Next.js
+  # sharp has had no install script since 0.35, but pnpm still flags it for its binding.gyp:
+  # without this entry the install fails with ERR_PNPM_IGNORED_BUILDS and pnpm writes a
+  # placeholder into this file. Allowing it compiles nothing — the prebuilt binary is used.
+  sharp: true # native image pipeline used by the API and by Next.js
   unrs-resolver: true # native resolver used by the lint toolchain
 
 minimumReleaseAgeExclude:
   - jsdom@30.0.1
+
+# Forced on every dependant, whatever version it asks for. Each entry says why, and when it goes.
+overrides:
+  # Every @nestjs/platform-express 11.x pins multer to exactly 2.2.0, which carries DoS advisories
+  # fixed in 2.3.0 and 2.4.0; only Nest 12 moves off it. Bumping apps/api's direct dependency alone
+  # would leave that pinned copy parsing every upload. 2.4.0 renamed an error message Nest 11
+  # matches on — apps/api/src/common/multer-error.ts is what keeps those rejections 4xx.
+  # Delete this entry with the Nest 12 upgrade.
+  multer: 2.4.0
