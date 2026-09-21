@@ -25,3 +25,8 @@ overrides:
   # matches on — apps/api/src/common/multer-error.ts is what keeps those rejections 4xx.
   # Delete this entry with the Nest 12 upgrade.
   multer: 2.4.0
+  # Jest's coverage-config loader (@istanbuljs/load-nyc-config) allows js-yaml ^3.13.1, yet
+  # `pnpm update` leaves it on 3.15.0, inside CPU-exhaustion advisories fixed in 3.15.2. Keyed
+  # on the vulnerable range, so the 4.x copies commitlint and @nestjs/cli use are untouched.
+  # Delete it once `pnpm audit` is clean without it.
+  'js-yaml@<3.15.2': 3.15.2
