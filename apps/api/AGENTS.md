@@ -492,6 +492,15 @@ get wrong.
   carries `attempts` and `leased_until` for the same reason `meeting_files` does, and
   `expires_at` is the whole lifecycle — aborting sets it to `now()`, so abort and expiry are one
   path in the worker and the row needs no status column.
+- **What bounds the disk is the per-uploader cap, not the file cap.** Since a session counts
+  against nothing per meeting, and an uploader need never call `complete`, the file cap alone
+  let one account open 1 GiB sessions without limit and fill the volume for a day.
+  `createWithinCap` refuses a sixth unpurged session per user (`MAX_OPEN_UPLOADS_PER_UPLOADER`),
+  across every meeting. **Unpurged, not live**: an aborted or expired session still holds its
+  chunks until the worker removes them, so counting only live ones would let abort-and-reopen
+  outrun the worker. The meeting-row lock cannot serialise two meetings, so the user row is
+  locked too — meeting first, then user, and `FOR NO KEY UPDATE` so rows referencing the user
+  are not held up. An e2e spec opens eight at once and expects exactly five.
 - **Completing a session claims it first, and expires it the moment the file exists.**
   `claimForCompletion` takes the row's `leased_until` in one conditional statement before a
   chunk is read, so of two completions racing — a client whose connection dropped and retried,

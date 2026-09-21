@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import type { MeetingFileUploadRecord } from './meeting-file-upload.mapper';
+import { UploadCapReached, type UploadCaps } from './meeting-file-upload-caps';
 
 /** What creating a session writes. Everything else takes its default. */
 export interface NewMeetingFileUpload {
@@ -27,28 +28,43 @@ export class MeetingFileUploadRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Opens a session unless the meeting already holds `cap` non-deleted files, in which case
-   * nothing is written and `null` comes back.
+   * Opens a session unless one of the two caps is already reached, in which case nothing is
+   * written and the cap that refused it comes back.
    *
-   * The count is of files, not sessions, and the meeting row is locked first for the reason
-   * `MeetingFileRepository.createWithinCap` gives. Checking here is courtesy — it fails a
-   * doomed upload before a gigabyte is sent rather than after — and `complete` checks again,
-   * which is where the cap is actually enforced.
+   * The meeting's count is of files, not sessions, and the meeting row is locked first for the
+   * reason `MeetingFileRepository.createWithinCap` gives. Checking it here is courtesy — it
+   * fails a doomed upload before a gigabyte is sent rather than after — and `complete` checks
+   * again, which is where that cap is actually enforced.
+   *
+   * The uploader's count is of sessions that still hold chunks on disk — aborted and expired
+   * ones included until the worker has purged them — so abort-and-reopen cannot outrun the
+   * worker. It is enforced here and nowhere else, which is why the user row is locked too:
+   * two sessions opened at once on two meetings lock different meeting rows. Meeting before
+   * user, always, and `NO KEY UPDATE` so the lock does not hold up rows that reference the user.
    */
   createWithinCap(
     data: NewMeetingFileUpload,
-    cap: number,
-  ): Promise<MeetingFileUploadRecord | null> {
+    caps: UploadCaps,
+  ): Promise<MeetingFileUploadRecord | UploadCapReached> {
     return this.prisma.$transaction(
       async (tx) => {
         await tx.$queryRaw`SELECT id FROM "meetings" WHERE id = ${data.meetingId}::uuid FOR UPDATE`;
+        await tx.$queryRaw`SELECT id FROM "users" WHERE id = ${data.uploaderId}::uuid FOR NO KEY UPDATE`;
 
-        const count = await tx.meetingFile.count({
+        const fileCount = await tx.meetingFile.count({
           where: { meetingId: data.meetingId, status: { not: 'deleted' } },
         });
 
-        if (count >= cap) {
-          return null;
+        if (fileCount >= caps.meetingFiles) {
+          return UploadCapReached.MEETING_FILES;
+        }
+
+        const openUploadCount = await tx.meetingFileUpload.count({
+          where: { uploaderId: data.uploaderId, purgedAt: null },
+        });
+
+        if (openUploadCount >= caps.openUploadsPerUploader) {
+          return UploadCapReached.OPEN_UPLOADS;
         }
 
         return tx.meetingFileUpload.create({ data: { ...data, receivedChunks: [] } });
