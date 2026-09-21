@@ -22,3 +22,38 @@
 :root:not([data-theme='dark']) {
   --muted: oklch(53% 0.0138 285.94);
 }
+
+/* Dark mode gives form fields no edge at all, and that is the whole of this rule.
+
+   In *both* themes HeroUI paints a field the same colour as the card it sits on — light is
+   `--surface: white` and `--field-background: white`, dark is `oklch(21.03%)` for each — and
+   `--field-border` is `transparent` at `--field-border-width: 0px` throughout. What separates
+   the two in light mode is `--field-shadow`, a real drop shadow the field carries and the card
+   also has. Dark mode sets `--field-shadow: 0 0 0 0 transparent inset`, reasonably enough: a
+   black drop shadow on a near-black card shows nothing. Nothing replaces it, so the input
+   becomes a placeholder and an icon floating on the card with no boundary until it is focused.
+   Measured in Chromium: card and field are both rgb(24, 24, 27), with no border and no shadow.
+
+   A hairline is the dark-mode equivalent of that drop shadow, and an inset one is what fits
+   here: `box-shadow` costs no geometry, so the field is the same size in both themes, and it
+   lands in the fifth shadow slot after Tailwind's four, leaving `ring-*` — and HeroUI's own
+   `status-focused-field` — their slots. That is what the upstream comment on the transparent
+   value ("to allow ring utilities to work") is protecting, so this keeps the shape it asked
+   for rather than working around it.
+
+   **The colour is chosen by measurement, not by eye.** WCAG 1.4.11 wants 3:1 for the visual
+   information that identifies a control, and this line is now that information. Nothing in the
+   dark palette reaches it against the card — `--border` is 1.21:1, `--segment` 1.89:1 — so the
+   value is a step lighter than any of them. oklch(52%) is rgb(104, 104, 108) and measures
+   3.19:1 on the card, 3.65:1 on the page, 3.13:1 on `--field-hover` and 3.19:1 on
+   `--field-focus`, so it clears the bar in every state a field has rather than only at rest.
+   Its chroma and hue are `--border`'s, so it reads as the same family of line, only stronger.
+
+   Scoped `:root[data-theme='dark']` for the reason the light rule above is scoped: this file
+   follows the HeroUI import, and (0,2,0) beats the `.dark, [data-theme='dark']` block it has
+   to override. Every component that draws `bg-field`+`shadow-field` inherits it — input,
+   input group, textarea, select, checkbox, radio, autocomplete, number field, search field,
+   date input, OTP — which is why the fix is one token here and not a class per form. */
+:root[data-theme='dark'] {
+  --field-shadow: 0 0 0 1px oklch(52% 0.006 286.033) inset;
+}
