@@ -29,7 +29,9 @@ export function HomeDashboard() {
   // The gate — token read, `getMe`, 401 redirect — lives in the hook the meeting page shares.
   // What this page adds is its own two requests, in `useDashboardMeetings`.
   const { session, signOut } = useSignedIn();
-  const token = session.state === 'ready' ? session.token : null;
+  // From `loading` on, not only `ready`: this page's own requests go out beside `getMe`.
+  const token =
+    session.state === 'ready' || session.state === 'loading' ? (session.token ?? null) : null;
   const { meetings, retry } = useDashboardMeetings(token, signOut);
 
   // One `loading` on screen for both the gate and the list: they differ in control flow, not

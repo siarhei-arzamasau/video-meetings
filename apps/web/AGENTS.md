@@ -291,7 +291,11 @@ nothing secret goes in it, and it is the _data_ that is protected, never the URL
 **The gate is `src/lib/use-signed-in.ts`, and it is still not session machinery.** One hook
 holding the token-after-mount read, `getMe`, the 401 clear-and-redirect, and a local `signOut`.
 No provider, no context, no refresh, no interceptor. A page adds only its own requests and
-hands a mid-page 401 back to `signOut`.
+hands a mid-page 401 back to `signOut`. **The token is handed out in `loading`, as soon as the
+effect has read it**, so those requests go out beside `getMe` rather than a round trip behind
+it; a page still renders none of their data until the gate is `ready`, and a bad token then
+reaches `signOut` from both sides, which it survives — clearing and replacing twice is the
+same as once.
 
 **Signing out is local**: clear the token, `replace` to `/auth/login`. There is no logout
 endpoint because the JWT is stateless and stays valid until it expires. That is a property of

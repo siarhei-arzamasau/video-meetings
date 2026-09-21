@@ -74,10 +74,19 @@ describe('useSignedIn', () => {
     expect(getMe).not.toHaveBeenCalled();
   });
 
-  it('loads the account behind a stored token', async () => {
+  it('hands the token out at once, then loads the account behind it', async () => {
+    const pending = deferred<User>();
+    vi.mocked(getMe).mockReturnValue(pending.promise);
+
     const { result } = renderHook(() => useSignedIn());
 
-    expect(result.current.session).toEqual({ state: 'loading' });
+    // Before `getMe` answers: a page's own requests can already go out with this.
+    expect(result.current.session).toEqual({ state: 'loading', token: TOKEN });
+
+    await act(async () => {
+      pending.resolve(USER);
+      await pending.promise;
+    });
     await waitFor(() => {
       expect(result.current.session).toEqual({ state: 'ready', user: USER, token: TOKEN });
     });
@@ -178,7 +187,7 @@ describe('useSignedIn', () => {
     act(() => {
       result.current.updateUser(renamed);
     });
-    expect(result.current.session).toEqual({ state: 'loading' });
+    expect(result.current.session).toEqual({ state: 'loading', token: TOKEN });
 
     await act(async () => {
       pending.resolve(USER);
