@@ -192,7 +192,8 @@ you, which is where personal or credential-bearing servers belong.
 `.claude/agents/` is committed for the same reason: a subagent defined there is one every
 collaborator gets. There are currently three, each a reviewer for one concern:
 `security-reviewer` for vulnerabilities, `performance-reviewer` for N+1 queries and similar
-waste, and `test-coverage-reviewer` for untested paths and missing edge cases.
+waste, and `test-coverage-reviewer` for untested paths and missing edge cases. The
+`review-all` skill runs all three in parallel and merges their findings into one report.
 Put one here only when the whole team should have it — `~/.claude/agents/` is the personal
 scope, and a subagent that encodes one person's habits belongs there.
 
