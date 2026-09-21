@@ -29,6 +29,10 @@ cp .env.example .env
 cp apps/api/.env.example apps/api/.env
 cp apps/web/.env.example apps/web/.env.local
 
+# The examples carry no signing key on purpose. Generate one into JWT_SECRET — in
+# apps/api/.env for local development, and in .env for `docker compose`.
+openssl rand -base64 32
+
 pnpm start:dev                  # Postgres, Prisma client, migrations, then both apps
 ```
 
@@ -64,9 +68,10 @@ wherever the API actually landed, so a leftover server from another project does
 `GET http://localhost:3001/api/health` should return `{"status":"ok",...}` — on the API port
 `pnpm dev` reported.
 
-The API will not start without a `JWT_SECRET` of at least 32 characters. The copied
-`.env.example` carries a placeholder that satisfies it; replace it with
-`openssl rand -base64 32` before the app is reachable by anyone else.
+The API will not start without a `JWT_SECRET` of at least 32 characters, and it refuses the
+placeholder this repository used to ship in its examples. A signing key published in a public
+repository is one anybody can mint tokens with, and it is long enough to pass the length rule,
+so the length rule alone would let a deployment boot on it. `openssl rand -base64 32`.
 
 The host port is 5433 rather than the usual 5432, so the container does not collide with a
 PostgreSQL you already run locally. To use a different one, set `POSTGRES_PORT` in `.env`

@@ -3,6 +3,7 @@ import {
   IsBoolean,
   IsEnum,
   IsInt,
+  IsNotIn,
   IsOptional,
   IsString,
   IsUrl,
@@ -12,6 +13,17 @@ import {
   ValidateIf,
   validateSync,
 } from 'class-validator';
+
+/**
+ * Signing keys this repository has published. Rejected by value because length alone cannot
+ * catch them: the placeholder below is 44 characters, so it satisfies `@MinLength(32)` and a
+ * deployment that never set `JWT_SECRET` would boot and sign real tokens with a key anybody
+ * who has read the repository knows. User ids are not secret — they travel in meeting and
+ * file payloads — so that key is an account-takeover primitive, not a weak default.
+ */
+const PUBLISHED_JWT_SECRETS: readonly string[] = ['dev-only-replace-with-openssl-rand-base64-32'];
+
+const GENERATE_SECRET_ADVICE = 'Generate one with `openssl rand -base64 32`.';
 
 export enum NodeEnv {
   Development = 'development',
@@ -36,9 +48,15 @@ export class EnvironmentVariables {
   @MinLength(1)
   DATABASE_URL: string;
 
-  /** Signs and verifies access tokens. A short secret is a guessable secret. */
+  /** Signs and verifies access tokens. A short secret is a guessable secret, and a published
+   *  one is no secret at all — both fail here rather than at the first forged token. */
   @IsString()
-  @MinLength(32)
+  @MinLength(32, {
+    message: `JWT_SECRET must be at least 32 characters. ${GENERATE_SECRET_ADVICE}`,
+  })
+  @IsNotIn(PUBLISHED_JWT_SECRETS, {
+    message: `JWT_SECRET is a placeholder published in this repository. ${GENERATE_SECRET_ADVICE}`,
+  })
   JWT_SECRET: string;
 
   /**

@@ -27,9 +27,12 @@ services:
       NODE_ENV: production
       PORT: 3001
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/video_meetings
-      # Defaulted rather than required so `docker compose up -d postgres` still works
-      # without a root .env. Override it for anything but local development.
-      JWT_SECRET: ${JWT_SECRET:-dev-only-replace-with-openssl-rand-base64-32}
+      # Deliberately undefaulted. A fallback here would be a signing key published in this
+      # repository, long enough to satisfy the 32-character rule and therefore accepted at
+      # boot — anyone could then mint a token for any user id. Unset, compose passes an
+      # empty string, env.validation.ts refuses to start, and `docker compose up -d postgres`
+      # still works without a root .env because compose only warns on an unset variable.
+      JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-3600}
       MEETING_FILES_DIR: /data/meeting-files
     ports:

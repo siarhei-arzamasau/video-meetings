@@ -540,6 +540,13 @@ Every variable the app cannot start without belongs in the `EnvironmentVariables
 instead of at the first request that needs it. Adding one means the class, `.env.example`, and
 — if it affects local Docker — `docker-compose.yml`.
 
+**A rule the contract cannot express with a type is still the contract's job.** `JWT_SECRET`
+is rejected when it is one of the placeholders this repository has published, not only when it
+is too short: the old compose default was 44 characters, so the length rule passed it and a
+deployment that never set the variable booted and signed real tokens with a key that is in
+git. Any value that ships in an example belongs in `PUBLISHED_JWT_SECRETS`, and no example
+should carry a usable one — both `.env.example` files leave it empty.
+
 `ConfigModule` is global and reads `.env.local` then `.env`. Neither overrides a variable
 already in `process.env`, which is what lets the root `pnpm dev` decide `PORT` — and why an
 `EADDRINUSE` retry in `main.ts` is the wrong fix; see

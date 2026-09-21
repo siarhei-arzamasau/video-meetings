@@ -119,4 +119,28 @@ describe('validate', () => {
       /MEETING_FILE_UPLOAD_TTL_HOURS/,
     );
   });
+  describe('JWT_SECRET', () => {
+    it('rejects the placeholder this repository publishes', () => {
+      // The reason length alone is not the rule: this value is 44 characters, so it satisfies
+      // `@MinLength(32)`. A deployment that never set the variable used to boot on it and sign
+      // real tokens with a key that is in git — anyone could then mint one for any user id.
+      expect(() =>
+        validate({ ...VALID, JWT_SECRET: 'dev-only-replace-with-openssl-rand-base64-32' }),
+      ).toThrow(/JWT_SECRET/);
+    });
+
+    it('says what to do about it', () => {
+      expect(() =>
+        validate({ ...VALID, JWT_SECRET: 'dev-only-replace-with-openssl-rand-base64-32' }),
+      ).toThrow(/openssl rand -base64 32/);
+    });
+
+    it('rejects a secret under 32 characters', () => {
+      expect(() => validate({ ...VALID, JWT_SECRET: 'too-short' })).toThrow(/JWT_SECRET/);
+    });
+
+    it('rejects an unset secret, which is what compose now passes when nobody set one', () => {
+      expect(() => validate({ ...VALID, JWT_SECRET: '' })).toThrow(/JWT_SECRET/);
+    });
+  });
 });
