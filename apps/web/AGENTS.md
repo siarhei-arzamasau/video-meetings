@@ -105,7 +105,14 @@ aliases in sync if either changes.
   as the whole runtime), `outputFileTracingRoot` pointed at the repo root so tracing reaches
   workspace packages, `transpilePackages: ['@repo/shared']`, and a `redirects()` entry sending
   `/register` to `/auth/register` — a 308 keeps older links working without a route file whose
-  only job is to redirect.
+  only job is to redirect. Its `headers()` puts a Content-Security-Policy and the framing,
+  sniffing and referrer headers on every route. **`script-src` keeps `'unsafe-inline'` on
+  purpose**: the App Router streams its payload in inline scripts and next-themes sets the theme
+  in one, and nonces would take a proxy that makes every page dynamic. The policy earns its keep
+  in `connect-src` and `img-src`, which name only this origin, the API (`NEXT_PUBLIC_API_URL`,
+  read when the config loads) and the app's own blob URLs — a script that got in could not send
+  the `localStorage` token anywhere. **A new outside origin — fonts, analytics, a CDN — must be
+  added there, or the browser blocks it.**
 - **`"dev": "next dev --port ${WEB_PORT:-3000}"` is shell interpolation, and deliberate.** It
   looks like a stray `$` in JSON; package scripts run through `sh`, so it expands. It exists
   because `next dev` reads `PORT`, which belongs to the API here. A `WEB_PORT` in `.env.local`
