@@ -32,3 +32,39 @@ export const MIN_PASSWORD_LENGTH = 8;
 
 /** A ceiling on hashing work, not a security rule — argon2 costs time per byte. */
 export const MAX_PASSWORD_LENGTH = 256;
+
+/**
+ * Body of `PATCH /api/auth/password`.
+ *
+ * No `email` and no user id: the endpoint acts on whoever the token names. Proving the
+ * current password is what authorises the change — a valid token alone is not enough, because
+ * a token read out of `localStorage` by someone at a borrowed keyboard would otherwise be a
+ * licence to lock the owner out.
+ */
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+}
+
+/**
+ * What a wrong current password says, on both sides of the wire.
+ *
+ * It is shared for a reason beyond the usual one. The API answers a wrong current password
+ * with **401**, the shape a failed login has, so the endpoint reveals no more than login
+ * does — and the browser already treats a 401 as "the token went bad, sign out". The two are
+ * told apart by this exact sentence, so the constant is not copy: it is the discriminator.
+ * Rewording it in one place and not the other would sign a user out for a typo.
+ */
+export const CURRENT_PASSWORD_MESSAGE = 'That is not your current password.';
+
+/**
+ * Rejecting a "change" that changes nothing. A 400, not a 401: the caller proved the current
+ * password to get here, so there is nothing left to be coy about.
+ */
+export const PASSWORD_UNCHANGED_MESSAGE =
+  'Your new password must be different from your current one.';
+
+/** What a confirmation that does not match the new password says. Checked in the browser
+ *  only — the API is never sent a confirmation, because it has nothing to compare it against
+ *  that the browser did not already have. */
+export const PASSWORD_MISMATCH_MESSAGE = 'The two passwords do not match.';

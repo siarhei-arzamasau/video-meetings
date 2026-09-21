@@ -16,8 +16,8 @@ const NO_INITIALS = '?';
 /**
  * Up to two letters standing in for the person: the first and the last word's, uppercased.
  *
- * This is the avatar until phase 6 uploads one, and the fallback afterwards, so it has to
- * cope with the name registration derives as readily as with one the user chose — the derived
+ * It stands in wherever there is no picture, so it has to cope with the name registration
+ * derives as readily as with one the user chose — the derived
  * name is the email's local part, which is one word.
  *
  * Characters are taken with `Array.from`, not `name[0]`: a letter outside the BMP is two code

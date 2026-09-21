@@ -18,6 +18,8 @@ const USER: User = {
   id: '11111111-1111-4111-8111-111111111111',
   email: 'ada@example.com',
   displayName: 'Ada Lovelace',
+  // No `avatarPath`: this user has no picture, so both pages draw initials.
+  avatarVersion: 0,
   createdAt: '2026-07-30T09:00:00.000Z',
 };
 

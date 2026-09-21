@@ -17,6 +17,12 @@ export const MEETINGS_URL = '/api/meetings';
  */
 export const USERS_ME_URL = '/api/users/me';
 
+/** The caller's own credential. A literal path for the same reason `users/me` is one. */
+export const CHANGE_PASSWORD_URL = '/api/auth/password';
+
+/** The caller's own picture. `me` again, so no route here can be pointed at anyone else. */
+export const AVATAR_URL = '/api/users/me/avatar';
+
 export function meetingFilesUrl(meetingId: string): string {
   return `${MEETINGS_URL}/${meetingId}/files`;
 }
@@ -119,6 +125,36 @@ export const DISPLAY_NAME_MESSAGE = 'Your display name must be 1\u201380 charact
 
 /** The shortest password the API accepts. One character less must be a 400. */
 export const MIN_PASSWORD_LENGTH = 8;
+
+/** The longest. Restated rather than imported, as everything else here is. */
+export const MAX_PASSWORD_LENGTH = 256;
+
+/**
+ * The change-password copy from `@repo/shared`, restated for the same reason as
+ * `DISPLAY_NAME_MESSAGE`: the browser tells a wrong current password from an expired token by
+ * this exact sentence, so a spec that spelt it out of the constant could not notice the day
+ * the wording drifts.
+ */
+export const CURRENT_PASSWORD_MESSAGE = 'That is not your current password.';
+export const PASSWORD_UNCHANGED_MESSAGE =
+  'Your new password must be different from your current one.';
+
+/** A second password for the rotation specs, distinct from `PASSWORD`. */
+export const NEW_PASSWORD = 'a-different-battery-43';
+
+/**
+ * The avatar contract from `@repo/shared`, restated for the reason everything else here is:
+ * relaxing a bound or rewording a message must fail a test rather than quietly pass one.
+ */
+export const MAX_AVATAR_SIZE_BYTES = 5 * 1024 * 1024;
+export const AVATAR_SIZE_PIXELS = 256;
+export const AVATAR_CONTENT_TYPE = 'image/webp';
+export const AVATAR_SIZE_MESSAGE = 'Your picture must be 5 MB or smaller.';
+export const AVATAR_TYPE_MESSAGE = 'Your picture must be a PNG, JPEG, or WebP image.';
+export const AVATAR_EMPTY_MESSAGE = 'The file is empty.';
+export const AVATAR_UNREADABLE_MESSAGE = 'That image could not be read. Try a different file.';
+export const AVATAR_DIMENSIONS_MESSAGE =
+  'Your picture has too many pixels. Use an image of 64 megapixels or smaller.';
 
 /** RFC 5321's maximum forward path. Anything longer must be a 400, not a 500. */
 export const MAX_EMAIL_LENGTH = 254;

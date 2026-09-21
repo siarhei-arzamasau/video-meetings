@@ -1,4 +1,10 @@
-import type { AuthResponse, Credentials, HealthResponse, User } from '@repo/shared';
+import type {
+  AuthResponse,
+  ChangePasswordRequest,
+  Credentials,
+  HealthResponse,
+  User,
+} from '@repo/shared';
 
 import { apiFetch, authHeaders } from './core';
 
@@ -45,4 +51,26 @@ export function login(credentials: Credentials): Promise<AuthResponse> {
  */
 export function getMe(token: string): Promise<User> {
   return apiFetch<User>('/auth/me', { headers: authHeaders(token) });
+}
+
+/**
+ * Rotates the caller's password. No user id and no email: the endpoint acts on whoever the
+ * token names, and the current password is what authorises the change.
+ *
+ * Resolves to nothing — the API answers 204, and the token in hand keeps working, because a
+ * stateless JWT carries no password. Two failures are worth telling apart, and the caller has
+ * to do it by message rather than by status: a wrong current password is a **401**, the shape
+ * a failed login has, and so is a token that has gone bad. `CURRENT_PASSWORD_MESSAGE` from
+ * `@repo/shared` is the discriminator, which is why neither side spells that sentence out.
+ */
+export function changePassword(
+  token: string,
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  return apiFetch<void>('/auth/password', {
+    method: 'PATCH',
+    headers: authHeaders(token),
+    body: JSON.stringify({ currentPassword, newPassword } satisfies ChangePasswordRequest),
+  });
 }

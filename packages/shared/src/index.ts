@@ -4,8 +4,28 @@ export {
   MAX_DISPLAY_NAME_LENGTH,
   MIN_DISPLAY_NAME_LENGTH,
 } from './types/user';
-export type { AuthResponse, Credentials } from './types/auth';
-export { MAX_EMAIL_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from './types/auth';
+export {
+  AVATAR_ACCEPT,
+  AVATAR_ALLOWED_TYPES,
+  AVATAR_CONTENT_TYPE,
+  AVATAR_DIMENSIONS_MESSAGE,
+  AVATAR_EMPTY_MESSAGE,
+  AVATAR_SIZE_MESSAGE,
+  AVATAR_SIZE_PIXELS,
+  AVATAR_TYPE_MESSAGE,
+  AVATAR_UNREADABLE_MESSAGE,
+  MAX_AVATAR_PIXELS,
+  MAX_AVATAR_SIZE_BYTES,
+} from './types/avatar';
+export type { AuthResponse, ChangePasswordRequest, Credentials } from './types/auth';
+export {
+  CURRENT_PASSWORD_MESSAGE,
+  MAX_EMAIL_LENGTH,
+  MAX_PASSWORD_LENGTH,
+  MIN_PASSWORD_LENGTH,
+  PASSWORD_MISMATCH_MESSAGE,
+  PASSWORD_UNCHANGED_MESSAGE,
+} from './types/auth';
 export type { CreateMeetingRequest, Meeting, MeetingStatus } from './types/meeting';
 export { MEETING_STATUSES } from './types/meeting';
 export type { ApiErrorResponse } from './types/error';

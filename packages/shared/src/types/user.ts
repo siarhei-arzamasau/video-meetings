@@ -3,6 +3,23 @@ export interface User {
   id: string;
   email: string;
   displayName: string;
+  /**
+   * Present only when the user has an avatar; a relative API path, as `MeetingFile`'s
+   * `thumbnailPath` is. Its absence is how a client knows to draw initials instead.
+   *
+   * The path carries no version, and does not need to: the response is `no-store`, so the
+   * browser holds no copy to bust. See `avatarVersion` for what the number is actually for.
+   */
+  avatarPath?: string;
+  /**
+   * Bumped every time the avatar changes, including when it is removed. `0` for an account
+   * that has never had one.
+   *
+   * It exists because the avatar is fetched with a bearer token into a blob rather than by an
+   * `<img src>`, so nothing about the URL changes when the image does. A client keys its fetch
+   * on this number, and a replaced avatar therefore appears without a reload.
+   */
+  avatarVersion: number;
   /** ISO 8601 timestamp. */
   createdAt: string;
 }

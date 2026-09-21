@@ -41,6 +41,9 @@ describe(`GET ${ME_URL}`, () => {
       const response = await authorised(`Bearer ${token}`).expect(200);
 
       expect(Object.keys(response.body as object).toSorted()).toEqual([
+        // No `avatarPath` for an account with no picture; `avatarVersion` is always present,
+        // because 0 is a version and a client keys its fetch on the number.
+        'avatarVersion',
         'createdAt',
         'displayName',
         'email',

@@ -8,13 +8,15 @@ import { ThemeToggle } from '@/components/theme-toggle';
 import { Wordmark } from '@/components/wordmark';
 import { useSignedIn } from '@/lib/use-signed-in';
 
+import { AvatarSection, AvatarSkeleton } from './avatar-section';
+import { ChangePasswordSection, ChangePasswordSkeleton } from './change-password-section';
 import { DisplayNameSection, DisplayNameSkeleton } from './display-name-section';
 
 /**
- * Everything about the account the user can change, one card per thing. Phases 4 and 6 add
- * their sections — password, avatar — to this page rather than to routes of their own, which
- * is why this file owns the gate and nothing else: each section is its own module, owning its
- * request, its state, and its skeleton, and this page only decides which ones exist.
+ * Everything about the account the user can change, one card per thing — picture, name,
+ * password — each on this page rather than on a route of its own. This file owns the gate and
+ * nothing else: each section is its own module, owning its request, its state, and its
+ * skeleton, and this page only decides which ones exist and in what order.
  *
  * Gated on the client like every other protected route, and adding no request of its own:
  * `getMe` inside the gate is the whole of what the form starts from.
@@ -78,17 +80,32 @@ export function EditProfilePage() {
           {/* The bars are `aria-hidden` and this `output` carries the sentence a screen reader
               gets — one for the page, however many skeletons the sections contribute. */}
           <output className="sr-only">Loading your profile</output>
+          <AvatarSkeleton />
           <DisplayNameSkeleton />
+          <ChangePasswordSkeleton />
         </>
       )}
 
       {session.state === 'ready' && (
-        <DisplayNameSection
-          user={session.user}
-          token={session.token}
-          onSaved={updateUser}
-          onUnauthorized={signOut}
-        />
+        <>
+          {/* First: it is the one section whose result the reader can see, and putting the
+              picture at the top means the page opens on something recognisable. */}
+          <AvatarSection
+            user={session.user}
+            token={session.token}
+            onSaved={updateUser}
+            onUnauthorized={signOut}
+          />
+          <DisplayNameSection
+            user={session.user}
+            token={session.token}
+            onSaved={updateUser}
+            onUnauthorized={signOut}
+          />
+          {/* Last, and deliberately so: a password form above the other two would put the
+              rarest and most alarming thing on the page at the top of it. */}
+          <ChangePasswordSection token={session.token} onUnauthorized={signOut} />
+        </>
       )}
     </main>
   );

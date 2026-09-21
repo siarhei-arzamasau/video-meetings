@@ -15,6 +15,8 @@ describe('FindUserByIdHandler', () => {
       id: USER_ID,
       email: 'ada@example.com',
       displayName: 'ada',
+      avatarKey: null,
+      avatarVersion: 0,
       createdAt: new Date('2026-07-30T12:00:00.000Z'),
       passwordHash: 'stored-hash',
     });
@@ -37,6 +39,7 @@ describe('FindUserByIdHandler', () => {
       id: USER_ID,
       email: 'ada@example.com',
       displayName: 'ada',
+      avatarVersion: 0,
       createdAt: '2026-07-30T12:00:00.000Z',
     });
   });

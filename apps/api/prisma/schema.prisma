@@ -29,6 +29,16 @@ model User {
 
   displayName String @map("display_name")
 
+  /// The avatar object's key under the storage root, or null for a user who has none.
+  /// Nullable because every row that predates avatars has to stay valid, and because
+  /// removing an avatar is exactly "set this back to null".
+  avatarKey String? @map("avatar_key")
+
+  /// Bumped on every avatar write, including removal. The browser fetches the image with a
+  /// bearer token into a blob rather than through an `<img src>`, so nothing about the URL
+  /// changes when the image does; this number is what tells a client to fetch again.
+  avatarVersion Int @default(0) @map("avatar_version")
+
   // Timestamptz, not timestamp: `timestamp` comes back from the driver as a local-time
   // Date, so any comparison against a real instant is wrong by the machine's offset.
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)

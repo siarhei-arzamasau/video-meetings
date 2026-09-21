@@ -158,13 +158,15 @@ use-case invariant and the handler's to own.
 owns the user record. **Auth reaches no database at all**; `PrismaService` appears nowhere
 under `src/modules/auth`, and if it reappears there, the split has been undone.
 
-Three messages are the entire interface:
+Five messages are the entire interface:
 
-| Message                           | Carries                 | Resolves to               |
-| --------------------------------- | ----------------------- | ------------------------- |
-| `CreateUserCommand`               | `email`, `passwordHash` | `User`                    |
-| `FindUserByIdQuery`               | `userId`                | `User \| null`            |
-| `FindUserCredentialsByEmailQuery` | `email`                 | `UserCredentials \| null` |
+| Message                           | Carries                  | Resolves to               |
+| --------------------------------- | ------------------------ | ------------------------- |
+| `CreateUserCommand`               | `email`, `passwordHash`  | `User`                    |
+| `UpdatePasswordHashCommand`       | `userId`, `passwordHash` | `void`                    |
+| `FindUserByIdQuery`               | `userId`                 | `User \| null`            |
+| `FindUserCredentialsByEmailQuery` | `email`                  | `UserCredentials \| null` |
+| `FindUserCredentialsByIdQuery`    | `userId`                 | `UserCredentials \| null` |
 
 **`AuthModule` does not import `UserModule`, and that is deliberate.** `CqrsModule`'s
 `ExplorerService` registers every handler in the container into one set of buses, so naming a
@@ -174,13 +176,20 @@ the next person to inject a provider straight across the boundary.
 
 Two rules keep it honest, and no type enforces either:
 
-- **A raw password never crosses it.** `CreateUserCommand` carries a hash, because argon2 and
-  the password policy are auth's. The user module could not tell a good hash from a bad one.
-- **`UserCredentials` is declared in its query file, never in `@repo/shared`**, which the
-  browser bundle imports. That is also why it is a separate query from `FindUserByIdQuery`
-  rather than a flag on it: only the login path asks for a secret, and everyone else gets a
-  shape that cannot leak one. Both user-returning paths map through `toPublicUser`, so
-  omitting `passwordHash` is a property of the module rather than of each call site.
+- **A raw password never crosses it.** `CreateUserCommand` and `UpdatePasswordHashCommand`
+  both carry a hash, because argon2 and the password policy are auth's. The user module could
+  not tell a good hash from a bad one. `ChangePasswordCommand` does carry raw passwords — and
+  it is an auth-module command dispatched from an auth-module controller, so it never crosses
+  anything.
+- **`UserCredentials` is declared beside the two queries that return it
+  (`queries/user-credentials.ts`), never in `@repo/shared`**, which the browser bundle
+  imports. That is also why they are separate queries from `FindUserByIdQuery` rather than a
+  flag on it: only the credential paths ask for a secret, and everyone else gets a shape that
+  cannot leak one. Both user-returning paths map through `toPublicUser`, so omitting
+  `passwordHash` is a property of the module rather than of each call site.
+- **Two credential queries, by email and by id, because two paths need one.** Login knows an
+  address; a password change knows the token's subject and nothing else. Asking by email there
+  would mean auth holding a user's address in order to verify their password.
 
 `GET /me` reaches no handler of its own: `JwtAuthGuard` dispatches `FindUserByIdQuery` while
 authenticating and `@CurrentUser` returns what it attached — one query per authenticated
@@ -210,6 +219,106 @@ safe whatever dispatched it**. Both trim _before_ measuring, so whitespace-only 
 minimum without a rule of its own. A bound pair sharing one message is `@Length`, not
 `@MinLength` plus `@MaxLength` — both of the pair fail on a non-string, printing the same
 sentence twice.
+
+### Changing a password — `PATCH /api/auth/password`
+
+In `auth`, not `user`, because this module owns credentials: it verifies the old one,
+applies the policy to the new one, hashes it, and hands `user` a hash. 204, because there is
+nothing to answer with.
+
+**A wrong current password is a 401 carrying `CURRENT_PASSWORD_MESSAGE`, and that constant is
+load-bearing.** The status is login's, so the endpoint reveals no more than login does — but
+the browser already reads a 401 as "the token went bad, sign out", and a user who mistypes
+their current password must get a field error rather than be signed out. The two 401s on this
+route are told apart by **that exact sentence**, which is why it lives in `@repo/shared` and
+is imported by both sides. The guard's own 401 carries Nest's bare `Unauthorized`.
+`auth-change-password.e2e-spec.ts` asserts the two messages differ; if they ever converge, a
+typo logs the user out.
+
+**The order of checks in `ChangePasswordHandler` is a security property, not tidiness.** The
+new password's bounds are checked first (not a secret — the caller typed it and the DTO
+already refused it once), then the current password, and only then whether the new one equals
+it. Asking "is this actually a change?" before verifying would tell someone holding a stolen
+token whether a guessed password is the account's current one.
+
+**The PRD's "rate-limited the same way login is, if login is" resolves to nothing today.**
+There is no throttler in this app — `/auth/login` is unlimited — so this endpoint inherits
+the same absence. Adding rate limiting means adding it to both in the same change.
+
+**A stateless JWT is not revoked by a password change.** The token that made the change keeps
+working, and so does every other token issued for that account, until `JWT_EXPIRES_IN_SECONDS`
+elapses (default 3600). That is a property of bearer tokens, not a gap: the edit page states
+it in words next to the form, which is the mitigation
+[the PRD](../../docs/specs/2026-09-20-user-profile-prd.md) agreed on. Session revocation is
+its own design, and an e2e test pins the current behaviour so that design has to change the
+test on purpose.
+
+### The avatar — `src/modules/user/storage` and `services/avatar-image.ts`
+
+The user module owns bytes on disk, which until this feature only `meeting-files` did. Six
+things about it are not visible in the code.
+
+- **It does not reuse `MeetingFileStorage`, and that is the decision, not an oversight.** The
+  two share a root — `MEETING_FILES_DIR`, so there is one directory to back up and one to
+  point at a volume — and nothing else. `AvatarStorage` has its own key shape
+  (`avatars/<uuid>.webp`), no chunk tree, and no 100 MB temp protocol, and injecting another
+  module's provider here would cross a boundary the buses exist to keep. The price is a second
+  small storage class; the alternative was a dependency between two modules with no reason to
+  know about each other. `ContentSniffer` is not reused for the same reason, and one more: an
+  avatar has to be **decodable**, not merely recognised.
+- **One object per upload, not per user, and that is a correctness rule rather than a
+  preference.** `AvatarStorage.newKey` generates a key nothing else names; the row is pointed at
+  it, and the object it replaced is removed afterwards. With one object per account — the
+  obvious `<userId>.webp` — a removal and a replacement running together cannot be told apart:
+  the removal unlinks the only key there is, which may be the bytes the replacement has just
+  written, leaving the row pointing at a file that is not there and every read of it a 500.
+  Each request now reads the key it is replacing **inside the transaction that replaces it**,
+  so it only ever unlinks the object it saw, and the two orders both end consistent. Keys of
+  the older shape still resolve, so rows written before this keep working.
+- **The path a client fetches is the same string for every picture an account will ever
+  have**, whatever the key underneath is, so nothing about the URL says the image changed —
+  which is why the row carries `avatarVersion` and why the fetch route is `no-store`. A client
+  keys its fetch on the number, so a replaced avatar appears without a reload.
+- **Decoding is the type check, and the header is read before anything is decoded.**
+  `AvatarImage.normalise` reads the header with `sharp`, refuses anything but PNG/JPEG/WebP,
+  and re-encodes to a square WebP with `fit: 'cover'`. A PDF renamed `.png` fails the same step
+  that would have resized it, so there is no second sniff to disagree with. The four refusals
+  carry four different sentences on purpose — empty, wrong type, too many pixels, undecodable
+  are four different things to the person holding the file.
+- **`MAX_AVATAR_PIXELS` is a second bound because the byte cap is not one.** A flat-colour PNG
+  of 20000 squared is sixty-nine bytes and four hundred megapixels: well inside 5 MB, and a
+  gigabyte of memory to decode on the request thread. The dimensions in the header are checked
+  against the cap before any pixel is read, so what is decoded is never larger than it. `sharp`'s
+  own `limitInputPixels` is deliberately **off** — it throws a message nothing can act on, where
+  this refusal says which rule the file broke.
+- **Nothing touches the stored object until the new rendition exists in full.** The rendition
+  is written to a temp path and only then moved into place, so every rejection leaves the
+  previous avatar being served. The e2e spec asserts that by re-fetching the bytes, not by
+  checking a status.
+- **The decode and the write of the rendition are separate calls, and that is the reason it is
+  `toBuffer` plus `fs` rather than `toFile`.** `sharp` reports a full disk and a truncated JPEG
+  identically — a message, no errno code — so one call would have to guess which it was, and a
+  guess reading "that image could not be read" tells every user their picture is damaged while
+  the volume is full and nothing reaches the log. Decoding yields a buffer of a few kilobytes,
+  writing it is `fs`, and an `fs` failure is left to propagate as the 500 it is.
+- **Synchronous inside the request, with no worker and no `processing` state.** The PRD's call:
+  the user is waiting to see the picture and the file is small, so making them wait beats
+  making them poll. The byte cap and the pixel cap between them are what bound the decode on
+  the request thread.
+
+The write order differs between the two commands, and each is deliberate. **Upload writes the
+bytes and then the row**: the reverse would announce a version over bytes that are not there
+yet. **Delete clears the row and then the bytes**: the previous URL has to stop working, and it
+stops the moment the reference is gone. Both end by unlinking the object the row stopped
+pointing at, and a failed unlink is an unreferenced object — logged, not a 500. Upload also
+unlinks what it stored when the row never takes it, which is the only way to produce one on
+that path.
+
+Avatars need **no environment variable of their own**: the caps, the accepted types, the square
+size, and the five messages are all in `@repo/shared`, because the browser checks what it can
+before uploading and must say what the server would. The pixel cap is the one rule it cannot
+check — counting an image's pixels means decoding it — so that refusal only ever comes back
+from the API.
 
 ### The second boundary — meetings and meeting-files
 

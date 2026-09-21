@@ -1,11 +1,19 @@
-import { MAX_EMAIL_LENGTH, MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from '@repo/shared';
+import {
+  MAX_EMAIL_LENGTH,
+  MAX_PASSWORD_LENGTH,
+  MIN_PASSWORD_LENGTH,
+  PASSWORD_MISMATCH_MESSAGE,
+  PASSWORD_UNCHANGED_MESSAGE,
+} from '@repo/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
   normaliseEmail,
   validateEmail,
   validateLoginPassword,
+  validateNewPassword,
   validatePassword,
+  validatePasswordConfirmation,
 } from './credentials';
 
 describe('validateEmail', () => {
@@ -107,5 +115,72 @@ describe('validateLoginPassword', () => {
 describe('normaliseEmail', () => {
   it('trims and lowercases, matching the API', () => {
     expect(normaliseEmail('  Ada@Example.COM ')).toBe('ada@example.com');
+  });
+});
+
+describe('validateNewPassword', () => {
+  const CURRENT = 'old-password';
+
+  it('accepts a password that meets the registration bounds and differs from the current', () => {
+    expect(validateNewPassword('a-new-password', CURRENT)).toBeNull();
+  });
+
+  it('applies the registration rules, not the sign-in ones', () => {
+    // This value becomes the account's password, so today's minimum is exactly what it must
+    // meet — unlike the current-password field beside it.
+    expect(validateNewPassword('short', CURRENT)).toBe(validatePassword('short'));
+    expect(validateNewPassword(' '.repeat(MIN_PASSWORD_LENGTH + 2), CURRENT)).toBe(
+      validatePassword(' '.repeat(MIN_PASSWORD_LENGTH + 2)),
+    );
+    expect(validateNewPassword('x'.repeat(MAX_PASSWORD_LENGTH + 1), CURRENT)).toBe(
+      validatePassword('x'.repeat(MAX_PASSWORD_LENGTH + 1)),
+    );
+  });
+
+  it('refuses a new password identical to the current one', () => {
+    expect(validateNewPassword(CURRENT, CURRENT)).toBe(PASSWORD_UNCHANGED_MESSAGE);
+  });
+
+  it('compares the two verbatim rather than trimming either', () => {
+    // The API compares the bytes it was sent, so a client that trimmed would call two
+    // different passwords the same and refuse a change the server would have accepted.
+    expect(validateNewPassword(` ${CURRENT} `, CURRENT)).toBeNull();
+  });
+
+  it('says nothing about being unchanged while the current-password field is empty', () => {
+    // An empty current password is that field's problem. Pointing the reader at the new one
+    // would send them to fix the input that is not wrong.
+    expect(validateNewPassword('a-new-password', '')).toBeNull();
+    expect(validateNewPassword('', '')).toBe(validatePassword(''));
+  });
+
+  it('reports the bounds before it reports sameness', () => {
+    // A value that is both too short and identical to the current one has a single actionable
+    // problem, and it is the length.
+    expect(validateNewPassword('short', 'short')).toBe(validatePassword('short'));
+  });
+});
+
+describe('validatePasswordConfirmation', () => {
+  it('accepts a confirmation that matches', () => {
+    expect(validatePasswordConfirmation('a-new-password', 'a-new-password')).toBeNull();
+  });
+
+  it('refuses a mismatch with the shared sentence', () => {
+    expect(validatePasswordConfirmation('a-new-passwerd', 'a-new-password')).toBe(
+      PASSWORD_MISMATCH_MESSAGE,
+    );
+  });
+
+  it('asks for the field to be filled rather than calling an empty one a mismatch', () => {
+    expect(validatePasswordConfirmation('', 'a-new-password')).toBe('Repeat your new password.');
+  });
+
+  it('compares verbatim, so a stray space is a mismatch', () => {
+    // It is: the confirmation exists to catch a typo, and a trailing space in the new password
+    // is a typo the user needs to see now rather than at their next sign-in.
+    expect(validatePasswordConfirmation('a-new-password ', 'a-new-password')).toBe(
+      PASSWORD_MISMATCH_MESSAGE,
+    );
   });
 });
