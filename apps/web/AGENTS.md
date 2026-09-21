@@ -64,24 +64,32 @@ aliases in sync if either changes.
   paint light-theme grey onto a dark page. Dark's own `--muted` is 7.72:1 and is left alone.
   Measure before changing either: the numbers above are from a real browser, and HeroUI
   bumping its palette is what would silently undo this.
-- **`globals.css` also gives dark-mode form fields their edge back, and without it there is
-  none.** HeroUI paints a field the same colour as the card in _both_ themes — white on white
-  in light, `oklch(21.03%)` on itself in dark — with `--field-border` transparent at zero
-  width throughout. Light mode separates the two with `--field-shadow`, a real drop shadow;
-  dark mode sets that to `0 0 0 0 transparent inset`, because a black shadow on a near-black
-  card shows nothing, and puts nothing in its place. The result is an input with no boundary
-  at all until it is focused, on every form in the app. The override is the dark-mode
-  equivalent of that drop shadow: a 1px **inset** hairline, so it costs no geometry and the
-  field is the same size in both themes, landing in the shadow slot after Tailwind's four so
-  `ring-*` and HeroUI's own `status-focused-field` keep theirs — which is what upstream's
-  "transparent shadow to allow ring utilities to work" is protecting. **The colour is measured,
-  not picked.** WCAG 1.4.11 wants 3:1 for whatever identifies a control, and nothing in the
-  dark palette reaches it against the card (`--border` is 1.21:1, `--segment` 1.89:1), so the
-  value is lighter than either: `oklch(52% …)` measures 3.19:1 at rest and on focus, 3.13:1 on
-  hover, and 3.65:1 for a field on the page rather than a card. One token, so every component
-  drawing `bg-field`+`shadow-field` inherits it — input, input group, textarea, select,
-  checkbox, radio, autocomplete, number field, search field, date input, OTP. Do not reach for
-  a per-form class instead.
+- **`globals.css` also gives dark-mode form fields their edge back and their hover state, and
+  the two values are one decision.** HeroUI paints a field the same colour as the card in _both_
+  themes — white on white in light, `oklch(21.03%)` on itself in dark — with `--field-border`
+  transparent at zero width throughout. Light mode separates the two with `--field-shadow`, a
+  real drop shadow; dark mode sets that to `0 0 0 0 transparent inset`, because a black shadow
+  on a near-black card shows nothing, and puts nothing in its place. The result is an input with
+  no boundary at all until it is focused, on every form in the app. The override is the
+  dark-mode equivalent of that drop shadow: a 1px **inset** hairline, so it costs no geometry
+  and the field is the same size in both themes, landing in the shadow slot after Tailwind's
+  four so `ring-*` and HeroUI's own `status-focused-field` keep theirs — which is what
+  upstream's "transparent shadow to allow ring utilities to work" is protecting.
+  **`--field-hover` is overridden in the same block and cannot be separated from it.** The hover
+  rule changes `background-color` and `border-color`, and the border has no width, so the
+  background is hover's only lever in this theme — and every step it takes eats the hairline's
+  contrast. Shipped, hover is a two-point step (rgb(26, 26, 29) on rgb(24, 24, 27)), which is no
+  state at all; opening it to one that reads costs the line enough that the line has to come up
+  with it. **Both are measured, not picked.** WCAG 1.4.11 wants 3:1 for whatever identifies a
+  control, and that covers its _states_, so the line clears the bar over the hover background
+  too. Nothing in the dark palette reaches even the resting bar (`--border` is 1.21:1,
+  `--segment` 1.89:1), so the line is lighter than either: `oklch(56% …)` measures 3.81:1 on the
+  card and at focus, 4.35:1 on the page, and **3.20:1 over hover, which is the number that set
+  it**. Raise the hover step and you must re-measure the line. Two tokens, so every component
+  drawing `bg-field`+`shadow-field` inherits both — input, input group, textarea, select,
+  checkbox, radio, autocomplete, number field, search field, date input, OTP — and
+  `--field-hover` is only ever read inside a `:hover` block, so it changes nothing at rest. Do
+  not reach for a per-form class instead.
 - **`src/app/providers.tsx`.** HeroUI v3 needs no provider of its own; this file exists for
   next-themes, which must set both `class` and `data-theme` because HeroUI reads the two
   together.
