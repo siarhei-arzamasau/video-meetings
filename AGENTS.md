@@ -171,9 +171,12 @@ Three facts that bite an agent more than a human:
 
 - **`pnpm dev` does not generate the Prisma client**, and the client is gitignored. On a
   fresh clone or after a schema change, `pnpm --filter=@repo/api prisma:generate` first.
-- **The API refuses to boot** on a `JWT_SECRET` under 32 characters, and — with
-  `MEETING_FILES_TRANSCRIPTION_ENABLED` on — on a missing `TRANSCRIPTION_API_URL`. Both are
-  boot-time validation, not first-request failures.
+- **The API refuses to boot** on a `JWT_SECRET` that is unset, under 32 characters, or a
+  placeholder this repository has published, and — with `MEETING_FILES_TRANSCRIPTION_ENABLED`
+  on — on a missing `TRANSCRIPTION_API_URL`. All are boot-time validation, not first-request
+  failures. **The `.env.example` files ship `JWT_SECRET` empty on purpose**, so a fresh copy
+  does not boot until someone runs `openssl rand -base64 32`; do not "fix" that by putting a
+  value back.
 - **`apps/api/storage/` is where uploaded bytes live** (`MEETING_FILES_DIR`, gitignored);
   the database has only the records. Everything else about uploads is in
   [the API guide](apps/api/AGENTS.md#meeting-files-srcmodulesmeeting-files), which owns it.
