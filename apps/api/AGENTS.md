@@ -382,10 +382,14 @@ get wrong.
   indexed read is the cost of not writing 100 MB. The check is
   `requireVisibleMeetingBeforeBody`, which the chunk route's interceptor shares.
 - **The type is sniffed from the bytes, never the client's header.** `file-type` is pinned to
-  **16.5.4** because 17+ is ESM-only and this is a CJS build; do not "upgrade" it. Text has no
-  magic bytes, so an undetected file that decodes as UTF-8 with no NUL is typed by extension —
-  among `.txt`/`.md`/`.csv` only. An extension never elevates a file to a binary type, so
-  `page.html` renamed `page.pdf` is a 415 while renamed `notes.txt` it is stored as
+  **16.5.4** because 17+ is ESM-only: Node 24 would `require()` it, but Jest's loader cannot —
+  both suites fail with `Cannot use import statement outside a module` — so moving past it
+  means changing how Jest runs, not bumping a version; do not "upgrade" it. Its one advisory
+  since (GHSA-5v7r-6r5c-r473, an ASF-parser loop that a 64-byte upload starts) is closed by
+  refusing the ASF header prefix before the parser runs; ASF is not on the allow-list. Text
+  has no magic bytes, so an undetected file that decodes as UTF-8 with no NUL is typed by
+  extension — among `.txt`/`.md`/`.csv` only. An extension never elevates a file to a binary
+  type, so `page.html` renamed `page.pdf` is a 415 while renamed `notes.txt` it is stored as
   `text/plain` and served as an attachment with `nosniff`.
 - **Multer needs two options that look optional.** `defParamCharset: 'utf8'` — busboy decodes
   filenames as latin1 and `отчёт.pdf` arrives as mojibake without it — and `preservePath: true`,
