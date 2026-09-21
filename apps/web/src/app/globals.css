@@ -23,7 +23,7 @@
   --muted: oklch(53% 0.0138 285.94);
 }
 
-/* Dark mode gives form fields no edge at all, and that is the whole of this rule.
+/* Dark mode gives form fields no edge at all, and no hover worth the name. Both are here.
 
    In *both* themes HeroUI paints a field the same colour as the card it sits on — light is
    `--surface: white` and `--field-background: white`, dark is `oklch(21.03%)` for each — and
@@ -41,19 +41,34 @@
    value ("to allow ring utilities to work") is protecting, so this keeps the shape it asked
    for rather than working around it.
 
-   **The colour is chosen by measurement, not by eye.** WCAG 1.4.11 wants 3:1 for the visual
-   information that identifies a control, and this line is now that information. Nothing in the
-   dark palette reaches it against the card — `--border` is 1.21:1, `--segment` 1.89:1 — so the
-   value is a step lighter than any of them. oklch(52%) is rgb(104, 104, 108) and measures
-   3.19:1 on the card, 3.65:1 on the page, 3.13:1 on `--field-hover` and 3.19:1 on
-   `--field-focus`, so it clears the bar in every state a field has rather than only at rest.
-   Its chroma and hue are `--border`'s, so it reads as the same family of line, only stronger.
+   **The two values are one decision, not two, because they pull against each other.** The
+   hover rule is the reason: `.input-group:hover` changes `background-color` and `border-color`,
+   and the border has no width, so the *only* lever hover has in this theme is its background —
+   and every step that background takes towards the foreground eats into the contrast of the
+   hairline sitting on top of it. Shipped, `--field-hover` is rgb(26, 26, 29) against a field
+   of rgb(24, 24, 27): a two-point step, which is no hover state at all. Opening it to a step
+   that reads (rgb(39, 39, 42), eight parts foreground) costs the hairline enough that it has
+   to come up with it.
+
+   **Both colours are chosen by measurement, not by eye.** WCAG 1.4.11 wants 3:1 for the visual
+   information that identifies a control, and that applies to a control's *states*, not only to
+   its resting appearance — so the line has to clear the bar over the hover background too, not
+   just over the card. Nothing in the dark palette reaches even the resting bar — `--border` is
+   1.21:1, `--segment` 1.89:1 — so the line is lighter than any of them. oklch(56%) is
+   rgb(116, 116, 120) and measures 3.81:1 on the card, 3.81:1 at focus, 4.35:1 on the page, and
+   3.20:1 over the hover background, which is the number that set it. Its chroma and hue are
+   `--border`'s, so it reads as the same family of line, only stronger.
+
+   `--field-hover` is only ever read inside a `:hover` block — every component that uses it does
+   so through `@apply bg-field-hover` under a hover selector — so opening it up changes nothing
+   at rest anywhere.
 
    Scoped `:root[data-theme='dark']` for the reason the light rule above is scoped: this file
    follows the HeroUI import, and (0,2,0) beats the `.dark, [data-theme='dark']` block it has
-   to override. Every component that draws `bg-field`+`shadow-field` inherits it — input,
+   to override. Every component that draws `bg-field`+`shadow-field` inherits both — input,
    input group, textarea, select, checkbox, radio, autocomplete, number field, search field,
-   date input, OTP — which is why the fix is one token here and not a class per form. */
+   date input, OTP — which is why the fix is two tokens here and not a class per form. */
 :root[data-theme='dark'] {
-  --field-shadow: 0 0 0 1px oklch(52% 0.006 286.033) inset;
+  --field-shadow: 0 0 0 1px oklch(56% 0.006 286.033) inset;
+  --field-hover: color-mix(in oklab, var(--field-background) 92%, var(--foreground) 8%);
 }
