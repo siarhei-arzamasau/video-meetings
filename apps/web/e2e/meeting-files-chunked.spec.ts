@@ -132,6 +132,44 @@ test.describe('uploading a file too large for one request', () => {
     await host.context.close();
   });
 
+  test('offers Retry once the network stays down past its retries, and Retry resumes', async ({
+    browser,
+  }) => {
+    const host = await signUp(browser);
+    const meeting = await createMeetingViaApi(host.token, { title: 'Engine review' });
+    const { page } = host;
+    const { acknowledged } = watchChunks(page);
+    const chunks = '**/files/uploads/*/chunks/*';
+
+    // The first chunk lands; every one after it fails at the network for as long as this route
+    // is in place, which outlasts the client's three retries and their widening pauses.
+    await page.route(chunks, (route) =>
+      route.request().method() === 'PUT' && acknowledged.length > 0
+        ? route.abort('failed')
+        : route.continue(),
+    );
+    await page.goto(`/meetings/${meeting.id}`);
+    await pickFiles(page, [sparsePdf(LARGE_NAME, LARGE_FILE_BYTES)]);
+
+    const row = rowFor(page, LARGE_NAME);
+    await expect(row.getByRole('button', { name: 'Retry' })).toBeVisible({
+      timeout: scaled(30_000),
+    });
+
+    await page.unroute(chunks);
+    await row.getByRole('button', { name: 'Retry' }).click();
+
+    await expect(row.getByRole('button', { name: 'Download' })).toBeVisible({
+      timeout: scaled(90_000),
+    });
+    // Resumed, not restarted: the chunk that landed before the outage was not sent again.
+    expect(acknowledged.toSorted((a, b) => a - b)).toEqual(
+      Array.from({ length: CHUNKS }, (_, index) => index),
+    );
+
+    await host.context.close();
+  });
+
   test('resumes after a reload once the same file is picked again', async ({ browser }) => {
     const host = await signUp(browser);
     const meeting = await createMeetingViaApi(host.token, { title: 'Engine review' });
