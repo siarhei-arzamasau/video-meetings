@@ -6,6 +6,7 @@ import {
   storageKeyOf,
   thumbnailKeyOf,
   toMeetingFile,
+  transcriptKeyOf,
 } from './meeting-file.mapper';
 
 const MEETING_ID = '44444444-4444-4444-8444-444444444444';
@@ -66,6 +67,12 @@ describe('toMeetingFile', () => {
     ).toMatchObject({ thumbnailPath: `/meetings/${MEETING_ID}/files/${FILE_ID}/thumbnail` });
   });
 
+  it('derives transcriptPath from the ids when a transcript key is set', () => {
+    expect(
+      toMeetingFile({ ...RECORD, transcriptKey: `${MEETING_ID}/${FILE_ID}.transcript.txt` }),
+    ).toMatchObject({ transcriptPath: `/meetings/${MEETING_ID}/files/${FILE_ID}/transcript` });
+  });
+
   it('renders processedAt as an ISO instant when set', () => {
     expect(
       toMeetingFile({ ...RECORD, processedAt: new Date('2026-09-01T10:00:01.000Z') }),
@@ -77,6 +84,12 @@ describe('storage keys', () => {
   it('are the two ids, and the thumbnail is the key with a suffix', () => {
     expect(storageKeyOf(MEETING_ID, FILE_ID)).toBe(`${MEETING_ID}/${FILE_ID}`);
     expect(thumbnailKeyOf(`${MEETING_ID}/${FILE_ID}`)).toBe(`${MEETING_ID}/${FILE_ID}.thumb.webp`);
+  });
+
+  it('gives the transcript the key with a suffix of its own', () => {
+    expect(transcriptKeyOf(`${MEETING_ID}/${FILE_ID}`)).toBe(
+      `${MEETING_ID}/${FILE_ID}.transcript.txt`,
+    );
   });
 });
 
