@@ -113,14 +113,18 @@ converts all of them, not a second convention alongside the first.
 A handler owns its use case; a shared service owns anything two handlers must not implement
 differently. `PasswordService` is the example: **hashing is argon2id (`@node-rs/argon2`),
 never bcrypt** — bcrypt truncates input at 72 bytes, which silently makes every password
-sharing a 72-byte prefix the same credential; an e2e test enforces this. Login must not become
+sharing a 72-byte prefix the same credential; an e2e test enforces this. Its cost parameters
+are stated there too — OWASP's 19 MiB, two passes, one lane — although they are the library's
+native defaults: its own typings document 4 MiB and three passes, which is enough to mislead
+a review, and a default can move under a version bump. Login must not become
 an account-enumeration oracle either, and that guarantee is split across two files on purpose:
 
 - `LoginHandler` owns the single shared failure message — both the unknown-email and
   wrong-password paths throw the same `INVALID_CREDENTIALS` constant. Give either its own
   message and the endpoint starts answering "does this address have an account?".
 - `PasswordService` owns the timing half — `verifyDummy` spends a real argon2 verification
-  against a dummy hash built at startup, so a miss costs what a hit costs. The no-account path
+  against a dummy hash built at startup by `hash` itself, so it carries a stored hash's
+  parameters and a miss costs what a hit costs. The no-account path
   must keep calling it, and keep `await`ing it. **No test catches its removal**; all four login
   specs stay green while the defence is gone.
 
