@@ -33,11 +33,11 @@
     "content-disposition": "1.1.0",
     "express": "5.2.1",
     "file-type": "16.5.4",
-    "multer": "2.2.0",
+    "multer": "2.4.0",
     "pg": "8.22.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
-    "sharp": "0.34.5"
+    "sharp": "0.35.4"
   },
   "devDependencies": {
     "@nestjs/cli": "11.0.24",

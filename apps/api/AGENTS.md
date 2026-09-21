@@ -380,6 +380,16 @@ get wrong.
   filenames as latin1 and `отчёт.pdf` arrives as mojibake without it — and `preservePath: true`,
   because otherwise multer takes the basename and a path separator never reaches the name rule
   that exists to reject it.
+- **Both upload interceptors map multer's rejections by `code`, not by message**
+  (`mapMulterError`, `src/common/multer-error.ts`). Nest 11 classifies them by comparing
+  messages, multer's messages change between releases, and one Nest 11 does not recognise
+  reaches the client as a 500. An upload spec attaches **with a filename**, too: multer skips a
+  file part that has none before its field name is checked, so the request reaches the handler
+  with no file and a field-name test passes on the handler's own 400, for the wrong reason.
+- **multer is overridden to 2.4.0, above the 2.2.0 every Nest 11 `platform-express` pins**
+  (`pnpm-workspace.yaml`), for its DoS fixes — and that is what makes the mapping above
+  load-bearing, since 2.4.0 renamed a message Nest 11 matches on. The override goes with the
+  Nest 12 upgrade; the mapping can stay.
 - **Downloads declare the object's real length.** `Content-Length` is the `stat` size, not the
   record's; they differ only for a truncated object, which is already `failed` with a reason,
   and the record's length would turn that download into an aborted transfer instead of the

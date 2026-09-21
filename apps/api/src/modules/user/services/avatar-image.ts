@@ -2,7 +2,7 @@ import { writeFile } from 'node:fs/promises';
 
 import { Injectable, Logger } from '@nestjs/common';
 import { AVATAR_SIZE_PIXELS, MAX_AVATAR_PIXELS } from '@repo/shared';
-import sharp from 'sharp';
+import sharp, { type Sharp } from 'sharp';
 
 import { errorMessage } from '../../../common/error-message';
 
@@ -94,7 +94,7 @@ export class AvatarImage {
    * What the header says, as a rejection or `null` for a file worth decoding. Reading it costs
    * no decode: the 20000-square PNG above answers in under a millisecond.
    */
-  private async inspect(image: sharp.Sharp): Promise<RejectedAvatar | null> {
+  private async inspect(image: Sharp): Promise<RejectedAvatar | null> {
     let format: string | undefined;
     let width: number | undefined;
     let height: number | undefined;

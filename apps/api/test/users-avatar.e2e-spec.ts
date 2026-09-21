@@ -271,8 +271,14 @@ describe(`${AVATAR_URL}`, () => {
     it('rejects a file sent under the wrong field name', async () => {
       const { token } = await registerUser(EMAIL);
 
+      // A filename, as a browser always sends. Without one multer skips the part before its field
+      // name is ever checked, the handler runs with no file, and this passes on "A picture is
+      // required" without ever testing what its name says.
       await suite
-        .postFile(AVATAR_URL, token, await imageOf(300, 300, 'png'), { fieldName: 'file' })
+        .postFile(AVATAR_URL, token, await imageOf(300, 300, 'png'), {
+          fieldName: 'file',
+          filename: 'avatar.png',
+        })
         .expect(400);
 
       expect(await storedKey(EMAIL)).toBeNull();

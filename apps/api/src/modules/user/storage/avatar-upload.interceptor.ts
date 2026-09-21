@@ -15,6 +15,7 @@ import { diskStorage } from 'multer';
 import { Observable, from } from 'rxjs';
 import { catchError } from 'rxjs/operators';
 
+import { mapMulterError } from '../../../common/multer-error';
 import { AvatarStorage } from './avatar-storage';
 
 export const AVATAR_FIELD = 'avatar';
@@ -28,7 +29,8 @@ export const AVATAR_FIELD = 'avatar';
  * And once multer has written a temp file, anything that fails later in the chain would leave
  * it behind; the `catchError` removes it. Multer's own size rejection is mapped to the shared
  * copy on the way past, so an over-size upload reads the same sentence the browser would have
- * shown for it.
+ * shown for it. Every multer rejection goes through `mapMulterError` first, for the reason
+ * `MeetingFileUploadInterceptor` gives: without it a file under the wrong field name is a 500.
  *
  * Unlike `MeetingFileUploadInterceptor` there is nothing to resolve before the body is read:
  * guards run before interceptors, so `JwtAuthGuard` has already established who the caller is,
@@ -55,11 +57,13 @@ export class AvatarUploadInterceptor implements NestInterceptor {
     } catch (error) {
       await removeTempFile(request);
 
-      if (error instanceof PayloadTooLargeException) {
+      const rejection = mapMulterError(error);
+
+      if (rejection instanceof PayloadTooLargeException) {
         throw new PayloadTooLargeException(AVATAR_SIZE_MESSAGE);
       }
 
-      throw error;
+      throw rejection;
     }
 
     return stream.pipe(

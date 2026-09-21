@@ -16,6 +16,7 @@ import type { Request } from 'express';
 import { Observable, from } from 'rxjs';
 import { catchError } from 'rxjs/operators';
 
+import { mapMulterError } from '../../../common/multer-error';
 import type { AuthenticatedRequest } from '../../auth/authenticated-request';
 import { requireVisibleMeeting } from '../services/visible-meeting';
 import { MeetingFileStorage } from './meeting-file-storage';
@@ -42,7 +43,9 @@ const UUID_V4 = new ParseUUIDPipe({ version: '4' });
  *
  * And once multer has written a temp file, anything that fails later in the chain — the
  * param pipe, the sniff — would leave it behind; the `catchError` removes it. Multer's own
- * size rejection is mapped to the PRD's copy on the way past.
+ * size rejection is mapped to the PRD's copy on the way past, and every multer rejection goes
+ * through `mapMulterError` first: Nest 11 recognises them by messages multer 2.4.0 changed, and
+ * one it does not recognise would otherwise answer 500.
  */
 @Injectable()
 export class MeetingFileUploadInterceptor implements NestInterceptor {
@@ -69,11 +72,13 @@ export class MeetingFileUploadInterceptor implements NestInterceptor {
     } catch (error) {
       await removeTempFile(request);
 
-      if (error instanceof PayloadTooLargeException) {
+      const rejection = mapMulterError(error);
+
+      if (rejection instanceof PayloadTooLargeException) {
         throw new PayloadTooLargeException(SIZE_MESSAGE);
       }
 
-      throw error;
+      throw rejection;
     }
 
     return stream.pipe(
