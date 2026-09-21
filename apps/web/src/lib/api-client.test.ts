@@ -9,6 +9,7 @@ import {
   ApiError,
   buildApiUrl,
   changePassword,
+  countMeetings,
   deleteAvatar,
   fetchAvatar,
   getApiBaseUrl,
@@ -546,6 +547,31 @@ describe('listMeetings', () => {
     stubFetch(jsonResponse(200, []));
 
     await expect(listMeetings('a-signed-jwt')).resolves.toEqual([]);
+  });
+
+  it('puts the order and the limit in the query string when asked for them', async () => {
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com/api');
+    const fetchMock = stubFetch(jsonResponse(200, []));
+
+    await listMeetings('a-signed-jwt', { order: 'desc', limit: 3 });
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    expect(url).toBe('https://api.example.com/api/meetings?order=desc&limit=3');
+  });
+});
+
+describe('countMeetings', () => {
+  it('asks with the token and unwraps the total', async () => {
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://api.example.com/api');
+    const fetchMock = stubFetch(jsonResponse(200, { total: 12 }));
+
+    await expect(countMeetings('a-signed-jwt')).resolves.toBe(12);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+
+    expect(url).toBe('https://api.example.com/api/meetings/count');
+    expect(init.headers).toMatchObject({ authorization: 'Bearer a-signed-jwt' });
   });
 });
 

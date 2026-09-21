@@ -7,13 +7,19 @@ import { MeetingStatusChip } from '@/components/meeting-status-chip';
 import { formatMeetingTime } from '@/lib/date-time';
 import { LATEST_MEETINGS_COUNT, latestMeetings } from '@/lib/meetings';
 
-/** The dashboard once the gate has a user and the list has loaded: greeting, total, latest. */
+/**
+ * The dashboard once the gate has a user and the meetings have loaded: greeting, total, latest.
+ * `meetings` is the latest few the API was asked for, never the whole list, so the total is
+ * its own number.
+ */
 export function ReadyDashboard({
   user,
   meetings,
+  total,
 }: {
   user: User;
   meetings: ReadonlyArray<Meeting>;
+  total: number;
 }) {
   const latest = latestMeetings(meetings);
   const isEmpty = latest.length === 0;
@@ -31,14 +37,11 @@ export function ReadyDashboard({
 
       <Card className="p-6">
         <div className="flex flex-col gap-1">
-          <span className="text-4xl font-semibold tracking-tight tabular-nums">
-            {meetings.length}
-          </span>
-          {/* The endpoint has no pagination, so this is every meeting the user hosts or
-              attends. The day it grows a `?page=`, this stops being a total and starts being a
-              page size, and the label below will quietly lie. */}
+          <span className="text-4xl font-semibold tracking-tight tabular-nums">{total}</span>
+          {/* Counted by the API, not the length of the list below it: that list is the latest
+              few, and counting it would make this a page size that the label calls a total. */}
           <span className="text-muted text-sm">
-            {meetings.length === 1 ? 'meeting' : 'meetings'} in total
+            {total === 1 ? 'meeting' : 'meetings'} in total
           </span>
         </div>
       </Card>

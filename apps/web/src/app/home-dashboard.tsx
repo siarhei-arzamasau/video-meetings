@@ -3,17 +3,16 @@
 import { Alert, Button, Spinner } from '@heroui/react';
 import type { Meeting, User } from '@repo/shared';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
 
 import { SignOutIcon, WarningIcon } from '@/components/icons';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { UserAvatar } from '@/components/user-avatar';
 import { Wordmark } from '@/components/wordmark';
-import { ApiError, listMeetings } from '@/lib/api-client';
-import { describeFailure, useSignedIn } from '@/lib/use-signed-in';
+import { useSignedIn } from '@/lib/use-signed-in';
 
 import { DashboardLoadingShell } from './dashboard-loading-shell';
 import { ReadyDashboard } from './ready-dashboard';
+import { useDashboardMeetings } from './use-dashboard-meetings';
 
 /**
  * The meetings list, once the gate has a user. `ready` with an empty list is not its own
@@ -22,59 +21,16 @@ import { ReadyDashboard } from './ready-dashboard';
  */
 type Dashboard =
   | { state: 'loading' }
-  | { state: 'ready'; user: User; meetings: ReadonlyArray<Meeting> }
+  | { state: 'ready'; user: User; latest: ReadonlyArray<Meeting>; total: number }
   | { state: 'failed'; message: string; retry(): void }
   | { state: 'signedOut' };
 
-type MeetingsList =
-  | { state: 'loading' }
-  | { state: 'ready'; meetings: ReadonlyArray<Meeting> }
-  | { state: 'failed'; message: string };
-
 export function HomeDashboard() {
-  // The gate — token read, `getMe`, 401 redirect — lives in the hook now that the meeting page
-  // shares it. What stays here is the one request this page adds: the list.
+  // The gate — token read, `getMe`, 401 redirect — lives in the hook the meeting page shares.
+  // What this page adds is its own two requests, in `useDashboardMeetings`.
   const { session, signOut } = useSignedIn();
-  const [list, setList] = useState<MeetingsList>({ state: 'loading' });
-  const [reloadCount, setReloadCount] = useState(0);
   const token = session.state === 'ready' ? session.token : null;
-
-  useEffect(() => {
-    if (token === null) {
-      return;
-    }
-
-    let active = true;
-
-    async function load(bearer: string) {
-      try {
-        const meetings = await listMeetings(bearer);
-
-        if (active) {
-          setList({ state: 'ready', meetings });
-        }
-      } catch (error) {
-        if (!active) {
-          return;
-        }
-
-        if (error instanceof ApiError && error.status === 401) {
-          // The token went bad between the two requests. Same answer as the gate's.
-          signOut();
-
-          return;
-        }
-
-        setList({ state: 'failed', message: describeFailure(error) });
-      }
-    }
-
-    void load(token);
-
-    return () => {
-      active = false;
-    };
-  }, [token, signOut, reloadCount]);
+  const { meetings, retry } = useDashboardMeetings(token, signOut);
 
   // One `loading` on screen for both the gate and the list: they differ in control flow, not
   // in what the reader sees, and starting there keeps the first render identical on the server.
@@ -83,18 +39,16 @@ export function HomeDashboard() {
       ? { state: 'signedOut' }
       : session.state === 'failed'
         ? { state: 'failed', message: session.message, retry: session.retry }
-        : session.state === 'loading' || list.state === 'loading'
+        : session.state === 'loading' || meetings.state === 'loading'
           ? { state: 'loading' }
-          : list.state === 'failed'
-            ? {
-                state: 'failed',
-                message: list.message,
-                retry: () => {
-                  setList({ state: 'loading' });
-                  setReloadCount((count) => count + 1);
-                },
-              }
-            : { state: 'ready', user: session.user, meetings: list.meetings };
+          : meetings.state === 'failed'
+            ? { state: 'failed', message: meetings.message, retry }
+            : {
+                state: 'ready',
+                user: session.user,
+                latest: meetings.latest,
+                total: meetings.total,
+              };
 
   if (dashboard.state === 'signedOut') {
     return (
@@ -162,7 +116,7 @@ export function HomeDashboard() {
       )}
 
       {dashboard.state === 'ready' && (
-        <ReadyDashboard user={dashboard.user} meetings={dashboard.meetings} />
+        <ReadyDashboard user={dashboard.user} meetings={dashboard.latest} total={dashboard.total} />
       )}
     </main>
   );
