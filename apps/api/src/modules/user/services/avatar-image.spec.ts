@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 
-import { AVATAR_SIZE_PIXELS } from '@repo/shared';
+import { AVATAR_SIZE_PIXELS, MAX_AVATAR_PIXELS } from '@repo/shared';
 import sharp from 'sharp';
 
 import { AvatarImage } from './avatar-image';
@@ -12,6 +13,18 @@ import { AvatarImage } from './avatar-image';
  * the other end — one square, always the same size, whatever went in — and a mocked `sharp`
  * would assert the arguments this file passes rather than the property the PRD asks for.
  */
+/** One PNG chunk: length, type, payload, CRC. */
+function pngChunk(type: string, data: Buffer): Buffer {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+
+  const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(zlib.crc32(body));
+
+  return Buffer.concat([length, body, crc]);
+}
+
 describe('AvatarImage', () => {
   const images = new AvatarImage();
   let directory: string;
@@ -37,6 +50,32 @@ describe('AvatarImage', () => {
         : format === 'jpeg'
           ? canvas.jpeg().toFile(file)
           : canvas.webp().toFile(file));
+
+    return file;
+  };
+
+  /**
+   * A PNG that claims a given size in its header and carries almost no data — the shape of the
+   * file the pixel cap exists for. Written by hand because `sharp` cannot produce one: asking
+   * it for a 20000-square image would allocate the gigabyte this test is about avoiding.
+   */
+  const writeHeaderOnlyPng = (name: string, width: number, height: number): string => {
+    const header = Buffer.alloc(13);
+    header.writeUInt32BE(width, 0);
+    header.writeUInt32BE(height, 4);
+    header[8] = 8; // bit depth
+    header[9] = 2; // truecolour
+
+    const file = sourceOf(name);
+    fs.writeFileSync(
+      file,
+      Buffer.concat([
+        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+        pngChunk('IHDR', header),
+        pngChunk('IDAT', zlib.deflateSync(Buffer.alloc(64))),
+        pngChunk('IEND', Buffer.alloc(0)),
+      ]),
+    );
 
     return file;
   };
@@ -153,10 +192,47 @@ describe('AvatarImage', () => {
       expect(fs.existsSync(destination)).toBe(false);
     });
 
+    it('refuses an image with more pixels than the cap, whatever it weighs', async () => {
+      // 20000 squared is 400 megapixels in 69 bytes: the byte cap cannot see it, and decoding
+      // it would cost a gigabyte of memory on the request thread.
+      const source = writeHeaderOnlyPng('bomb.png', 20_000, 20_000);
+
+      expect(fs.statSync(source).size).toBeLessThan(1_000);
+      await expect(images.normalise(source, sourceOf('out.webp'))).resolves.toEqual({
+        ok: false,
+        reason: 'dimensions',
+      });
+    });
+
+    it('takes an image right at the cap', async () => {
+      // The bound is inclusive, and a header claiming exactly the cap is decodable in
+      // principle — so the refusal above is about the size, not about the shape of the file.
+      const side = Math.floor(Math.sqrt(MAX_AVATAR_PIXELS));
+      const source = writeHeaderOnlyPng('edge.png', side, side);
+
+      await expect(images.normalise(source, sourceOf('out.webp'))).resolves.not.toMatchObject({
+        reason: 'dimensions',
+      });
+    });
+
     it('reports a missing source rather than throwing', async () => {
       await expect(
         images.normalise(sourceOf('nothing-here.png'), sourceOf('out.webp')),
       ).resolves.toEqual({ ok: false, reason: 'unreadable' });
+    });
+  });
+
+  describe("a failure that is the machine's, not the picture's", () => {
+    it('throws rather than calling a good picture unreadable', async () => {
+      // The destination cannot be written because its parent is a file. Whatever the cause —
+      // this, a full disk, a volume mounted read-only — the upload must not come back telling
+      // the user to try a different picture while nothing reaches the log.
+      const source = await write('in.png', 300, 200, 'png');
+      fs.writeFileSync(sourceOf('blocked'), 'not a directory');
+
+      await expect(
+        images.normalise(source, path.join(sourceOf('blocked'), 'out.webp')),
+      ).rejects.toThrow();
     });
   });
 });

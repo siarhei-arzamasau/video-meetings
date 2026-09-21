@@ -1,7 +1,14 @@
-import { describeImage, imageOf, oversizedImage, undecodablePng } from './utils/avatar-images';
+import {
+  describeImage,
+  imageOf,
+  oversizedImage,
+  pixelBombPng,
+  undecodablePng,
+} from './utils/avatar-images';
 import { useApiSuite } from './utils/api-suite';
 import {
   AVATAR_CONTENT_TYPE,
+  AVATAR_DIMENSIONS_MESSAGE,
   AVATAR_EMPTY_MESSAGE,
   AVATAR_SIZE_MESSAGE,
   AVATAR_SIZE_PIXELS,
@@ -227,6 +234,20 @@ describe(`${AVATAR_URL}`, () => {
       const response = await upload(token, Buffer.from('not a picture'), 'photo.png').expect(400);
 
       expect(messageOf(response)).toBe(AVATAR_UNREADABLE_MESSAGE);
+      await expectUnchanged(token, bytes);
+    });
+
+    it('rejects a picture with more pixels than the cap, however few bytes it is', async () => {
+      const { token, bytes } = await withAvatar();
+      const bomb = pixelBombPng(20_000, 20_000);
+
+      // Well inside the byte cap, and 400 megapixels: the size of the file says nothing about
+      // the work decoding it would cost, which is why there is a second bound at all.
+      expect(bomb.length).toBeLessThan(1_000);
+
+      const response = await upload(token, bomb, 'huge.png').expect(400);
+
+      expect(messageOf(response)).toBe(AVATAR_DIMENSIONS_MESSAGE);
       await expectUnchanged(token, bytes);
     });
 

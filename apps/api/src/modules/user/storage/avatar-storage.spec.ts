@@ -16,7 +16,8 @@ describe('AvatarStorage', () => {
   let root: string;
   let storage: AvatarStorage;
 
-  const key = (): string => storage.keyOf(USER_ID);
+  /** One user's key, as a row written before uploads had one key each still holds. */
+  const key = (): string => `${USER_ID}.webp`;
 
   const writeTemp = (contents: string): string => {
     const source = path.join(storage.tempDir(), 'incoming');
@@ -49,8 +50,17 @@ describe('AvatarStorage', () => {
       expect(fs.readdirSync(storage.tempDir())).toEqual([]);
     });
 
-    it('gives one user one key, whatever they upload', () => {
-      expect(storage.keyOf(USER_ID)).toBe(`${USER_ID}.webp`);
+    it('gives every upload a key of its own, so no two ever name one object', () => {
+      const first = storage.newKey();
+      const second = storage.newKey();
+
+      expect(first).not.toBe(second);
+      // Still a key the traversal check accepts, which is what lets it reach the filesystem.
+      expect(() => storage.pathOf(first)).not.toThrow();
+    });
+
+    it('still resolves the one-object-per-user keys written before that', () => {
+      expect(() => storage.pathOf(`${USER_ID}.webp`)).not.toThrow();
     });
   });
 

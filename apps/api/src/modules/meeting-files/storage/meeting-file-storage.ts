@@ -5,6 +5,8 @@ import path from 'node:path';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { errorMessage } from '../../../common/error-message';
+
 /** A uuid as the module generates them. Never a segment a client chose. */
 const ID = String.raw`[0-9a-f-]{36}`;
 
@@ -171,8 +173,4 @@ function assertKey(key: string): string {
   }
 
   return key;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

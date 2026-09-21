@@ -61,3 +61,21 @@ export const AVATAR_EMPTY_MESSAGE = 'The file is empty.';
  * different kind of file", the other means "this one is damaged".
  */
 export const AVATAR_UNREADABLE_MESSAGE = 'That image could not be read. Try a different file.';
+
+/**
+ * The most pixels the API is willing to decode, whatever the file weighs.
+ *
+ * `MAX_AVATAR_SIZE_BYTES` does not bound this on its own: a flat-colour PNG compresses to a
+ * few kilobytes at any dimensions, so a file well under the cap can still ask the server to
+ * decode a quarter of a billion pixels on the request thread. 64 megapixels clears every
+ * phone camera on sale — today's largest is 48 — with room to spare.
+ *
+ * Server-side only in effect: a browser cannot count an image's pixels without decoding it
+ * either, so this is the one avatar rule the form does not check before uploading.
+ */
+export const MAX_AVATAR_PIXELS = 64_000_000;
+
+/** A picture the API will not decode because of its dimensions. Its own sentence, because
+ *  "too big" about a 20 KB file reads as a contradiction unless it says what is too big. */
+export const AVATAR_DIMENSIONS_MESSAGE =
+  'Your picture has too many pixels. Use an image of 64 megapixels or smaller.';

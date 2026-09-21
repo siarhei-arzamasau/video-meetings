@@ -255,46 +255,70 @@ test on purpose.
 
 ### The avatar — `src/modules/user/storage` and `services/avatar-image.ts`
 
-The user module owns bytes on disk, which until this feature only `meeting-files` did. Five
+The user module owns bytes on disk, which until this feature only `meeting-files` did. Six
 things about it are not visible in the code.
 
 - **It does not reuse `MeetingFileStorage`, and that is the decision, not an oversight.** The
   two share a root — `MEETING_FILES_DIR`, so there is one directory to back up and one to
   point at a volume — and nothing else. `AvatarStorage` has its own key shape
-  (`avatars/<userId>.webp`), no chunk tree, and no 100 MB temp protocol, and injecting another
+  (`avatars/<uuid>.webp`), no chunk tree, and no 100 MB temp protocol, and injecting another
   module's provider here would cross a boundary the buses exist to keep. The price is a second
   small storage class; the alternative was a dependency between two modules with no reason to
   know about each other. `ContentSniffer` is not reused for the same reason, and one more: an
   avatar has to be **decodable**, not merely recognised.
-- **One object per user, replaced in place.** `rename` over the previous file is atomic, so a
-  concurrent read gets the old image or the new one and never half of either. Because the key
-  therefore never changes, nothing about the URL says the image did — which is why the row
-  carries `avatarVersion` and why the fetch route is `no-store`. A client keys its fetch on the
-  number, so a replaced avatar appears without a reload.
-- **Decoding is the type check.** `AvatarImage.normalise` reads the header with `sharp`,
-  refuses anything but PNG/JPEG/WebP, and re-encodes to a square WebP with `fit: 'cover'`. A
-  PDF renamed `.png` fails the same step that would have resized it, so there is no second
-  sniff to disagree with. The three refusals carry three different sentences on purpose —
-  empty, wrong type, undecodable are three different things to the person holding the file.
+- **One object per upload, not per user, and that is a correctness rule rather than a
+  preference.** `AvatarStorage.newKey` generates a key nothing else names; the row is pointed at
+  it, and the object it replaced is removed afterwards. With one object per account — the
+  obvious `<userId>.webp` — a removal and a replacement running together cannot be told apart:
+  the removal unlinks the only key there is, which may be the bytes the replacement has just
+  written, leaving the row pointing at a file that is not there and every read of it a 500.
+  Each request now reads the key it is replacing **inside the transaction that replaces it**,
+  so it only ever unlinks the object it saw, and the two orders both end consistent. Keys of
+  the older shape still resolve, so rows written before this keep working.
+- **The path a client fetches is the same string for every picture an account will ever
+  have**, whatever the key underneath is, so nothing about the URL says the image changed —
+  which is why the row carries `avatarVersion` and why the fetch route is `no-store`. A client
+  keys its fetch on the number, so a replaced avatar appears without a reload.
+- **Decoding is the type check, and the header is read before anything is decoded.**
+  `AvatarImage.normalise` reads the header with `sharp`, refuses anything but PNG/JPEG/WebP,
+  and re-encodes to a square WebP with `fit: 'cover'`. A PDF renamed `.png` fails the same step
+  that would have resized it, so there is no second sniff to disagree with. The four refusals
+  carry four different sentences on purpose — empty, wrong type, too many pixels, undecodable
+  are four different things to the person holding the file.
+- **`MAX_AVATAR_PIXELS` is a second bound because the byte cap is not one.** A flat-colour PNG
+  of 20000 squared is sixty-nine bytes and four hundred megapixels: well inside 5 MB, and a
+  gigabyte of memory to decode on the request thread. The dimensions in the header are checked
+  against the cap before any pixel is read, so what is decoded is never larger than it. `sharp`'s
+  own `limitInputPixels` is deliberately **off** — it throws a message nothing can act on, where
+  this refusal says which rule the file broke.
 - **Nothing touches the stored object until the new rendition exists in full.** The rendition
   is written to a temp path and only then moved into place, so every rejection leaves the
   previous avatar being served. The e2e spec asserts that by re-fetching the bytes, not by
   checking a status.
+- **The decode and the write of the rendition are separate calls, and that is the reason it is
+  `toBuffer` plus `fs` rather than `toFile`.** `sharp` reports a full disk and a truncated JPEG
+  identically — a message, no errno code — so one call would have to guess which it was, and a
+  guess reading "that image could not be read" tells every user their picture is damaged while
+  the volume is full and nothing reaches the log. Decoding yields a buffer of a few kilobytes,
+  writing it is `fs`, and an `fs` failure is left to propagate as the 500 it is.
 - **Synchronous inside the request, with no worker and no `processing` state.** The PRD's call:
   the user is waiting to see the picture and the file is small, so making them wait beats
-  making them poll. The 5 MB cap is what bounds the decode on the request thread.
+  making them poll. The byte cap and the pixel cap between them are what bound the decode on
+  the request thread.
 
 The write order differs between the two commands, and each is deliberate. **Upload writes the
-bytes and then the row**: the reverse would publish a version over the old image, while this
-way can at worst leave the new image under the old version, which the next upload corrects.
-**Delete clears the row and then the bytes**: the previous URL has to stop working, and it
-stops the moment the reference is gone. A failed unlink afterwards leaves an unreferenced
-object — logged, not a 500 — where the reverse order would leave a row pointing at a file that
-is not there.
+bytes and then the row**: the reverse would announce a version over bytes that are not there
+yet. **Delete clears the row and then the bytes**: the previous URL has to stop working, and it
+stops the moment the reference is gone. Both end by unlinking the object the row stopped
+pointing at, and a failed unlink is an unreferenced object — logged, not a 500. Upload also
+unlinks what it stored when the row never takes it, which is the only way to produce one on
+that path.
 
-Avatars need **no environment variable of their own**: the cap, the accepted types, the square
-size, and the four messages are all in `@repo/shared`, because the browser checks them before
-uploading and must say what the server would.
+Avatars need **no environment variable of their own**: the caps, the accepted types, the square
+size, and the five messages are all in `@repo/shared`, because the browser checks what it can
+before uploading and must say what the server would. The pixel cap is the one rule it cannot
+check — counting an image's pixels means decoding it — so that refusal only ever comes back
+from the API.
 
 ### The second boundary — meetings and meeting-files
 

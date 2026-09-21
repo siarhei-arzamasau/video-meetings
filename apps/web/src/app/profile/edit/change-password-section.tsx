@@ -68,7 +68,8 @@ export function ChangePasswordSection({
   const isSaving = save.state === 'saving';
   const formError = save.state === 'failed' && save.field === null ? save : null;
 
-  /** Edits one field, and retires a confirmation that is about to stop being true. */
+  /** Edits one field, and takes down a success banner that is about to stop being the last
+   *  thing that happened. */
   function edit(field: keyof typeof fields, value: string) {
     setFields((current) => ({ ...current, [field]: value }));
     setSave((current) => (current.state === 'saved' ? { state: 'idle' } : current));

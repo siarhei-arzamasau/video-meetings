@@ -18,7 +18,11 @@ import { UploadAvatarCommand } from '../upload-avatar.command';
 import { UploadAvatarHandler } from './upload-avatar.handler';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
-const KEY = `${USER_ID}.webp`;
+
+/** The key this upload writes, and the one the row held before it. Different values, because
+ *  an upload no longer reuses the object it replaces. */
+const KEY = '22222222-2222-4222-8222-222222222222.webp';
+const PREVIOUS_KEY = '33333333-3333-4333-8333-333333333333.webp';
 
 const ROW = {
   id: USER_ID,
@@ -32,8 +36,10 @@ const ROW = {
 
 describe('UploadAvatarHandler', () => {
   const update = jest.fn();
+  const findUnique = jest.fn();
   const normalise = jest.fn();
   const put = jest.fn();
+  const remove = jest.fn();
   let handler: UploadAvatarHandler;
   let tempDir: string;
   let tempPath: string;
@@ -50,7 +56,9 @@ describe('UploadAvatarHandler', () => {
     fs.writeFileSync(tempPath, 'the uploaded bytes');
 
     update.mockReset().mockResolvedValue(ROW);
+    findUnique.mockReset().mockResolvedValue({ avatarKey: PREVIOUS_KEY });
     put.mockReset().mockResolvedValue(undefined);
+    remove.mockReset().mockResolvedValue(undefined);
     normalise
       .mockReset()
       .mockImplementation((_source: string, destination: string): Promise<{ ok: boolean }> => {
@@ -62,10 +70,19 @@ describe('UploadAvatarHandler', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         UploadAvatarHandler,
-        { provide: PrismaService, useValue: { user: { update } } },
+        {
+          provide: PrismaService,
+          useValue: {
+            user: { findUnique, update },
+            // The array form runs its statements together; `Promise.all` is that contract as
+            // far as a handler can tell, and what the handler needs from it is the pairing —
+            // the key it reads is the key the write replaced.
+            $transaction: (operations: Promise<unknown>[]) => Promise.all(operations),
+          },
+        },
         {
           provide: AvatarStorage,
-          useValue: { tempDir: () => tempDir, keyOf: () => KEY, put },
+          useValue: { tempDir: () => tempDir, newKey: () => KEY, put, remove },
         },
         { provide: AvatarImage, useValue: { normalise } },
       ],
@@ -103,6 +120,30 @@ describe('UploadAvatarHandler', () => {
 
     it('never lets the stored hash into the answer', async () => {
       await expect(upload()).resolves.not.toHaveProperty('passwordHash');
+    });
+
+    it('removes the object the row stopped pointing at', async () => {
+      await upload();
+
+      expect(remove).toHaveBeenCalledWith(PREVIOUS_KEY);
+      // Never the one it has just published.
+      expect(remove).not.toHaveBeenCalledWith(KEY);
+    });
+
+    it('removes nothing when the account had no picture before', async () => {
+      findUnique.mockResolvedValue({ avatarKey: null });
+
+      await upload();
+
+      expect(remove).not.toHaveBeenCalled();
+    });
+
+    it('succeeds even when the previous object cannot be removed', async () => {
+      // An unreferenced object is worth a log line, not a failed request: the row already
+      // names the new picture.
+      remove.mockRejectedValue(new Error('EACCES'));
+
+      await expect(upload()).resolves.toMatchObject({ avatarPath: '/users/me/avatar' });
     });
 
     it('writes the bytes before it announces them', async () => {
@@ -186,6 +227,16 @@ describe('UploadAvatarHandler', () => {
 
       expect(fs.existsSync(tempPath)).toBe(false);
       expect(fs.existsSync(renditionPath())).toBe(false);
+    });
+
+    it('removes the object it stored when the row never takes it', async () => {
+      // The key belongs to this request alone, so bytes no row will ever name are this
+      // request's to clean up rather than a file left for nobody.
+      update.mockRejectedValue(new Error('connection reset'));
+
+      await expect(upload()).rejects.toThrow('connection reset');
+
+      expect(remove).toHaveBeenCalledWith(KEY);
     });
 
     it('answers a row that vanished mid-request with a 401, not a 500', async () => {

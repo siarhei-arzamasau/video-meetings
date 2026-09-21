@@ -7,7 +7,7 @@ import {
   type User,
 } from '@repo/shared';
 
-import { Prisma } from '../../../../generated/prisma/client';
+import { isRecordNotFound } from '../../../prisma/prisma-errors';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { toPublicUser } from '../../services/user.mapper';
 import { UpdateDisplayNameCommand } from '../update-display-name.command';
@@ -43,8 +43,4 @@ export class UpdateDisplayNameHandler implements ICommandHandler<UpdateDisplayNa
       throw error;
     }
   }
-}
-
-function isRecordNotFound(error: unknown): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
 }

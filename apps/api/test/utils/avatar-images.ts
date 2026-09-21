@@ -1,4 +1,18 @@
+import zlib from 'node:zlib';
+
 import sharp from 'sharp';
+
+/** One PNG chunk: length, type, payload, CRC. */
+function pngChunk(type: string, data: Buffer): Buffer {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+
+  const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(zlib.crc32(body));
+
+  return Buffer.concat([length, body, crc]);
+}
 
 /**
  * The images the avatar e2e spec uploads, built in memory rather than committed as fixtures.
@@ -71,4 +85,27 @@ export async function oversizedImage(capBytes: number): Promise<Buffer> {
   const header = await imageOf(8, 8, 'png');
 
   return Buffer.concat([header, Buffer.alloc(capBytes + 1 - header.length)]);
+}
+
+/**
+ * A PNG that claims an enormous size in its header and carries almost nothing behind it.
+ *
+ * The one file the byte cap cannot catch: 400 megapixels in under a hundred bytes, which the
+ * API would otherwise decode in full on the request thread. It is assembled by hand because
+ * `sharp` cannot produce one — asking it for a 20000-square image would allocate the gigabyte
+ * this file exists to prove nobody has to.
+ */
+export function pixelBombPng(width: number, height: number): Buffer {
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8; // bit depth
+  header[9] = 2; // truecolour
+
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk('IHDR', header),
+    pngChunk('IDAT', zlib.deflateSync(Buffer.alloc(64))),
+    pngChunk('IEND', Buffer.alloc(0)),
+  ]);
 }

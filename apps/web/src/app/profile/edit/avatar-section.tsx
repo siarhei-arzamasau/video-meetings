@@ -2,24 +2,12 @@
 
 import { Alert, Button, Card, Skeleton, Spinner } from '@heroui/react';
 import { AVATAR_ACCEPT, MAX_AVATAR_SIZE_BYTES, type User } from '@repo/shared';
-import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useRef, type ChangeEvent } from 'react';
 
 import { CheckIcon, WarningIcon } from '@/components/icons';
 import { UserAvatar } from '@/components/user-avatar';
-import { ApiError, deleteAvatar, uploadAvatar } from '@/lib/api-client';
-import { validateAvatarFile } from '@/lib/avatar';
 
-type Save =
-  | { state: 'idle' }
-  | { state: 'working' }
-  | { state: 'saved'; message: string }
-  | { state: 'failed'; message: string };
-
-/** A file the user has chosen and not yet uploaded, with the object URL its preview draws. */
-interface Chosen {
-  file: File;
-  previewUrl: string;
-}
+import { useAvatarPicture } from './use-avatar-picture';
 
 const MEGABYTE = 1024 * 1024;
 
@@ -31,9 +19,8 @@ const MEGABYTE = 1024 * 1024;
  * picked — which is also why it is not square: what the server crops to is the thing they see
  * afterwards, in the circle above.
  *
- * **Nothing about the file is sent until it passes the shared rules.** Type, emptiness, and
- * size are checked at selection, before the file is even previewed: a 6 MB photo should be
- * refused where it was chosen, not after it has been uploaded.
+ * What is chosen, what the last request did, and the requests themselves are
+ * `useAvatarPicture`; this file is the card those states are drawn as.
  *
  * Both a successful upload and a removal hand the updated user back through `onSaved`, and
  * that single call is what makes the profile and the home header change without a reload —
@@ -50,26 +37,12 @@ export function AvatarSection({
   onSaved: (user: User) => void;
   onUnauthorized: () => void;
 }) {
-  const [chosen, setChosen] = useState<Chosen | null>(null);
-  const [save, setSave] = useState<Save>({ state: 'idle' });
+  const { chosen, save, isWorking, choose, upload, remove } = useAvatarPicture({
+    token,
+    onSaved,
+    onUnauthorized,
+  });
   const fileInput = useRef<HTMLInputElement>(null);
-
-  // The preview's object URL outlives no more than the choice that created it. Its own effect
-  // for the reason `UserAvatar` gives: the cleanup runs after the DOM holds the next one, so
-  // the `<img>` is never left pointing at a blob that has been freed.
-  useEffect(() => {
-    if (chosen === null) {
-      return;
-    }
-
-    const { previewUrl } = chosen;
-
-    return () => {
-      URL.revokeObjectURL(previewUrl);
-    };
-  }, [chosen]);
-
-  const isWorking = save.state === 'working';
 
   function handleChoose(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -78,43 +51,7 @@ export function AvatarSection({
     // change event — without it, a user who fixed a file under the same name could not retry.
     event.target.value = '';
 
-    if (file === undefined) {
-      return;
-    }
-
-    const failure = validateAvatarFile(file);
-
-    if (failure !== null) {
-      setChosen(null);
-      setSave({ state: 'failed', message: failure });
-
-      return;
-    }
-
-    setChosen({ file, previewUrl: URL.createObjectURL(file) });
-    setSave({ state: 'idle' });
-  }
-
-  async function run(action: () => Promise<User>, message: string) {
-    setSave({ state: 'working' });
-
-    try {
-      const updated = await action();
-
-      onSaved(updated);
-      setChosen(null);
-      setSave({ state: 'saved', message });
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        // The token went bad between the gate's load and this request. Same answer as the
-        // gate's: clear it and go to sign-in.
-        onUnauthorized();
-
-        return;
-      }
-
-      setSave({ state: 'failed', message: describeFailure(error) });
-    }
+    choose(file);
   }
 
   return (
@@ -219,13 +156,7 @@ export function AvatarSection({
           </Button>
 
           {chosen !== null && (
-            <Button
-              variant="primary"
-              isDisabled={isWorking}
-              onPress={() => {
-                void run(() => uploadAvatar(token, chosen.file), 'Your picture is saved.');
-              }}
-            >
+            <Button variant="primary" isDisabled={isWorking} onPress={upload}>
               {isWorking ? (
                 <>
                   <Spinner size="sm" />
@@ -240,13 +171,7 @@ export function AvatarSection({
           {/* Only when there is one to remove: a control that does nothing is a control that
               makes the reader wonder what it would have done. */}
           {user.avatarPath !== undefined && chosen === null && (
-            <Button
-              variant="secondary"
-              isDisabled={isWorking}
-              onPress={() => {
-                void run(() => deleteAvatar(token), 'Your picture is removed.');
-              }}
-            >
+            <Button variant="secondary" isDisabled={isWorking} onPress={remove}>
               {isWorking ? (
                 <>
                   <Spinner size="sm" />
@@ -261,23 +186,6 @@ export function AvatarSection({
       </div>
     </Card>
   );
-}
-
-/**
- * Turns a thrown value into something to show.
- *
- * Every rejection here belongs to the section rather than to a field: there is one input, and
- * its own refusals never reach the network. What does reach it is the server decoding the
- * bytes — a 415 or a 400 whose message is the shared sentence the form would have shown had it
- * been able to look inside the file.
- */
-function describeFailure(error: unknown): string {
-  if (error instanceof ApiError) {
-    return error.message;
-  }
-
-  // `fetch` rejects rather than resolving when the request never reached the API at all.
-  return 'We could not reach the server. Check your connection and try again.';
 }
 
 /**

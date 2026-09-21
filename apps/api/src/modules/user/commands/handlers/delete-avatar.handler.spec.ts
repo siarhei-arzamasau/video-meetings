@@ -31,6 +31,8 @@ describe('DeleteAvatarHandler', () => {
   const deleteAvatar = () => handler.execute(new DeleteAvatarCommand(USER_ID));
 
   beforeEach(async () => {
+    // Two reads now: the lookup that decides whether there is anything to do, and the one
+    // inside the clearing transaction that says which object this request may remove.
     findUnique.mockReset().mockResolvedValue(WITH_AVATAR);
     update.mockReset().mockResolvedValue(CLEARED);
     remove.mockReset().mockResolvedValue(undefined);
@@ -38,7 +40,15 @@ describe('DeleteAvatarHandler', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         DeleteAvatarHandler,
-        { provide: PrismaService, useValue: { user: { findUnique, update } } },
+        {
+          provide: PrismaService,
+          useValue: {
+            user: { findUnique, update },
+            // The array form runs its statements together, which is the whole point here: the
+            // key this reads is the key the clear replaced, and no upload can slip between.
+            $transaction: (operations: Promise<unknown>[]) => Promise.all(operations),
+          },
+        },
         { provide: AvatarStorage, useValue: { remove } },
       ],
     }).compile();
@@ -75,6 +85,21 @@ describe('DeleteAvatarHandler', () => {
       await deleteAvatar();
 
       expect(order).toEqual(['update', 'remove']);
+    });
+
+    it('removes the key the row held when it was cleared, not the one read before that', async () => {
+      // An upload running alongside this one publishes a key of its own and points the row at
+      // it. Removing whatever the first lookup saw could take away those bytes; removing what
+      // the clearing transaction read cannot.
+      const REPLACED_BY_AN_UPLOAD = '44444444-4444-4444-8444-444444444444.webp';
+      findUnique
+        .mockResolvedValueOnce(WITH_AVATAR)
+        .mockResolvedValueOnce({ avatarKey: REPLACED_BY_AN_UPLOAD });
+
+      await deleteAvatar();
+
+      expect(remove).toHaveBeenCalledWith(REPLACED_BY_AN_UPLOAD);
+      expect(remove).not.toHaveBeenCalledWith(KEY);
     });
 
     it('answers with a user carrying no avatar path and the bumped version', async () => {

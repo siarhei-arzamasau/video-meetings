@@ -1,7 +1,7 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { CommandHandler, ICommandHandler } from '@nestjs/cqrs';
 
-import { Prisma } from '../../../../generated/prisma/client';
+import { isRecordNotFound } from '../../../prisma/prisma-errors';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { UpdatePasswordHashCommand } from '../update-password-hash.command';
 
@@ -24,8 +24,4 @@ export class UpdatePasswordHashHandler implements ICommandHandler<UpdatePassword
       throw error;
     }
   }
-}
-
-function isRecordNotFound(error: unknown): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025';
 }

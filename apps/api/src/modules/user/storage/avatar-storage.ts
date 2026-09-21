@@ -1,9 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import { mkdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+
+import { errorMessage } from '../../../common/error-message';
 
 /** A uuid as Prisma generates one. Never a segment a client chose. */
 const KEY_PATTERN = /^[0-9a-f-]{36}\.webp$/;
@@ -66,9 +69,18 @@ export class AvatarStorage implements OnModuleInit {
     return path.join(this.root, TEMP_DIR);
   }
 
-  /** The key one user's avatar is stored under. Derived, never taken from a request. */
-  keyOf(userId: string): string {
-    return `${userId}.webp`;
+  /**
+   * The key for one upload. Generated, never taken from a request and — deliberately — never
+   * derived from the user either.
+   *
+   * A key of `<userId>.webp` would make every one of an account's avatars the same object, and
+   * two requests about that object cannot be told apart: a removal that read the row before a
+   * replacement wrote its bytes would unlink the replacement's, leaving the row pointing at a
+   * file that is not there and every read of it a 500. A fresh key per upload means the object
+   * a request removes is only ever the one it saw, so the two orders both end consistent.
+   */
+  newKey(): string {
+    return `${randomUUID()}.webp`;
   }
 
   /** The absolute path of a key, for the one consumer (`sharp`) that wants a path. */
@@ -109,8 +121,9 @@ export class AvatarStorage implements OnModuleInit {
 
 /**
  * The whole path-traversal defence, and it lives here so every filesystem call is behind it.
- * Keys are built by `keyOf` from an id Prisma generated; nothing derived from a request ever
- * reaches this.
+ * Keys are built by `newKey`, or read back from a row that `newKey` filled; nothing derived
+ * from a request ever reaches this. The pattern also fits the `<userId>.webp` keys written
+ * before uploads had one key each, so rows from then keep resolving.
  */
 function assertKey(key: string): string {
   if (!KEY_PATTERN.test(key)) {
@@ -118,8 +131,4 @@ function assertKey(key: string): string {
   }
 
   return key;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

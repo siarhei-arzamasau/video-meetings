@@ -153,6 +153,8 @@ export const AVATAR_SIZE_MESSAGE = 'Your picture must be 5 MB or smaller.';
 export const AVATAR_TYPE_MESSAGE = 'Your picture must be a PNG, JPEG, or WebP image.';
 export const AVATAR_EMPTY_MESSAGE = 'The file is empty.';
 export const AVATAR_UNREADABLE_MESSAGE = 'That image could not be read. Try a different file.';
+export const AVATAR_DIMENSIONS_MESSAGE =
+  'Your picture has too many pixels. Use an image of 64 megapixels or smaller.';
 
 /** RFC 5321's maximum forward path. Anything longer must be a 400, not a 500. */
 export const MAX_EMAIL_LENGTH = 254;
