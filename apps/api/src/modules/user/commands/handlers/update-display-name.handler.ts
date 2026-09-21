@@ -1,11 +1,6 @@
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { CommandHandler, ICommandHandler } from '@nestjs/cqrs';
-import {
-  DISPLAY_NAME_MESSAGE,
-  MAX_DISPLAY_NAME_LENGTH,
-  MIN_DISPLAY_NAME_LENGTH,
-  type User,
-} from '@repo/shared';
+import { DISPLAY_NAME_MESSAGE, isDisplayNameWithinBounds, type User } from '@repo/shared';
 
 import { isRecordNotFound } from '../../../prisma/prisma-errors';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -17,13 +12,13 @@ export class UpdateDisplayNameHandler implements ICommandHandler<UpdateDisplayNa
   constructor(private readonly prisma: PrismaService) {}
 
   async execute({ userId, displayName }: UpdateDisplayNameCommand): Promise<User> {
-    // Trim first, then measure: the bounds are about the name that will be stored, and a
-    // name of nothing but spaces is a blank name however many of them there are.
-    const name = displayName.trim();
-
-    if (name.length < MIN_DISPLAY_NAME_LENGTH || name.length > MAX_DISPLAY_NAME_LENGTH) {
+    // The shared predicate trims before it measures, in code points — the rule the DTO and
+    // the browser apply, so a name one of them accepts is never refused here as too long.
+    if (!isDisplayNameWithinBounds(displayName)) {
       throw new BadRequestException(DISPLAY_NAME_MESSAGE);
     }
+
+    const name = displayName.trim();
 
     try {
       const user = await this.prisma.user.update({

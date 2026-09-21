@@ -4,11 +4,7 @@
  * surrounds those two calls.
  */
 
-import {
-  DISPLAY_NAME_MESSAGE,
-  MAX_DISPLAY_NAME_LENGTH,
-  MIN_DISPLAY_NAME_LENGTH,
-} from '@repo/shared';
+import { DISPLAY_NAME_MESSAGE, isDisplayNameWithinBounds } from '@repo/shared';
 
 /** What a name with nothing renderable in it falls back to, so the circle is never empty. */
 const NO_INITIALS = '?';
@@ -60,16 +56,9 @@ function initialOf(word: string | undefined): string {
  * The API keeps the final say and `updateDisplayName` surfaces whatever it says; this only
  * saves a round trip, which is why it must never be the stricter of the two.
  *
- * Length in UTF-16 code units, matching `@Length` on the DTO. Counting characters here would
- * accept a name of emoji the server then refuses, which is the one direction that costs the
- * user an unappealable rejection.
+ * The measuring is `isDisplayNameWithinBounds` itself, not a restatement of it: the API calls
+ * the same function, so the two cannot disagree about how many characters an emoji is.
  */
 export function validateDisplayName(displayName: string): string | null {
-  const trimmed = displayName.trim();
-
-  if (trimmed.length < MIN_DISPLAY_NAME_LENGTH || trimmed.length > MAX_DISPLAY_NAME_LENGTH) {
-    return DISPLAY_NAME_MESSAGE;
-  }
-
-  return null;
+  return isDisplayNameWithinBounds(displayName) ? null : DISPLAY_NAME_MESSAGE;
 }

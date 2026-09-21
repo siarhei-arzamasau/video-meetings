@@ -111,6 +111,17 @@ describe(`PATCH ${USERS_ME_URL}`, () => {
       expect(await storedName(EMAIL)).toBe(name);
     });
 
+    it('accepts a name of exactly the maximum length in emoji, counting each as one', async () => {
+      // 160 UTF-16 code units. The DTO and the handler once counted this differently: it
+      // passed validation and came back a 400 claiming it was too long.
+      const { token } = await registerUser(EMAIL);
+      const name = '\u{1F600}'.repeat(MAX_DISPLAY_NAME_LENGTH);
+
+      await rename(token, { displayName: name }).expect(200);
+
+      expect(await storedName(EMAIL)).toBe(name);
+    });
+
     it('changes nothing else about the row', async () => {
       const { token } = await registerUser(EMAIL);
       const before = await readUserSnapshot(suite.prisma(), EMAIL);
@@ -129,6 +140,7 @@ describe(`PATCH ${USERS_ME_URL}`, () => {
       ['a whitespace-only name', '     '],
       ['a tab-and-newline-only name', '\t\n '],
       ['a name one character over the maximum', 'a'.repeat(MAX_DISPLAY_NAME_LENGTH + 1)],
+      ['a name one emoji over the maximum', '\u{1F600}'.repeat(MAX_DISPLAY_NAME_LENGTH + 1)],
     ])('rejects %s with the shared message, and stores nothing', async (_description, value) => {
       const { token } = await registerUser(EMAIL);
       const before = await readUserSnapshot(suite.prisma(), EMAIL);

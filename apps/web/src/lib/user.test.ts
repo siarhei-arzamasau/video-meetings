@@ -69,10 +69,17 @@ describe('validateDisplayName', () => {
     expect(validateDisplayName('  Ada  ')).toBeNull();
   });
 
+  it('counts an emoji as one character, as the API does', () => {
+    // Two UTF-16 code units each, so counting `.length` would refuse this at 41 of them —
+    // stricter than the server, with no appeal.
+    expect(validateDisplayName('\u{1F600}'.repeat(MAX_DISPLAY_NAME_LENGTH))).toBeNull();
+  });
+
   it.each([
     ['blank', ''],
     ['whitespace-only', '   '],
     ['over the maximum once trimmed', `  ${'a'.repeat(MAX_DISPLAY_NAME_LENGTH + 1)}  `],
+    ['one emoji over the maximum', '\u{1F600}'.repeat(MAX_DISPLAY_NAME_LENGTH + 1)],
   ])('refuses a %s name with the shared message', (_case, name) => {
     // The same constant the API's DTO carries, so a field that turns red says what the
     // server would have said.

@@ -215,10 +215,13 @@ The trim-and-bounds rule is stated twice, in `UpdateDisplayNameDto` and in the h
 that is not redundancy to remove: the DTO is the HTTP layer's rejection, carrying the one
 message `@repo/shared` exports so a field that turns red in the browser says exactly what the
 server would, while the handler is the use case's own invariant, because **a command has to be
-safe whatever dispatched it**. Both trim _before_ measuring, so whitespace-only fails the
-minimum without a rule of its own. A bound pair sharing one message is `@Length`, not
-`@MinLength` plus `@MaxLength` — both of the pair fail on a non-string, printing the same
-sentence twice.
+safe whatever dispatched it**. **Both measure through `isDisplayNameWithinBounds` from
+`@repo/shared`** — the web form calls it too — which trims _before_ measuring, so
+whitespace-only fails the minimum without a rule of its own, and counts code points. Do not
+swap the DTO's custom decorator back to `@Length`: validator.js counts surrogate pairs as one
+and variation selectors as none, the handler once counted UTF-16 units, and a name the DTO
+accepted came back from the handler as a 400 calling it too long. One decorator covers both
+bounds so a non-string is told the sentence once, not once per bound.
 
 ### Changing a password — `PATCH /api/auth/password`
 

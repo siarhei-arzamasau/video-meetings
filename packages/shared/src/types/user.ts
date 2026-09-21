@@ -38,10 +38,10 @@ export interface User {
  * user never saw.
  */
 
-/** Characters, after trimming — so a blank or whitespace-only name fails on this. */
+/** Code points, after trimming — so a blank or whitespace-only name fails on this. */
 export const MIN_DISPLAY_NAME_LENGTH = 1;
 
-/** Characters, after trimming. Long enough for any real name, short enough to render in a
+/** Code points, after trimming. Long enough for any real name, short enough to render in a
  *  header without wrapping. */
 export const MAX_DISPLAY_NAME_LENGTH = 80;
 
@@ -52,6 +52,23 @@ export const MAX_DISPLAY_NAME_LENGTH = 80;
  * differently. Built from the bounds above so raising one cannot leave the copy stale.
  */
 export const DISPLAY_NAME_MESSAGE = `Your display name must be ${MIN_DISPLAY_NAME_LENGTH}–${MAX_DISPLAY_NAME_LENGTH} characters.`;
+
+/**
+ * The one test of a display name's length, for every layer that checks it: trimmed, then
+ * counted in Unicode code points, so an emoji or a CJK extension character is one character
+ * however many UTF-16 code units it takes. A function rather than just the bounds because the
+ * counting is the part that drifted — the DTO's `@Length` counted one way (validator.js also
+ * discounts variation selectors), the handler's `.length` another, and a name that passed the
+ * first was refused by the second with a message saying it was too long. Code points are also
+ * what Postgres counts, should the `TEXT` column ever become a `varchar(n)`.
+ *
+ * Takes the untrimmed name and trims it itself, so no caller can measure the padding.
+ */
+export function isDisplayNameWithinBounds(displayName: string): boolean {
+  const length = Array.from(displayName.trim()).length;
+
+  return length >= MIN_DISPLAY_NAME_LENGTH && length <= MAX_DISPLAY_NAME_LENGTH;
+}
 
 /**
  * Body of `PATCH /api/users/me`.

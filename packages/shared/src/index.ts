@@ -1,6 +1,7 @@
 export type { UpdateDisplayNameRequest, User } from './types/user';
 export {
   DISPLAY_NAME_MESSAGE,
+  isDisplayNameWithinBounds,
   MAX_DISPLAY_NAME_LENGTH,
   MIN_DISPLAY_NAME_LENGTH,
 } from './types/user';

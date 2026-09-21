@@ -67,6 +67,7 @@ describe('UpdateDisplayNameHandler', () => {
     ['a blank name', ''],
     ['a whitespace-only name', '   '],
     ['a name over the maximum once trimmed', `  ${'a'.repeat(MAX_DISPLAY_NAME_LENGTH + 1)}  `],
+    ['a name one emoji over the maximum', '\u{1F600}'.repeat(MAX_DISPLAY_NAME_LENGTH + 1)],
   ])('rejects %s with the shared message and writes nothing', async (_case, displayName) => {
     await expect(
       handler.execute(new UpdateDisplayNameCommand('user-id', displayName)),
@@ -78,6 +79,9 @@ describe('UpdateDisplayNameHandler', () => {
   it.each([
     ['the minimum', 'a'.repeat(MIN_DISPLAY_NAME_LENGTH)],
     ['the maximum', 'a'.repeat(MAX_DISPLAY_NAME_LENGTH)],
+    // Two UTF-16 code units apiece: `.length` would call this 160 and refuse what the DTO
+    // had just accepted, with a message saying it was too long.
+    ['the maximum in emoji', '\u{1F600}'.repeat(MAX_DISPLAY_NAME_LENGTH)],
   ])('accepts a name of exactly %s, padded past it', async (_case, name) => {
     // Trim-then-measure is what makes the padding irrelevant: a name is rejected for what
     // would be stored, never for characters that were never going to be.

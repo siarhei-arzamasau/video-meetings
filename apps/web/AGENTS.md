@@ -247,6 +247,11 @@ Nothing here may treat 3001 as fixed or discover the API's port at runtime — N
 matters** — it rejects a value the API would have accepted and gives the user no appeal — so
 the email pattern is deliberately looser than the API's `@IsEmail()`.
 
+Where a rule is more than a bound — how a length is _counted_ — the function itself lives in
+`@repo/shared` and both sides call it. `validateDisplayName` is `isDisplayNameWithinBounds`,
+which counts code points; a `.length` here would count an emoji twice and refuse names the
+API accepts.
+
 **Sign-in and sign-up do not share a password check.** `validatePassword` is the registration
 rule; `validateLoginPassword` is non-empty plus the length ceiling, no minimum. That mirrors
 `LoginDto`, which drops `@MinLength` on purpose so login keeps accepting whatever registration

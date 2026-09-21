@@ -44,6 +44,28 @@ describe('UpdateDisplayNameDto', () => {
     expect(dto.displayName).toBe(name);
   });
 
+  it('counts an emoji as one character, the rule the handler applies too', () => {
+    // 160 UTF-16 code units. Were this layer and the handler to count differently, the name
+    // would pass here and come back from the handler as a 400 calling it too long.
+    const name = '\u{1F600}'.repeat(MAX_DISPLAY_NAME_LENGTH);
+
+    expect(validate({ displayName: name }).messages).toEqual([]);
+    expect(validate({ displayName: `${name}\u{1F600}` }).messages).toEqual([DISPLAY_NAME_MESSAGE]);
+  });
+
+  it('counts a variation selector as a code point of its own, as the handler does', () => {
+    // validator.js, behind `@Length`, counts "\u2764\uFE0F" as one character; the shared rule
+    // counts two. Following validator.js here would let 41 of them through to a handler that
+    // counts 82 and refuses them.
+    const heart = '\u2764\uFE0F';
+    const pairs = MAX_DISPLAY_NAME_LENGTH / 2;
+
+    expect(validate({ displayName: heart.repeat(pairs) }).messages).toEqual([]);
+    expect(validate({ displayName: heart.repeat(pairs + 1) }).messages).toEqual([
+      DISPLAY_NAME_MESSAGE,
+    ]);
+  });
+
   // One message for every way a name can be rejected, and it comes from `@repo/shared` — the
   // browser renders that same constant, so a field that turns red says what the server would.
   it.each([
@@ -59,8 +81,8 @@ describe('UpdateDisplayNameDto', () => {
     ['a missing field', undefined],
   ])('rejects %s without repeating the bounds', (_case, displayName) => {
     // A non-string fails `@IsString` and the bounds together. That is why the bounds are one
-    // `@Length` rather than a `@MinLength` and a `@MaxLength` carrying the same custom
-    // message: paired, they would print the same sentence to the user twice.
+    // decorator rather than a minimum and a maximum carrying the same custom message:
+    // paired, they would print the same sentence to the user twice.
     const { messages } = validate({ displayName });
 
     expect(messages.filter((message) => message === DISPLAY_NAME_MESSAGE)).toHaveLength(1);
