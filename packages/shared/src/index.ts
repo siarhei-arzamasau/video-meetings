@@ -27,8 +27,14 @@ export {
   PASSWORD_MISMATCH_MESSAGE,
   PASSWORD_UNCHANGED_MESSAGE,
 } from './types/auth';
-export type { CreateMeetingRequest, Meeting, MeetingStatus } from './types/meeting';
-export { MEETING_STATUSES } from './types/meeting';
+export type {
+  CreateMeetingRequest,
+  Meeting,
+  MeetingStatus,
+  MeetingsCount,
+  MeetingsOrder,
+} from './types/meeting';
+export { MAX_MEETINGS_LIMIT, MEETING_STATUSES, MEETINGS_ORDERS } from './types/meeting';
 export type { ApiErrorResponse } from './types/error';
 export type { HealthResponse } from './types/health';
 export type { MeetingFile, MeetingFileStatus } from './types/meeting-file';

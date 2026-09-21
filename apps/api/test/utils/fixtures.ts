@@ -94,6 +94,9 @@ export const THIRD_EMAIL = 'charles@example.com';
 export const MAX_TITLE_LENGTH = 200;
 export const MAX_PARTICIPANTS = 100;
 
+/** Mirrors `ListMeetingsDto`'s bound on `limit`, restated for the same reason. */
+export const MAX_MEETINGS_LIMIT = 100;
+
 /**
  * Mirrors the meeting file contract in `@repo/shared`. Restated rather than imported, for the
  * same reason as `MAX_TITLE_LENGTH`: a relaxed bound must fail a test.

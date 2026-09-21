@@ -17,6 +17,25 @@ export interface Meeting {
 }
 
 /**
+ * The orders `GET /api/meetings?order=` accepts. Both are by `scheduledAt`, and both break a
+ * tie on `id` ascending, so two meetings at one instant keep one relative order either way.
+ */
+export const MEETINGS_ORDERS = ['asc', 'desc'] as const;
+
+export type MeetingsOrder = (typeof MEETINGS_ORDERS)[number];
+
+/**
+ * The most meetings `GET /api/meetings?limit=` returns. The bound is on the parameter: without
+ * `limit` the list is every meeting the user hosts or attends, as it always was.
+ */
+export const MAX_MEETINGS_LIMIT = 100;
+
+/** Body of `GET /api/meetings/count`: how many meetings the user hosts or attends. */
+export interface MeetingsCount {
+  total: number;
+}
+
+/**
  * Body of `POST /api/meetings`.
  *
  * Field names match `Meeting` deliberately. The request and the response describe one
