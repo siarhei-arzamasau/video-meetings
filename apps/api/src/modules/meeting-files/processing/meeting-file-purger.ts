@@ -45,9 +45,13 @@ export class MeetingFilePurger {
       return;
     }
 
-    await this.storage.remove(claimed.storageKey);
-    await this.storage.remove(thumbnailKeyOf(claimed.storageKey));
-    await this.storage.remove(transcriptKeyOf(claimed.storageKey));
+    // Together, since none depends on another; marked purged only once all three are gone, so
+    // a removal that fails leaves the row to be claimed again.
+    await Promise.all([
+      this.storage.remove(claimed.storageKey),
+      this.storage.remove(thumbnailKeyOf(claimed.storageKey)),
+      this.storage.remove(transcriptKeyOf(claimed.storageKey)),
+    ]);
     await this.markPurged(claimed);
     this.logger.log(
       `File ${claimed.id} of meeting ${claimed.meetingId}: purged in ${String(Date.now() - startedAt)}ms`,
