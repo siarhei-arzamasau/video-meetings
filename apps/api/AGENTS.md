@@ -385,8 +385,11 @@ get wrong.
   **16.5.4** because 17+ is ESM-only: Node 24 would `require()` it, but Jest's loader cannot —
   both suites fail with `Cannot use import statement outside a module` — so moving past it
   means changing how Jest runs, not bumping a version; do not "upgrade" it. Its one advisory
-  since (GHSA-5v7r-6r5c-r473, an ASF-parser loop that a 64-byte upload starts) is closed by
-  refusing the ASF header prefix before the parser runs; ASF is not on the allow-list. Text
+  since (GHSA-5v7r-6r5c-r473, an ASF-parser loop that a 64-byte upload starts) is closed in the
+  tokenizer the sniffer hands it: a skip of negative length throws, and the file is a 415.
+  Refusing the ASF header at byte 0 was not enough — detection starts over after every ID3
+  tag, so the header can sit at any offset. That tokenizer is why `strtok3` is a direct
+  dependency, pinned to the 6.x line `file-type` 16 uses. Text
   has no magic bytes, so an undetected file that decodes as UTF-8 with no NUL is typed by
   extension — among `.txt`/`.md`/`.csv` only. An extension never elevates a file to a binary
   type, so `page.html` renamed `page.pdf` is a 415 while renamed `notes.txt` it is stored as

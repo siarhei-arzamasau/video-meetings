@@ -99,15 +99,64 @@ describe('ContentSniffer', () => {
     await expect(sniffer.sniff(zip, 'a.zip')).resolves.toBeNull();
   });
 
-  it('refuses an ASF header before file-type walks it, which never returns on this file', async () => {
-    // GHSA-5v7r-6r5c-r473: past the ASF header GUID, file-type 16 walks sub-objects by their
-    // declared size, and a size of zero rewinds it onto the same sub-object forever. Without
-    // the guard this test does not fail an assertion — it times out.
-    const asf = Buffer.alloc(64);
-    Buffer.from([0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11, 0xa6, 0xd9]).copy(asf);
-    asf.fill(0x11, 30, 46);
-    asf.writeBigUInt64LE(0n, 46);
+  it('still finds an MP3 behind its ID3 tag', async () => {
+    // Frame sync and an MPEG-1 Layer III header: what file-type reads once it skips the tag.
+    const mp3 = scratchFile(
+      'song.mp3',
+      Buffer.concat([emptyId3Tag(), Buffer.from([0xff, 0xfb, 0x90, 0x00]), Buffer.alloc(400)]),
+    );
 
-    await expect(sniffer.sniff(scratchFile('loop.wmv', asf), 'loop.wmv')).resolves.toBeNull();
-  }, 2_000);
+    await expect(sniffer.sniff(mp3, 'song.mp3')).resolves.toBe('audio/mpeg');
+  });
+
+  // GHSA-5v7r-6r5c-r473. Without the sniffer's refusal these tests do not fail an assertion —
+  // they time out, and the loop they started keeps running.
+  describe('a file that would make file-type skip backwards', () => {
+    it('refuses an ASF header at the start of the file', async () => {
+      await expect(
+        sniffer.sniff(scratchFile('loop.wmv', asfLoop()), 'loop.wmv'),
+      ).resolves.toBeNull();
+    }, 2_000);
+
+    it('refuses one behind an ID3 tag, where file-type starts detection again', async () => {
+      const file = scratchFile('id3.mp3', Buffer.concat([emptyId3Tag(), asfLoop()]));
+
+      await expect(sniffer.sniff(file, 'id3.mp3')).resolves.toBeNull();
+    }, 2_000);
+
+    it('refuses one behind a chain of ID3 tags', async () => {
+      const tags = [emptyId3Tag(), emptyId3Tag(), emptyId3Tag()];
+      const file = scratchFile('id3-chain.mp3', Buffer.concat([...tags, asfLoop()]));
+
+      await expect(sniffer.sniff(file, 'id3-chain.mp3')).resolves.toBeNull();
+    }, 2_000);
+
+    it('refuses one however many bytes follow it', async () => {
+      const file = scratchFile(
+        'id3-tail.mp3',
+        Buffer.concat([emptyId3Tag(), asfLoop(), Buffer.alloc(64 * 1024)]),
+      );
+
+      await expect(sniffer.sniff(file, 'id3-tail.mp3')).resolves.toBeNull();
+    }, 2_000);
+  });
 });
+
+/**
+ * An ASF header whose first sub-object declares a size of zero. Past the header GUID, file-type
+ * 16 walks sub-objects by their declared size, so zero becomes a skip of minus 24 bytes that
+ * lands the walk on the same sub-object forever.
+ */
+function asfLoop(): Buffer {
+  const asf = Buffer.alloc(64);
+  Buffer.from([0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11, 0xa6, 0xd9]).copy(asf);
+  asf.fill(0x11, 30, 46);
+  asf.writeBigUInt64LE(0n, 46);
+
+  return asf;
+}
+
+/** An empty ID3v2.4 tag. file-type skips a tag and runs its detection again from the end of it. */
+function emptyId3Tag(): Buffer {
+  return Buffer.from([0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+}

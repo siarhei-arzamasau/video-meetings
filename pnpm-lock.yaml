@@ -102,6 +102,9 @@ importers:
       sharp:
         specifier: 0.35.4
         version: 0.35.4(@types/node@24.13.3)
+      strtok3:
+        specifier: 6.3.0
+        version: 6.3.0
     devDependencies:
       '@nestjs/cli':
         specifier: 11.0.24

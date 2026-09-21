@@ -336,6 +336,29 @@ describe('POST /api/meetings/:id/files', () => {
       expect(tempDirEntries()).toEqual([]);
     });
 
+    it('415 for an ASF header behind an ID3 tag, which used to leave the request hanging', async () => {
+      const host = await registerUser(suite, EMAIL);
+      const meeting = await createMeeting(suite, host);
+      // An empty ID3 tag, then an ASF header whose sub-object declares a size of zero: detection
+      // starts over after the tag and walks the header back onto itself (GHSA-5v7r-6r5c-r473).
+      const asf = Buffer.alloc(64);
+      Buffer.from([0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11, 0xa6, 0xd9]).copy(asf);
+      asf.fill(0x11, 30, 46);
+      asf.writeBigUInt64LE(0n, 46);
+      const id3 = Buffer.from([0x49, 0x44, 0x33, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+      const response = await upload(
+        host.token,
+        meeting.id,
+        Buffer.concat([id3, asf]),
+        'song.mp3',
+      ).expect(415);
+
+      expect(messageOf(response)).toBe('That file type is not supported.');
+      await expect(countMeetingFiles(suite.prisma())).resolves.toBe(0);
+      expect(tempDirEntries()).toEqual([]);
+    }, 5_000);
+
     it(`409 for the ${String(MAX_MEETING_FILES + 1)}th file`, async () => {
       const host = await registerUser(suite, EMAIL);
       const meeting = await createMeeting(suite, host);
