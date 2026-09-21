@@ -611,6 +611,15 @@ deployment that never set the variable booted and signed real tokens with a key 
 git. Any value that ships in an example belongs in `PUBLISHED_JWT_SECRETS`, and no example
 should carry a usable one — both `.env.example` files leave it empty.
 
+**`CORS_ORIGINS` is required in production and defaulted everywhere else**, and the default is
+the part that bites. Unset or blank outside production it is the web app `pnpm dev` runs —
+`localhost` and `127.0.0.1` on `WEB_PORT`, which `scripts/dev.mjs` hands both apps, so it
+follows the web app when 3000 is taken. Anything else is set explicitly: a phone reaching the
+dev server over the network, the compose stack (`docker-compose.yml` sets the local web
+service), and both test runs — `setup-env.ts` and `start:e2e-web` allow the browser suite's
+3100 and nothing else. Entries are exact origins because the `cors` package compares them
+exactly; the contract refuses a path or trailing slash rather than let an entry match nothing.
+
 `ConfigModule` is global and reads `.env.local` then `.env`. Neither overrides a variable
 already in `process.env`, which is what lets the root `pnpm dev` decide `PORT` — and why an
 `EADDRINUSE` retry in `main.ts` is the wrong fix; see

@@ -7,6 +7,7 @@ import {
   TEST_AUTH_RATE_LIMIT_WINDOW_SECONDS,
   TEST_JWT_EXPIRES_IN_SECONDS,
   TEST_JWT_SECRET,
+  TEST_WEB_ORIGIN,
 } from './utils/fixtures';
 
 /**
@@ -52,4 +53,10 @@ process.env['MEETING_FILES_LEASE_SECONDS'] = '5';
  */
 process.env['AUTH_RATE_LIMIT_WINDOW_SECONDS'] = String(TEST_AUTH_RATE_LIMIT_WINDOW_SECONDS);
 process.env['AUTH_RATE_LIMIT_ATTEMPTS'] = String(TEST_AUTH_RATE_LIMIT_ATTEMPTS);
+
+/**
+ * The browser suite's web origin, which `start:e2e-web` allows too: set rather than left to the
+ * development default, which follows whatever `WEB_PORT` the developer's shell happens to hold.
+ */
+process.env['CORS_ORIGINS'] = TEST_WEB_ORIGIN;
 process.on('exit', () => fs.rmSync(meetingFilesDir, { recursive: true, force: true }));

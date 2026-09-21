@@ -38,6 +38,9 @@ services:
       AUTH_RATE_LIMIT_ATTEMPTS: ${AUTH_RATE_LIMIT_ATTEMPTS:-10}
       # 0 while this container is reached directly; the number of proxies once one fronts it.
       TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-0}
+      # The web service below, as a browser reaches it. Production refuses to boot without an
+      # origin list; set this to the public origin once the stack is served from one.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       MEETING_FILES_DIR: /data/meeting-files
     ports:
       - '3001:3001'

@@ -27,9 +27,13 @@ export function configureApp(app: INestApplication): void {
 
   express.set('trust proxy', app.get(ConfigService).getOrThrow<number>('TRUST_PROXY_HOPS'));
 
-  // Reflects the requesting origin, which is what local development needs.
-  // Restrict this to a known origin list before deploying anywhere public.
-  app.enableCors({ origin: true, credentials: true });
+  // Exactly the origins `CORS_ORIGINS` names; any other is answered without an
+  // `Access-Control-Allow-Origin`, so its page cannot read the response. `env.validation.ts`
+  // says why it is a list, and what development gets without one.
+  app.enableCors({
+    origin: app.get(ConfigService).getOrThrow<string[]>('CORS_ORIGINS'),
+    credentials: true,
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({

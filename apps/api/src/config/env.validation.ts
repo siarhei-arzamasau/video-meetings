@@ -1,5 +1,6 @@
 import { Transform, plainToInstance } from 'class-transformer';
 import {
+  ArrayNotEmpty,
   IsBoolean,
   IsEnum,
   IsInt,
@@ -7,12 +8,15 @@ import {
   IsOptional,
   IsString,
   IsUrl,
+  Matches,
   Max,
   Min,
   MinLength,
   ValidateIf,
   validateSync,
 } from 'class-validator';
+
+import { ORIGIN_PATTERN, corsOriginsOf, parseBoolean } from './env-values';
 
 /**
  * Signing keys this repository has published. Rejected by value because length alone cannot
@@ -108,6 +112,16 @@ export class EnvironmentVariables {
   TRUST_PROXY_HOPS: number = 0;
 
   /**
+   * The browser origins allowed to call the API, comma-separated. No other is named as allowed:
+   * a page elsewhere can send a request but never read the answer, nor ride a session once the
+   * token is a cookie. Exact origins, as they are compared exactly. Required in
+   * production; `corsOriginsOf` says what development gets without it.
+   */
+  @ArrayNotEmpty({ message: 'CORS_ORIGINS must name the web app origin in production' })
+  @Matches(ORIGIN_PATTERN, { each: true, message: 'CORS_ORIGINS entries must be bare origins' })
+  CORS_ORIGINS: string[] = [];
+
+  /**
    * Root of meeting file storage, resolved relative to the working directory. Created at boot
    * and checked for writability then, so a bad path fails startup rather than the first upload.
    */
@@ -122,7 +136,8 @@ export class EnvironmentVariables {
    * `enableImplicitConversion` alone would read the string `'false'` as `Boolean('false')`,
    * which is `true` — a worker that cannot be switched off. Hence the explicit parse, which
    * reads the raw string from `obj` because `value` has already been coerced by the time a
-   * transform runs; any spelling but the four below is left as-is so `@IsBoolean` rejects it.
+   * transform runs; any spelling but the four `parseBoolean` knows is left as-is so
+   * `@IsBoolean` rejects it.
    */
   @Transform(({ obj, key }) => parseBoolean((obj as Record<string, unknown>)[key]))
   @IsBoolean()
@@ -207,25 +222,13 @@ export class EnvironmentVariables {
   TRANSCRIPTION_TIMEOUT_SECONDS: number = 600;
 }
 
-function parseBoolean(value: unknown): unknown {
-  if (typeof value === 'boolean') {
-    return value;
-  }
-
-  switch (String(value).trim().toLowerCase()) {
-    case 'true':
-    case '1':
-      return true;
-    case 'false':
-    case '0':
-      return false;
-    default:
-      return value;
-  }
-}
-
 export function validate(config: Record<string, unknown>): EnvironmentVariables {
-  const validated = plainToInstance(EnvironmentVariables, config, {
+  // Resolved here, not by a transform: the default depends on two other variables, and a
+  // transform runs only for a key the environment set.
+  const isProduction = config['NODE_ENV'] === NodeEnv.Production;
+  const origins = corsOriginsOf(config['CORS_ORIGINS'], config['WEB_PORT'], isProduction);
+  const resolved = { ...config, CORS_ORIGINS: origins };
+  const validated = plainToInstance(EnvironmentVariables, resolved, {
     enableImplicitConversion: true,
     exposeDefaultValues: true,
   });

@@ -12,6 +12,9 @@ export const TEST_JWT_EXPIRES_IN_SECONDS = 3600;
 export const TEST_AUTH_RATE_LIMIT_WINDOW_SECONDS = 1;
 export const TEST_AUTH_RATE_LIMIT_ATTEMPTS = 1000;
 
+/** The one origin the run allows, applied by `test/setup-env.ts` — the browser suite's web app. */
+export const TEST_WEB_ORIGIN = 'http://localhost:3100';
+
 export const REGISTER_URL = '/api/auth/register';
 export const LOGIN_URL = '/api/auth/login';
 export const ME_URL = '/api/auth/me';

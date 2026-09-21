@@ -162,6 +162,47 @@ describe('validate', () => {
     });
   });
 
+  describe('CORS_ORIGINS', () => {
+    it('defaults outside production to the web app pnpm dev runs, on its default port', () => {
+      expect(validate(VALID).CORS_ORIGINS).toEqual([
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+      ]);
+    });
+
+    it('follows WEB_PORT, which the dev script moves when 3000 is taken', () => {
+      expect(validate({ ...VALID, WEB_PORT: '3002' }).CORS_ORIGINS).toEqual([
+        'http://localhost:3002',
+        'http://127.0.0.1:3002',
+      ]);
+    });
+
+    it('reads a comma-separated list, trimmed, and treats a blank one as unset', () => {
+      expect(
+        validate({ ...VALID, CORS_ORIGINS: ' https://meet.example.com , http://localhost:3100 ' })
+          .CORS_ORIGINS,
+      ).toEqual(['https://meet.example.com', 'http://localhost:3100']);
+      expect(validate({ ...VALID, CORS_ORIGINS: '  ' }).CORS_ORIGINS).toHaveLength(2);
+    });
+
+    it('refuses to boot in production without one, rather than guess what to allow', () => {
+      expect(() => validate({ ...VALID, NODE_ENV: 'production' })).toThrow(/CORS_ORIGINS/);
+      expect(
+        validate({ ...VALID, NODE_ENV: 'production', CORS_ORIGINS: 'https://meet.example.com' })
+          .CORS_ORIGINS,
+      ).toEqual(['https://meet.example.com']);
+    });
+
+    it.each([
+      ['no scheme', 'meet.example.com'],
+      ['a path', 'https://meet.example.com/app'],
+      ['a trailing slash', 'https://meet.example.com/'],
+      ['a scheme browsers never send', 'ftp://meet.example.com'],
+    ])('refuses an entry with %s, which would match no request', (_description, origin) => {
+      expect(() => validate({ ...VALID, CORS_ORIGINS: origin })).toThrow(/CORS_ORIGINS/);
+    });
+  });
+
   describe('TRUST_PROXY_HOPS', () => {
     it('trusts no proxy unless told to, so a forwarded header cannot choose the client', () => {
       expect(validate(VALID).TRUST_PROXY_HOPS).toBe(0);
