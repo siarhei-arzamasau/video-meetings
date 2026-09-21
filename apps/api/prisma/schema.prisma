@@ -188,6 +188,8 @@ model MeetingFileUpload {
   uploader User    @relation(fields: [uploaderId], references: [id], onDelete: Restrict)
 
   @@index([meetingId])
+  /// The uploader's foreign key, and the per-uploader cap's count of unpurged sessions.
+  @@index([uploaderId, purgedAt])
   @@index([expiresAt, purgedAt])
   @@map("meeting_file_uploads")
 }

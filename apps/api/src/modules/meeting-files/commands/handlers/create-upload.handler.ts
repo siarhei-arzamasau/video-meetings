@@ -14,8 +14,13 @@ import {
   MEETING_FILE_CHUNK_SIZE_BYTES,
 } from '@repo/shared';
 
+import { UploadCapReached } from '../../services/meeting-file-upload-caps';
 import { MeetingFileUploadRepository } from '../../services/meeting-file-upload.repository';
-import { chunkCountOf, toMeetingFileUpload } from '../../services/meeting-file-upload.mapper';
+import {
+  type MeetingFileUploadRecord,
+  chunkCountOf,
+  toMeetingFileUpload,
+} from '../../services/meeting-file-upload.mapper';
 import { normaliseFileName } from '../../services/meeting-file.mapper';
 import { requireVisibleMeeting } from '../../services/visible-meeting';
 import { BAD_NAME_MESSAGE, COUNT_MESSAGE } from './upload-meeting-file.handler';
@@ -23,6 +28,15 @@ import { CreateUploadCommand } from '../create-upload.command';
 
 export const SIZE_POSITIVE_MESSAGE = 'The file size must be a positive number of bytes';
 export const CHUNKED_SIZE_MESSAGE = MEETING_FILE_CHUNKED_SIZE_MESSAGE;
+
+/**
+ * Unpurged sessions one user may hold across every meeting. The web client sends one file at a
+ * time, so this is headroom for abandoned sessions, not for parallel uploads. It is what bounds
+ * the disk one account can fill with chunks it never completes: without it, sessions count
+ * against no cap at all until `complete`, and an uploader need never call that.
+ */
+export const MAX_OPEN_UPLOADS_PER_UPLOADER = 5;
+export const OPEN_UPLOADS_MESSAGE = `You already have ${String(MAX_OPEN_UPLOADS_PER_UPLOADER)} unfinished uploads. Finish or cancel one, or try again once they expire.`;
 
 /** Hours a session stays open. Validated in `env.validation.ts`; restated as the fallback. */
 const DEFAULT_TTL_HOURS = 24;
@@ -74,6 +88,22 @@ export class CreateUploadHandler implements ICommandHandler<
       throw new PayloadTooLargeException(CHUNKED_SIZE_MESSAGE);
     }
 
+    const record = await this.openSession(userId, meetingId, name, size);
+
+    this.logger.log(
+      `Opened upload ${record.id} for meeting ${meetingId}: ${String(size)} bytes in ${String(record.chunkCount)} chunks`,
+    );
+
+    return toMeetingFileUpload(record);
+  }
+
+  /** Writes the session, turning either cap the repository refused on into its 409. */
+  private async openSession(
+    userId: string,
+    meetingId: string,
+    name: string,
+    size: number,
+  ): Promise<MeetingFileUploadRecord> {
     const chunkSize = MEETING_FILE_CHUNK_SIZE_BYTES;
     const record = await this.uploads.createWithinCap(
       {
@@ -85,17 +115,17 @@ export class CreateUploadHandler implements ICommandHandler<
         chunkCount: chunkCountOf(size, chunkSize),
         expiresAt: new Date(Date.now() + this.ttlHours * 60 * 60 * 1_000),
       },
-      MAX_MEETING_FILES,
+      { meetingFiles: MAX_MEETING_FILES, openUploadsPerUploader: MAX_OPEN_UPLOADS_PER_UPLOADER },
     );
 
-    if (record === null) {
+    if (record === UploadCapReached.MEETING_FILES) {
       throw new ConflictException(COUNT_MESSAGE);
     }
 
-    this.logger.log(
-      `Opened upload ${record.id} for meeting ${meetingId}: ${String(size)} bytes in ${String(record.chunkCount)} chunks`,
-    );
+    if (record === UploadCapReached.OPEN_UPLOADS) {
+      throw new ConflictException(OPEN_UPLOADS_MESSAGE);
+    }
 
-    return toMeetingFileUpload(record);
+    return record;
   }
 }

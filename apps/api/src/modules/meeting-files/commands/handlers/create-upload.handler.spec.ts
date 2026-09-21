@@ -9,6 +9,7 @@ import { QueryBus } from '@nestjs/cqrs';
 import { Test } from '@nestjs/testing';
 import { MAX_CHUNKED_MEETING_FILE_SIZE_BYTES, MEETING_FILE_CHUNK_SIZE_BYTES } from '@repo/shared';
 
+import { UploadCapReached } from '../../services/meeting-file-upload-caps';
 import { MeetingFileUploadRepository } from '../../services/meeting-file-upload.repository';
 import type { MeetingFileUploadRecord } from '../../services/meeting-file-upload.mapper';
 import { CreateUploadCommand } from '../create-upload.command';
@@ -82,7 +83,7 @@ describe('CreateUploadHandler', () => {
     });
 
     expect(createWithinCap).toHaveBeenCalledTimes(1);
-    const [data, cap] = createWithinCap.mock.calls[0] as [Record<string, unknown>, number];
+    const [data, caps] = createWithinCap.mock.calls[0] as [Record<string, unknown>, object];
     expect(data).toMatchObject({
       meetingId: MEETING_ID,
       uploaderId: USER_ID,
@@ -92,7 +93,7 @@ describe('CreateUploadHandler', () => {
       chunkSize: MEETING_FILE_CHUNK_SIZE_BYTES,
       chunkCount: 1,
     });
-    expect(cap).toBe(50);
+    expect(caps).toEqual({ meetingFiles: 50, openUploadsPerUploader: 5 });
     expect((data['expiresAt'] as Date).getTime()).toBeGreaterThanOrEqual(
       before + 24 * 60 * 60 * 1_000,
     );
@@ -103,7 +104,7 @@ describe('CreateUploadHandler', () => {
 
     expect(createWithinCap).toHaveBeenCalledWith(
       expect.objectContaining({ chunkCount: 3 }),
-      expect.any(Number),
+      expect.any(Object),
     );
   });
 
@@ -166,11 +167,21 @@ describe('CreateUploadHandler', () => {
     ).resolves.toBeDefined();
   });
 
-  it('answers 409 with the file-count message when the cap is already reached', async () => {
-    createWithinCap.mockResolvedValue(null);
+  it('answers 409 with the file-count message when the meeting cap is already reached', async () => {
+    createWithinCap.mockResolvedValue(UploadCapReached.MEETING_FILES);
 
     await expect(handler.execute(command('recording.mp4', 20))).rejects.toThrow(
       new ConflictException('This meeting already has 50 files.'),
+    );
+  });
+
+  it('answers 409 with the unfinished-uploads message when the uploader cap is reached', async () => {
+    createWithinCap.mockResolvedValue(UploadCapReached.OPEN_UPLOADS);
+
+    await expect(handler.execute(command('recording.mp4', 20))).rejects.toThrow(
+      new ConflictException(
+        'You already have 5 unfinished uploads. Finish or cancel one, or try again once they expire.',
+      ),
     );
   });
 });

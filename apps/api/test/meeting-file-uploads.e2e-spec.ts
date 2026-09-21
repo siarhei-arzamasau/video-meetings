@@ -29,6 +29,7 @@ import { messageOf } from './utils/http';
 import {
   countMeetingFileUploads,
   findMeetingFileUploadRow,
+  insertMeetingFileUploadRow,
   setMeetingFileUploadState,
 } from './utils/meeting-file-uploads-table';
 import {
@@ -50,6 +51,8 @@ const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).dig
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const NAME_MESSAGE = 'The file name must be 1–255 characters and contain no path separators';
 const SIZE_MESSAGE = 'The file size must be a positive number of bytes';
+const MAX_OPEN_UPLOADS = 5;
+const OPEN_UPLOADS_MESSAGE = `You already have ${String(MAX_OPEN_UPLOADS)} unfinished uploads. Finish or cancel one, or try again once they expire.`;
 
 /** Deterministic bytes, so a chunk read back off disk can be compared to what was sent. */
 const filled = (length: number, byte: number): Buffer => Buffer.alloc(length, byte);
@@ -325,6 +328,76 @@ describe('chunked upload sessions', () => {
           `This meeting already has ${String(MAX_MEETING_FILES)} files.`,
         );
         await expect(countMeetingFileUploads(suite.prisma())).resolves.toBe(0);
+      });
+
+      it(`409 once the uploader holds ${String(MAX_OPEN_UPLOADS)} unpurged sessions, across meetings`, async () => {
+        const host = await registerUser(suite, EMAIL);
+        const [first, second, third] = await Promise.all([
+          createMeeting(suite, host),
+          createMeeting(suite, host),
+          createMeeting(suite, host),
+        ]);
+        const seed = (meetingId: string, state: { expires_at?: Date; purged_at?: Date } = {}) =>
+          insertMeetingFileUploadRow(suite.prisma(), {
+            meeting_id: meetingId,
+            uploader_id: host.id,
+            ...state,
+          });
+        await Promise.all(Array.from({ length: MAX_OPEN_UPLOADS - 1 }, () => seed(first.id)));
+        // Aborted or expired, but its chunks are still on disk until the worker purges it.
+        const lapsed = await seed(second.id, { expires_at: new Date(Date.now() - 1_000) });
+        // Purged: it holds nothing, so it counts for nothing.
+        await seed(second.id, { expires_at: new Date(Date.now() - 1_000), purged_at: new Date() });
+
+        const refused = await createSession(host.token, third.id, {
+          name: 'clip.mp4',
+          size: 10,
+        }).expect(409);
+
+        expect(messageOf(refused)).toBe(OPEN_UPLOADS_MESSAGE);
+        await expect(countMeetingFileUploads(suite.prisma())).resolves.toBe(MAX_OPEN_UPLOADS + 1);
+
+        await setMeetingFileUploadState(suite.prisma(), lapsed, { purged_at: new Date() });
+
+        await createSession(host.token, third.id, { name: 'clip.mp4', size: 10 }).expect(201);
+      });
+
+      it('holds the uploader cap under concurrent opens on different meetings', async () => {
+        const host = await registerUser(suite, EMAIL);
+        const meetings = await Promise.all(
+          Array.from({ length: MAX_OPEN_UPLOADS + 3 }, () => createMeeting(suite, host)),
+        );
+
+        const statuses = await Promise.all(
+          meetings.map(async (meeting) => {
+            const response = await createSession(host.token, meeting.id, {
+              name: 'clip.mp4',
+              size: 10,
+            });
+
+            return response.status;
+          }),
+        );
+
+        expect(statuses.filter((status) => status === 201)).toHaveLength(MAX_OPEN_UPLOADS);
+        expect(statuses.filter((status) => status === 409)).toHaveLength(3);
+        await expect(countMeetingFileUploads(suite.prisma())).resolves.toBe(MAX_OPEN_UPLOADS);
+      });
+
+      it('does not count another user’s sessions', async () => {
+        const host = await registerUser(suite, EMAIL);
+        const other = await registerUser(suite, OTHER_EMAIL);
+        const meeting = await createMeeting(suite, host);
+        await Promise.all(
+          Array.from({ length: MAX_OPEN_UPLOADS }, () =>
+            insertMeetingFileUploadRow(suite.prisma(), {
+              meeting_id: meeting.id,
+              uploader_id: other.id,
+            }),
+          ),
+        );
+
+        await createSession(host.token, meeting.id, { name: 'clip.mp4', size: 10 }).expect(201);
       });
     });
   });
