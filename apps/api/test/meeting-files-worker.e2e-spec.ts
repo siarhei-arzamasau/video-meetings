@@ -265,6 +265,31 @@ describe('the meeting file worker', () => {
     });
   });
 
+  it('purges a deleted file whose processing claims already reached the cap', async () => {
+    const host = await registerUser(suite, EMAIL);
+    const meeting = await createMeeting(suite, host);
+    const file = await upload(host.token, meeting.id, fixture('sample.pdf'));
+    await setMeetingFileState(suite.prisma(), file.id, { status: 'uploaded', attempts: 3 });
+    await expect(worker().drain()).resolves.toBe(1);
+    await expect(findMeetingFileRow(suite.prisma(), file.id)).resolves.toMatchObject({
+      status: 'failed',
+      attempts: 4,
+    });
+
+    await suite
+      .delete(meetingFileUrl(meeting.id, file.id))
+      .set('Authorization', `Bearer ${host.token}`)
+      .expect(204);
+    await expect(worker().drain()).resolves.toBe(1);
+
+    expect(fs.existsSync(objectPath(meeting.id, file.id))).toBe(false);
+    await expect(findMeetingFileRow(suite.prisma(), file.id)).resolves.toMatchObject({
+      status: 'deleted',
+      attempts: 1,
+      purged_at: expect.any(String),
+    });
+  });
+
   it('drains every claimable row, oldest first', async () => {
     const host = await registerUser(suite, EMAIL);
     const meeting = await createMeeting(suite, host);

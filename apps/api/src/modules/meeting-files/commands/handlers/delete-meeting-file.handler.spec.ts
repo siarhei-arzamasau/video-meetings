@@ -73,7 +73,7 @@ describe('DeleteMeetingFileHandler', () => {
     ['the uploader', UPLOADER_ID],
     ['the host', HOST_ID],
   ])(
-    'lets %s soft-delete: a conditional transition to deleted with the lease cleared',
+    'lets %s soft-delete: a conditional transition to deleted with the lease and claim count cleared',
     async (_who, userId) => {
       await expect(
         handler.execute(new DeleteMeetingFileCommand(userId, MEETING_ID, FILE_ID)),
@@ -83,6 +83,7 @@ describe('DeleteMeetingFileHandler', () => {
       expect(transition).toHaveBeenCalledWith(FILE_ID, 'uploaded', 'deleted', {
         deletedAt: expect.any(Date),
         leasedUntil: null,
+        attempts: 0,
       });
     },
   );

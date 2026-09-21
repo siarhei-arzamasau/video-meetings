@@ -67,6 +67,10 @@ export class DeleteMeetingFileHandler implements ICommandHandler<DeleteMeetingFi
    * The conditional transition, and — only when it changed a row — the announcement. A
    * delete that lost its race removed nothing, so there is nothing to tell a watching page;
    * the attempt that wins publishes instead.
+   *
+   * `attempts` restarts at 0 because the purge counts its own claims on the same column and
+   * gives up past the cap: a row carrying its processing claims (4 for a file that failed after
+   * repeated attempts) would otherwise be marked purged with its bytes still on disk.
    */
   private async softDelete(file: MeetingFileRecord): Promise<boolean> {
     const deletedAt = new Date();
@@ -75,6 +79,7 @@ export class DeleteMeetingFileHandler implements ICommandHandler<DeleteMeetingFi
       !(await this.files.transition(file.id, file.status, 'deleted', {
         deletedAt,
         leasedUntil: null,
+        attempts: 0,
       }))
     ) {
       return false;
@@ -83,7 +88,7 @@ export class DeleteMeetingFileHandler implements ICommandHandler<DeleteMeetingFi
     this.events.publish(
       new MeetingFileChangedEvent(
         file.meetingId,
-        toMeetingFile({ ...file, status: 'deleted', deletedAt, leasedUntil: null }),
+        toMeetingFile({ ...file, status: 'deleted', deletedAt, leasedUntil: null, attempts: 0 }),
       ),
     );
 

@@ -9,7 +9,7 @@ import type { MeetingFileRecord } from './meeting-file.mapper';
 export interface TransitionPatch {
   checksum?: string | null;
   transcriptKey?: string | null;
-  /** Only the retry sets this, back to 0; every other writer leaves the claim count alone. */
+  /** Only the retry and the delete set this, back to 0; every other writer leaves the claim count alone. */
   attempts?: number;
   thumbnailKey?: string | null;
   failureReason?: string | null;

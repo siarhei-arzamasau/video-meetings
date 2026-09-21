@@ -444,7 +444,9 @@ get wrong.
   one in flight, since each is conditional on the lease the previous one set.
 - **`attempts` counts claims, not failures.** A row claimed a fourth time is failed unrun; a
   purge claimed a fourth time is marked purged unrun with its keys logged at error level, so an
-  object the process cannot unlink is not reclaimed every lease for ever.
+  object the process cannot unlink is not reclaimed every lease for ever. **The delete resets
+  it to 0** for that reason: the purge's count starts from the processing claims otherwise, and
+  a file that failed after repeated attempts (4) would be marked purged with its bytes on disk.
 - **The worker claims two kinds of row, files first.** An expired or aborted session is looked
   for only when no file is claimable, because a file someone is waiting on outranks a chunk tree
   nobody will read again. `claimExpired` is the sessions' `claimNext`, under the same lease.
