@@ -167,7 +167,7 @@ the decomposition is step one. Four repository-specific things make that work:
 ## Setup
 
 The steps are in [`README.md`](README.md#getting-started); `pnpm start:dev` does them all.
-Three facts that bite an agent more than a human:
+Four facts that bite an agent more than a human:
 
 - **`pnpm dev` does not generate the Prisma client**, and the client is gitignored. On a
   fresh clone or after a schema change, `pnpm --filter=@repo/api prisma:generate` first.
@@ -180,6 +180,18 @@ Three facts that bite an agent more than a human:
 - **`apps/api/storage/` is where uploaded bytes live** (`MEETING_FILES_DIR`, gitignored);
   the database has only the records. Everything else about uploads is in
   [the API guide](apps/api/AGENTS.md#meeting-files-srcmodulesmeeting-files), which owns it.
+- **Whisper is a Compose profile, and nothing starts it for you.**
+  `docker compose --profile transcription up -d whisper` is the whole opt-in. It is a profile
+  because `scripts/start.mjs` runs `docker compose up -d postgres`, and a plain
+  `docker compose up` has to keep starting only what every developer needs — which a 0.6 GB
+  image, a 0.5 GB model, and 2 GB of memory are not. `pnpm start:dev` therefore never starts
+  it, no service depends on it, the API boots and serves uploads without it, and **no test may
+  need it**: the specs bind a fake transcriber or a stand-in endpoint on loopback, and both
+  `test:e2e` suites are run with the service stopped. Port 8000 belonging to something else
+  is `WHISPER_PORT` in the root `.env`.
+  What the service is pinned to, and the traps in running it, are in
+  [the API guide](apps/api/AGENTS.md#meeting-files-srcmodulesmeeting-files) under
+  _Transcription_.
 
 ### Agent tooling
 

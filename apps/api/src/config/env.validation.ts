@@ -17,6 +17,10 @@ import {
 } from 'class-validator';
 
 import { ORIGIN_PATTERN, corsOriginsOf, parseBoolean } from './env-values';
+import {
+  DEFAULT_TRANSCRIPTION_MODEL,
+  DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS,
+} from './transcription.defaults';
 
 /**
  * Signing keys this repository has published. Rejected by value because length alone cannot
@@ -177,21 +181,21 @@ export class EnvironmentVariables {
 
   /**
    * Whether the pipeline transcribes audio and video. Off by default: it is the one step that
-   * calls a third party, and a deployment that has not chosen one must still process files.
+   * needs a second service, and a deployment that does not run one must still process files.
    * Parsed like the worker flag, for the same reason.
    *
-   * The URL below is validated here whenever this is on, so a process cannot start in a
-   * state where every recording would fail.
+   * The URL below is validated whenever this is on — its shape, never the server behind it: a
+   * Whisper that is down fails a transcription, not the boot of what serves every upload.
    */
   @Transform(({ obj, key }) => parseBoolean((obj as Record<string, unknown>)[key]))
   @IsBoolean()
   MEETING_FILES_TRANSCRIPTION_ENABLED: boolean = false;
 
   /**
-   * An OpenAI-compatible `audio/transcriptions` endpoint — hosted or a self-hosted Whisper
-   * server, which is what makes the vendor configuration rather than code. Required when the
-   * flag is on, and unvalidated when it is off so a deployment that does not transcribe needs
-   * no placeholder.
+   * An OpenAI-compatible `audio/transcriptions` endpoint: the `whisper` Compose service, at
+   * `http://localhost:8000/v1/audio/transcriptions` from the host and `http://whisper:8000/…`
+   * from the `api` container. Required when the flag is on, and unvalidated when it is off so
+   * a deployment that does not transcribe needs no placeholder.
    */
   @ValidateIf((env: EnvironmentVariables) => env.MEETING_FILES_TRANSCRIPTION_ENABLED)
   @IsUrl({ require_tld: false, require_protocol: true, protocols: ['http', 'https'] })
@@ -203,23 +207,23 @@ export class EnvironmentVariables {
   TRANSCRIPTION_API_KEY?: string;
 
   /**
-   * The `model` field of the request. An OpenAI-compatible endpoint requires one; a
-   * self-hosted server usually ignores whatever it is sent, which is why this has a default
-   * rather than being required alongside the URL.
+   * The `model` field of the request. Whisper `small` by default, under the name the local
+   * service preloads it by — and that service does not ignore the field: a model it has not
+   * downloaded is a 404, so this and the service's `WHISPER_MODEL` have to name the same one.
    */
   @IsString()
   @MinLength(1)
-  TRANSCRIPTION_MODEL: string = 'whisper-1';
+  TRANSCRIPTION_MODEL: string = DEFAULT_TRANSCRIPTION_MODEL;
 
   /**
    * How long one transcription may take before it is aborted and the file fails with a
-   * specific reason rather than hanging on a lease that keeps being renewed. Ten minutes by
-   * default; at least thirty seconds, because a bound shorter than the request it bounds only
-   * fails files.
+   * specific reason rather than hanging on a lease that keeps being renewed. Twelve minutes
+   * by default: a one-hour recording at twice the rate measured beside the constant. At least
+   * thirty seconds, because a bound shorter than the request it bounds only fails files.
    */
   @IsInt()
   @Min(30)
-  TRANSCRIPTION_TIMEOUT_SECONDS: number = 600;
+  TRANSCRIPTION_TIMEOUT_SECONDS: number = DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS;
 }
 
 export function validate(config: Record<string, unknown>): EnvironmentVariables {

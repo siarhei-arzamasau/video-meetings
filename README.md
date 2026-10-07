@@ -19,7 +19,7 @@ later specs and plans under `docs/` build on it.
 
 - Node.js 24 (`.nvmrc`)
 - pnpm 11 (`corepack enable`)
-- Docker, for the local PostgreSQL instance
+- Docker, for the local PostgreSQL instance and, if you want transcription, the local Whisper
 
 ## Getting started
 
@@ -56,11 +56,6 @@ A meeting page follows its files live over Server-Sent Events and falls back to 
 the stream cannot be opened; a stream closes after `MEETING_FILES_STREAM_TTL_SECONDS`
 (default 300) and the page reconnects.
 
-Transcription of audio and video is off by default; turning on
-`MEETING_FILES_TRANSCRIPTION_ENABLED` needs `TRANSCRIPTION_API_URL` (an OpenAI-compatible
-`audio/transcriptions` endpoint), optionally `TRANSCRIPTION_API_KEY`, and bounds each request
-with `TRANSCRIPTION_TIMEOUT_SECONDS`.
-
 `pnpm dev` prints the ports it chose. Those two are preferences rather than requirements: when
 something else already holds one, it moves up to the next free port and points the frontend at
 wherever the API actually landed, so a leftover server from another project does not stop you.
@@ -88,6 +83,50 @@ and point `DATABASE_URL` at the same port:
 POSTGRES_PORT=5434
 DATABASE_URL=postgresql://postgres:postgres@localhost:5434/video_meetings
 ```
+
+### Transcription (optional)
+
+Audio and video uploads can be transcribed by a Whisper `small` model running on your own
+machine, so no recording and no transcript leaves it. It is off by default, and `pnpm dev` and
+`pnpm start:dev` never start it. Turning it on is one command and two settings:
+
+```bash
+docker compose --profile transcription up -d whisper   # Whisper `small` on 127.0.0.1:8000
+docker compose --profile transcription ps whisper      # wait for "healthy"
+```
+
+```bash
+# apps/api/.env — the example already carries the URL, so only the flag changes
+MEETING_FILES_TRANSCRIPTION_ENABLED=true
+TRANSCRIPTION_API_URL=http://localhost:8000/v1/audio/transcriptions
+```
+
+Restart the API afterwards. An uploaded audio or video file is then transcribed once its own
+checks pass, and the text is served by `GET /api/meetings/:id/files/:fileId/transcript`; the
+web app does not show it yet. The API log names the model on every transcription
+(`Model Systran/faster-whisper-small transcribed audio/mpeg`).
+
+What it costs:
+
+- **The first start needs the network** — about 0.6 GB for the image (0.9 GB on x86-64) and
+  0.5 GB for the model — and is not `healthy` until the model is downloaded. The model is kept
+  on a Docker volume, and every later start works with no network at all.
+- **About 2 GB of memory** once the model is loaded, and up to about 5 GB while it works
+  through an hour-long recording. The model is unloaded after five idle minutes.
+- **About six seconds of work per minute of audio**, measured on an 18-core Apple Silicon
+  laptop. `TRANSCRIPTION_TIMEOUT_SECONDS` (default 720) bounds one transcription: that is a
+  one-hour recording at twice the measured rate, so raise it on a slower machine or for
+  longer recordings.
+
+Port 8000 taken? Set `WHISPER_PORT` in the root `.env` and the same port in
+`TRANSCRIPTION_API_URL`. `docker compose --profile transcription stop whisper` stops the
+service and keeps the model. The API boots and serves uploads and downloads whether or not
+Whisper is running; a recording uploaded while it is stopped fails to process and can be
+retried once it is back.
+
+Under `docker compose` the `api` service finds Whisper by itself: set
+`MEETING_FILES_TRANSCRIPTION_ENABLED=true` in the root `.env` and bring the stack up with
+`--profile transcription`.
 
 ## Scripts
 

@@ -10,11 +10,16 @@ import { fromFile as openFileTokenizer } from 'strtok3';
 /**
  * `file-type` names a few types differently from the allow-list. The list holds the names
  * clients expect; the mapping is confined to here.
+ *
+ * The two `x-` MP4 names are not spelling variants: `file-type` reads an MP4's major brand, and
+ * gives `M4A ` and `M4V ` — what ffmpeg and Apple's tools write for those extensions — names of
+ * their own. The same recording saved under a generic brand (`isom`) is already `video/mp4`.
  */
 const ALIASES: Readonly<Record<string, string>> = {
   'audio/vnd.wave': 'audio/wav',
   'audio/x-wav': 'audio/wav',
   'audio/x-m4a': 'audio/mp4',
+  'video/x-m4v': 'video/mp4',
 };
 
 /** How much of an undetected file is read to decide whether it is text. */

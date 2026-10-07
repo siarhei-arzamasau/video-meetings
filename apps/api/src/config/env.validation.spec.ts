@@ -7,6 +7,9 @@ const VALID = {
   JWT_SECRET: 'a-secret-that-is-at-least-thirty-two-characters',
 };
 
+/** What `docker-compose.yml` hands the `api` service when nothing overrides it. */
+const COMPOSE_WHISPER_URL = 'http://whisper:8000/v1/audio/transcriptions';
+
 describe('validate', () => {
   it('applies the defaults for everything optional', () => {
     const env = validate(VALID);
@@ -17,7 +20,7 @@ describe('validate', () => {
     expect(env.MEETING_FILES_LEASE_SECONDS).toBe(60);
     expect(env.MEETING_FILES_POLL_MS).toBe(1000);
     expect(env.MEETING_FILES_TRANSCRIPTION_ENABLED).toBe(false);
-    expect(env.TRANSCRIPTION_TIMEOUT_SECONDS).toBe(600);
+    expect(env.TRANSCRIPTION_TIMEOUT_SECONDS).toBe(720);
   });
 
   it('boots with transcription off and no endpoint configured', () => {
@@ -26,6 +29,41 @@ describe('validate', () => {
     expect(() =>
       validate({ ...VALID, MEETING_FILES_TRANSCRIPTION_ENABLED: 'false' }),
     ).not.toThrow();
+  });
+
+  it('boots with no transcription variable present at all, and transcribes nothing', () => {
+    // A deployment that has never heard of Whisper: not the flag, not the URL, not the model.
+    const env = validate(VALID);
+
+    expect(env.MEETING_FILES_TRANSCRIPTION_ENABLED).toBe(false);
+    expect(env.TRANSCRIPTION_API_URL).toBe('');
+    expect(env.TRANSCRIPTION_API_KEY).toBeUndefined();
+  });
+
+  it('asks for Whisper small unless told otherwise', () => {
+    // The model the documented local service preloads. A default that named anything else
+    // would make the documented set-up fail every recording until someone changed a setting.
+    expect(validate(VALID).TRANSCRIPTION_MODEL).toBe('Systran/faster-whisper-small');
+    expect(validate({ ...VALID, TRANSCRIPTION_MODEL: 'whisper-1' }).TRANSCRIPTION_MODEL).toBe(
+      'whisper-1',
+    );
+  });
+
+  it.each([
+    ['the local service, stopped', 'http://localhost:8000/v1/audio/transcriptions'],
+    ['the Compose service, by a name this host cannot resolve', COMPOSE_WHISPER_URL],
+  ])('boots with transcription on and %s', (_description, url) => {
+    // Boot checks the shape of the URL and never the server behind it: nothing listens on
+    // either address while this suite runs. Whisper being down fails a transcription, not
+    // the process that also serves every upload and download.
+    const env = validate({
+      ...VALID,
+      MEETING_FILES_TRANSCRIPTION_ENABLED: 'true',
+      TRANSCRIPTION_API_URL: url,
+    });
+
+    expect(env.MEETING_FILES_TRANSCRIPTION_ENABLED).toBe(true);
+    expect(env.TRANSCRIPTION_API_URL).toBe(url);
   });
 
   it('refuses to boot with transcription on and no endpoint', () => {

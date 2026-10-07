@@ -400,7 +400,11 @@ get wrong.
   has no magic bytes, so an undetected file that decodes as UTF-8 with no NUL is typed by
   extension — among `.txt`/`.md`/`.csv` only. An extension never elevates a file to a binary
   type, so `page.html` renamed `page.pdf` is a 415 while renamed `notes.txt` it is stored as
-  `text/plain` and served as an attachment with `nosniff`.
+  `text/plain` and served as an attachment with `nosniff`. **An MP4 is named by its major
+  brand**, so one allow-listed type arrives under several names — `M4V ` as `video/x-m4v`,
+  `M4A ` as `audio/x-m4a` — and each needs an entry in the sniffer's `ALIASES`, or the picker
+  offers an extension the API answers with a 415. Check a container with a file an encoder
+  wrote: an `isom` MP4 renamed `.m4v` is `video/mp4` already and proves nothing.
 - **Multer needs two options that look optional.** `defParamCharset: 'utf8'` — busboy decodes
   filenames as latin1 and `отчёт.pdf` arrives as mojibake without it — and `preservePath: true`,
   because otherwise multer takes the basename and a path separator never reaches the name rule
@@ -569,18 +573,53 @@ get wrong.
   apply to — a PDF, or anything uploaded while the flag was off — is **skipped, not failed**: it
   reaches `ready` with no transcript and no reason, and turning the flag on later does not
   reprocess it. Retry does, one file at a time. `TRANSCRIPTION_API_URL` is validated at boot when
-  the flag is on, so a process cannot start where every recording would fail.
+  the flag is on — **its shape, never the server**. A Whisper that is not running fails a
+  recording's processing; it must not stop the process that serves every upload and download.
 - **The provider is a port with one adapter.** `TranscriptionProvider` is
   `transcribe(stream, contentType, signal)` and nothing else, bound under the string token
   `TRANSCRIPTION_PROVIDER` so a spec can substitute a fake without importing the module. The
-  adapter posts an OpenAI-compatible `audio/transcriptions` request — served by hosted providers
-  and self-hosted Whisper alike, which is what makes the vendor configuration rather than code.
-  The object is **streamed** into the multipart body, never buffered, so a gigabyte of video
-  costs a chunk of memory; that is why it is `fetch` with `duplex: 'half'` and not a `FormData`
-  of `Blob`s. The endpoint's filename is derived from the sniffed type (`recording.mp3`), never
-  the user's: the endpoint routes on that extension, and the user's text has no business on a
-  third party's wire. Every failure is one `StepError` with one message; the vendor's own words
-  stay in the log.
+  adapter posts an OpenAI-compatible `audio/transcriptions` request, which is what the local
+  Whisper service speaks. The object is **streamed** into the multipart body, never buffered,
+  so a gigabyte of video costs a chunk of memory; it goes out chunked, with no `Content-Length`,
+  because nothing has measured it. The endpoint's filename is derived from the sniffed type
+  (`recording.mp3`), never the user's: the endpoint routes on that extension, and the user's
+  text has no business on another service's wire. Every failure is one `StepError` with one
+  message; the server's own words stay in the log, next to the model that was asked for.
+- **The request is `node:http`, not `fetch`, and must not be simplified back.** A Whisper server
+  sends no response header until the whole transcription is done, and Node's `fetch` waits 300
+  seconds for the first one — undici's `headersTimeout`, reachable only through a dispatcher,
+  which would mean taking undici as a dependency. Through `fetch`, a one-hour recording (330
+  seconds of work on the machine the time limit was measured on) failed at 301 seconds with
+  `UND_ERR_HEADERS_TIMEOUT`, whatever `TRANSCRIPTION_TIMEOUT_SECONDS` said. Over `node:http` the
+  only bound is the `signal`. No spec can wait five minutes, so one pins that `fetch` is not
+  called. Each request also gets a connection of its own (`agent: false`): a kept-alive socket
+  the server closed between two recordings would fail the second with a reset. **An abort
+  frees the API, not Whisper**: the server finishes the transcription it started, at full
+  load, with nobody left to read the answer.
+- **The local Whisper is the `whisper` Compose service — Speaches, behind the `transcription`
+  profile.** Five things about it that `docker-compose.yml` can only half say:
+  - **Pinned to `0.9.0-rc.3-cpu`, never `latest-cpu`.** That tag is still 0.8.3, which has no
+    `PRELOAD_MODELS` and names its settings differently. Check `linux/arm64` on any bump.
+  - **`TRANSCRIPTION_MODEL` must be the model the service holds** — `Systran/faster-whisper-small`,
+    the default on both sides (`WHISPER_MODEL` there). The server does not ignore the field: a
+    model it has not downloaded is a 404, and `whisper-1`, the default this replaced, is its
+    alias for `large-v3` and so fails every recording.
+  - **The entrypoint wrapper is what lets it start offline.** `PRELOAD_MODELS` asks Hugging Face
+    which models exist _before_ it looks at its own cache, so set unconditionally the server
+    exits at start-up without the network and Compose restarts it for ever. The wrapper sets it
+    only while the volume lacks the model's files and starts with `HF_HUB_OFFLINE=1` once they
+    are there. It restates the image's command, so re-read it when the tag changes.
+  - **It decodes MP3, M4A, WAV, MP4, M4V, and WebM itself**, which is why the API image carries
+    no ffmpeg and the adapter sends the object as stored.
+  - **Its log says `ERROR … Unexpected streaming transcription response type` on every
+    request.** That is a stray line in this release, logged before the answer is built; the
+    request it belongs to succeeded.
+- **The time limit is a measurement, and it lives beside the constant.**
+  `src/config/transcription.defaults.ts` holds the default model and
+  `DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS` with the numbers behind it: about six seconds of work
+  per minute of audio, so twelve minutes covers a one-hour recording at twice that. The rate is
+  the host's — re-measure rather than reason about it, through the API, from the worker's
+  `transcribed … in …ms` line.
 - **Both the flag and the TTL are read per run, not in a constructor**, so the e2e suite can
   change them with `ConfigService.set` between tests.
 
@@ -621,6 +660,14 @@ Every variable the app cannot start without belongs in the `EnvironmentVariables
 `src/config/env.validation.ts`; validation runs at boot, so misconfiguration fails immediately
 instead of at the first request that needs it. Adding one means the class, `.env.example`, and
 — if it affects local Docker — `docker-compose.yml`.
+
+**The transcription variables are in all three, and their values differ on purpose.**
+`apps/api/.env.example` ships the URL of the `whisper` service as the host reaches it
+(`localhost:8000`) with the flag still `false`, so turning transcription on locally is one
+edit. `docker-compose.yml` hands the `api` service the same variables with the URL defaulting
+to the in-network name (`whisper:8000`), and takes the flag from the root `.env`. The default
+model and time limit are stated once for code, in `src/config/transcription.defaults.ts`, and
+restated in those two files because neither can import — change all three together.
 
 **A rule the contract cannot express with a type is still the contract's job.** `JWT_SECRET`
 is rejected when it is one of the placeholders this repository has published, not only when it

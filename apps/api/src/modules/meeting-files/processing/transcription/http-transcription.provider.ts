@@ -1,9 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import http from 'node:http';
+import https from 'node:https';
 import { Readable } from 'node:stream';
+import { text as readToEnd } from 'node:stream/consumers';
+import { pipeline } from 'node:stream/promises';
 
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { DEFAULT_TRANSCRIPTION_MODEL } from '../../../../config/transcription.defaults';
 import { StepError } from '../step';
 import { TranscriptionProvider } from './transcription-provider';
 
@@ -25,15 +30,27 @@ const FILENAMES: Record<string, string> = {
 
 const FALLBACK_FILENAME = 'recording.mp3';
 
+/** What the endpoint sent back, read to its end. */
+interface EndpointAnswer {
+  status: number;
+  contentType: string | null;
+  body: string;
+}
+
 /**
  * The one implementation of the port: an OpenAI-compatible `audio/transcriptions` endpoint,
- * which is served by hosted providers and by self-hosted Whisper servers alike.
+ * which is what the local Whisper server speaks.
  *
  * The object is **streamed**, never buffered: the multipart body is a generator that yields
  * the header, then the file as it is read, then the trailer, so transcribing a gigabyte costs
- * a chunk of memory rather than a gigabyte. That is also why this is `fetch` with
- * `duplex: 'half'` and not a `FormData` with a `Blob`, which would read the whole object
- * first.
+ * a chunk of memory rather than a gigabyte. It goes out chunked, with no `Content-Length`,
+ * because nothing here has measured it.
+ *
+ * **The request is `node:http`, not `fetch`, and must stay that way.** A Whisper server sends
+ * no response header until the whole transcription is done, and `fetch` allows 300 seconds
+ * for the first one — a limit set on a dispatcher this process cannot reach without taking
+ * undici as a dependency. Every recording that needed longer failed at five minutes, whatever
+ * `TRANSCRIPTION_TIMEOUT_SECONDS` said. Here the only bound is the `signal`.
  *
  * Every failure — a non-2xx, a timeout, a dropped connection — is one `StepError` with one
  * message. The real cause is logged with its stack; what reaches `failureReason`, and so the
@@ -55,56 +72,100 @@ export class HttpTranscriptionProvider implements TranscriptionProvider {
     }
 
     const key = this.config.get<string>('TRANSCRIPTION_API_KEY');
-    const model = this.config.get<string>('TRANSCRIPTION_MODEL', 'whisper-1');
+    const model = this.config.get<string>('TRANSCRIPTION_MODEL', DEFAULT_TRANSCRIPTION_MODEL);
     const boundary = `----meeting-files-${randomUUID()}`;
     const filename = FILENAMES[contentType] ?? FALLBACK_FILENAME;
-
-    let response: Response;
-    let body: string;
+    const headers = {
+      'content-type': `multipart/form-data; boundary=${boundary}`,
+      ...(key === undefined || key === '' ? {} : { authorization: `Bearer ${key}` }),
+    };
+    let answer: EndpointAnswer;
 
     try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'content-type': `multipart/form-data; boundary=${boundary}`,
-          ...(key === undefined || key === '' ? {} : { authorization: `Bearer ${key}` }),
-        },
-        body: Readable.toWeb(
-          Readable.from(multipart(boundary, filename, contentType, model, stream)),
-        ) as ReadableStream<Uint8Array>,
-        // Required for a streaming request body: the request is still being written while the
-        // response is being read. Not in the DOM `RequestInit` type, hence the assertion.
-        duplex: 'half',
-        signal,
-      } as RequestInit);
-      // Read inside the same guard as the request: a timeout that strikes while the body is
-      // still arriving, or a connection dropped halfway through it, rejects this call rather
-      // than the `fetch` above, and has to become the same StepError.
-      body = await response.text();
+      const body = Readable.from(multipart(boundary, filename, contentType, model, stream));
+
+      answer = await post(url, headers, body, signal);
     } catch (error) {
       // An abort lands here too — the step's timeout, or the worker's shutdown — and is not
       // distinguished on purpose: the user's answer is the same either way.
       stream.destroy();
       this.logger.error(
-        `Transcription request failed for ${contentType}`,
+        `Transcription request to model ${model} failed for ${contentType}`,
         error instanceof Error ? error.stack : String(error),
       );
 
       throw new StepError(TRANSCRIPTION_FAILED_MESSAGE, { cause: error });
     }
 
-    if (!response.ok) {
+    if (answer.status < 200 || answer.status > 299) {
       this.logger.error(
-        `Transcription endpoint answered ${String(response.status)}: ${body.slice(0, 500)}`,
+        `Transcription endpoint answered ${String(answer.status)} for model ${model}: ${answer.body.slice(0, 500)}`,
       );
 
       throw new StepError(TRANSCRIPTION_FAILED_MESSAGE, {
-        cause: new Error(`Transcription endpoint answered ${String(response.status)}`),
+        cause: new Error(`Transcription endpoint answered ${String(answer.status)}`),
       });
     }
 
-    return textOf(body, response.headers.get('content-type'));
+    // The model that went on the wire, not the one somebody meant to configure: this line is
+    // where an operator reads which model produced a transcript.
+    this.logger.log(`Model ${model} transcribed ${contentType}`);
+
+    return textOf(answer.body, answer.contentType);
   }
+}
+
+/**
+ * One POST with a streamed body, settled when the answer has been read to its end.
+ *
+ * Three ways it rejects, and they are the same three `fetch` had: the request could not be
+ * made or was cut off, the `signal` aborted it, or the answer stopped arriving part-way. The
+ * last is why the body is read in here — a timeout that strikes while the transcript is
+ * still on its way has to become the same failure as one that strikes before it.
+ *
+ * Once the endpoint has started answering, an error on the request side is ignored: a server
+ * that refuses early and hangs up leaves the rest of the upload with nowhere to go, and the
+ * refusal it sent is the thing worth reporting.
+ */
+function post(
+  url: string,
+  headers: http.OutgoingHttpHeaders,
+  body: Readable,
+  signal: AbortSignal,
+): Promise<EndpointAnswer> {
+  const send = new URL(url).protocol === 'https:' ? https.request : http.request;
+
+  // No shared agent: a connection of its own, closed when the answer ends. Transcriptions
+  // are minutes long and minutes apart, and a kept-alive socket the server has closed in the
+  // meantime would fail the next recording with a reset. Closing on the answer is also what
+  // stops an upload the endpoint refused before it had all of it.
+  const options = { method: 'POST', headers, signal, agent: false };
+
+  return new Promise<EndpointAnswer>((resolve, reject) => {
+    let answering = false;
+    const request = send(url, options, (response) => {
+      answering = true;
+      readToEnd(response).then(
+        (received) =>
+          resolve({
+            status: response.statusCode ?? 0,
+            contentType: response.headers['content-type'] ?? null,
+            body: received,
+          }),
+        reject,
+      );
+    });
+    const failUnlessAnswering = (error: unknown): void => {
+      if (!answering) {
+        reject(error);
+      }
+    };
+
+    request.on('error', failUnlessAnswering);
+    // Ends the request when the generator does, and carries a read failure of the object
+    // into the same rejection as a failure of the connection.
+    pipeline(body, request).catch(failUnlessAnswering);
+  });
 }
 
 /**

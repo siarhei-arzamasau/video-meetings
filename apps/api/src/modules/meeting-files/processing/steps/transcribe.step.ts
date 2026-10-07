@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS } from '../../../../config/transcription.defaults';
 import { transcriptKeyOf } from '../../services/meeting-file.mapper';
 import { TRANSCRIPTION_PROVIDER } from '../transcription/transcription-provider';
 import type { TranscriptionProvider } from '../transcription/transcription-provider';
@@ -47,7 +48,10 @@ export class TranscribeStep implements ProcessingStep {
       return {};
     }
 
-    const seconds = this.config.get<number>('TRANSCRIPTION_TIMEOUT_SECONDS', 600);
+    const seconds = this.config.get<number>(
+      'TRANSCRIPTION_TIMEOUT_SECONDS',
+      DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS,
+    );
     const startedAt = Date.now();
     const stream = storage.openRead(record.storageKey);
     // A read failure reaches the provider through the stream it is consuming, and comes back

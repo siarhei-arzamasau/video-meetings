@@ -42,6 +42,17 @@ services:
       # origin list; set this to the public origin once the stack is served from one.
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       MEETING_FILES_DIR: /data/meeting-files
+      # Transcription is off unless the root .env turns it on, and the URL defaults to the
+      # `whisper` service below by its in-network name. The API boots and serves uploads
+      # whether or not that service is running, which is why nothing here depends on it.
+      MEETING_FILES_TRANSCRIPTION_ENABLED: ${MEETING_FILES_TRANSCRIPTION_ENABLED:-false}
+      TRANSCRIPTION_API_URL: ${TRANSCRIPTION_API_URL:-http://whisper:8000/v1/audio/transcriptions}
+      TRANSCRIPTION_API_KEY: ${TRANSCRIPTION_API_KEY:-}
+      # The model the `whisper` service preloads (its WHISPER_MODEL); the two must agree.
+      TRANSCRIPTION_MODEL: ${TRANSCRIPTION_MODEL:-Systran/faster-whisper-small}
+      # A one-hour recording at twice the rate measured for this service: 5.3 to 6.0 seconds
+      # of work per minute of audio on an 18-core Apple Silicon laptop (2026-10-07).
+      TRANSCRIPTION_TIMEOUT_SECONDS: ${TRANSCRIPTION_TIMEOUT_SECONDS:-720}
     ports:
       - '3001:3001'
     volumes:
@@ -67,6 +78,54 @@ services:
     depends_on:
       - api
 
+  # Whisper `small`, served by Speaches over the OpenAI `audio/transcriptions` shape. Opt-in:
+  #   docker compose --profile transcription up -d whisper
+  # A profile, because `pnpm start:dev` runs `docker compose up -d postgres` and a plain
+  # `docker compose up` must keep starting only what every developer needs.
+  whisper:
+    profiles: ['transcription']
+    # A release tag, never `latest-cpu`: that tag is still 0.8.3, which has no PRELOAD_MODELS.
+    image: ghcr.io/speaches-ai/speaches:0.9.0-rc.3-cpu
+    restart: unless-stopped
+    environment:
+      # The model the wrapper below preloads. `TRANSCRIPTION_MODEL` has to name the same one:
+      # the server answers 404 for a model it has not downloaded.
+      WHISPER_MODEL: Systran/faster-whisper-small
+    # The image's own command, behind one decision. Speaches' PRELOAD_MODELS asks Hugging Face
+    # which models exist before it looks at its own cache, so set unconditionally it stops the
+    # service from starting without the network. It is therefore set only while the volume
+    # lacks the model (about 0.5 GB, the one start that needs the network); once the files are
+    # there the server starts with HF_HUB_OFFLINE=1 and asks Hugging Face for nothing.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        snapshot="$$HOME/.cache/huggingface/hub/models--$$(echo "$$WHISPER_MODEL" | sed 's|/|--|')/snapshots"
+        cached=yes
+        for file in README.md config.json model.bin tokenizer.json 'vocabulary.*'; do
+          ls "$$snapshot"/*/$$file >/dev/null 2>&1 || cached=no
+        done
+        if [ "$$cached" = yes ]; then
+          export HF_HUB_OFFLINE=1
+        else
+          export PRELOAD_MODELS="[\"$$WHISPER_MODEL\"]"
+        fi
+        exec uvicorn --factory speaches.main:create_app
+    ports:
+      # Loopback only: the server runs without authentication, and only an API running on
+      # this host needs the published port. The `api` service above uses the Compose network.
+      - '127.0.0.1:${WHISPER_PORT:-8000}:8000'
+    volumes:
+      - whisper-models:/home/ubuntu/.cache/huggingface/hub
+    healthcheck:
+      test: ['CMD-SHELL', 'curl --fail --silent --output /dev/null http://localhost:8000/health']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      # The first start is not healthy until the model has been downloaded.
+      start_period: 10m
+
 volumes:
   postgres-data:
   meeting-files:
+  whisper-models:
