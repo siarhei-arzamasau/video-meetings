@@ -9,10 +9,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { DEFAULT_TRANSCRIPTION_MODEL } from '../../../../config/transcription.defaults';
-import { StepError } from '../step';
-import { TranscriptionProvider } from './transcription-provider';
-
-export const TRANSCRIPTION_FAILED_MESSAGE = 'The recording could not be transcribed';
+import { TranscriptionProvider, TranscriptionRequestError } from './transcription-provider';
 
 /**
  * The filename each stored type is sent under. An OpenAI-compatible endpoint routes on the
@@ -52,9 +49,10 @@ interface EndpointAnswer {
  * undici as a dependency. Every recording that needed longer failed at five minutes, whatever
  * `TRANSCRIPTION_TIMEOUT_SECONDS` said. Here the only bound is the `signal`.
  *
- * Every failure — a non-2xx, a timeout, a dropped connection — is one `StepError` with one
- * message, and the real cause is logged here with its stack. Neither reaches a user: the
- * transcription worker chooses the stored reason itself, from what ended the request.
+ * Every failure — a non-2xx, a timeout, a dropped connection — is a
+ * `TranscriptionRequestError`, and the real cause is logged here with its stack. Nothing in it
+ * reaches a user: the transcription worker chooses the stored reason itself, from what ended
+ * the request.
  */
 @Injectable()
 export class HttpTranscriptionProvider implements TranscriptionProvider {
@@ -66,9 +64,7 @@ export class HttpTranscriptionProvider implements TranscriptionProvider {
     const url = this.config.get<string>('TRANSCRIPTION_API_URL', '');
 
     if (url === '') {
-      throw new StepError(TRANSCRIPTION_FAILED_MESSAGE, {
-        cause: new Error('TRANSCRIPTION_API_URL is not set'),
-      });
+      throw new TranscriptionRequestError('TRANSCRIPTION_API_URL is not set');
     }
 
     const key = this.config.get<string>('TRANSCRIPTION_API_KEY');
@@ -94,7 +90,9 @@ export class HttpTranscriptionProvider implements TranscriptionProvider {
         error instanceof Error ? error.stack : String(error),
       );
 
-      throw new StepError(TRANSCRIPTION_FAILED_MESSAGE, { cause: error });
+      throw new TranscriptionRequestError('The transcription request did not complete', {
+        cause: error,
+      });
     }
 
     if (answer.status < 200 || answer.status > 299) {
@@ -102,9 +100,9 @@ export class HttpTranscriptionProvider implements TranscriptionProvider {
         `Transcription endpoint answered ${String(answer.status)} for model ${model}: ${answer.body.slice(0, 500)}`,
       );
 
-      throw new StepError(TRANSCRIPTION_FAILED_MESSAGE, {
-        cause: new Error(`Transcription endpoint answered ${String(answer.status)}`),
-      });
+      throw new TranscriptionRequestError(
+        `The transcription endpoint answered ${String(answer.status)}`,
+      );
     }
 
     // The model that went on the wire, not the one somebody meant to configure: this line is

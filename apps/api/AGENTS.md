@@ -666,8 +666,10 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   so a gigabyte of video costs a chunk of memory; it goes out chunked, with no `Content-Length`,
   because nothing has measured it. The endpoint's filename is derived from the sniffed type
   (`recording.mp3`), never the user's: the endpoint routes on that extension, and the user's
-  text has no business on another service's wire. Every failure is one throw the worker never
-  quotes; the server's own words stay in the log, next to the model that was asked for.
+  text has no business on another service's wire. Every failure is a
+  `TranscriptionRequestError` the worker never quotes — the port's own type, not the pipeline's
+  `StepError`, whose message is copy for a user and which this is not; the server's own words
+  stay in the log, next to the model that was asked for.
 - **The request is `node:http`, not `fetch`, and must not be simplified back.** A Whisper server
   sends no response header until the whole transcription is done, and Node's `fetch` waits 300
   seconds for the first one — undici's `headersTimeout`, reachable only through a dispatcher,

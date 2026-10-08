@@ -1,11 +1,8 @@
 import { Logger } from '@nestjs/common';
 
-import { StepError } from '../step';
-import {
-  HttpTranscriptionProvider,
-  TRANSCRIPTION_FAILED_MESSAGE,
-} from './http-transcription.provider';
+import { HttpTranscriptionProvider } from './http-transcription.provider';
 import { audio, config, startServer } from './http-transcription.provider.fixture';
+import { TranscriptionRequestError } from './transcription-provider';
 
 describe('HttpTranscriptionProvider', () => {
   let stop: (() => Promise<void>) | undefined;
@@ -135,7 +132,7 @@ describe('HttpTranscriptionProvider', () => {
     ).resolves.toBe('Good morning, everyone.');
   });
 
-  it('turns a non-2xx into a StepError that says nothing about the endpoint', async () => {
+  it('turns a non-2xx into an error that carries none of the endpoint\u2019s words', async () => {
     const server = await startServer((_received, response) => {
       response.writeHead(401, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ error: { message: 'Incorrect API key sk-secret' } }));
@@ -147,17 +144,17 @@ describe('HttpTranscriptionProvider', () => {
       .transcribe(audio(), 'audio/mpeg', AbortSignal.timeout(10_000))
       .catch((error: unknown) => error);
 
-    expect(failure).toBeInstanceOf(StepError);
-    expect((failure as StepError).userMessage).toBe(TRANSCRIPTION_FAILED_MESSAGE);
-    // The vendor's message, and the key it quoted back, stay in the log.
-    expect((failure as StepError).userMessage).not.toContain('sk-secret');
+    expect(failure).toBeInstanceOf(TranscriptionRequestError);
+    expect((failure as Error).message).toBe('The transcription endpoint answered 401');
+    // The endpoint's message, and the key it quoted back, stay in the log.
+    expect((failure as Error).message).not.toContain('sk-secret');
   });
 
-  it('fails with the same message when no endpoint is configured', async () => {
+  it('refuses to send anything when no endpoint is configured', async () => {
     const provider = new HttpTranscriptionProvider(config({}));
 
     await expect(
       provider.transcribe(audio(), 'audio/mpeg', AbortSignal.timeout(10_000)),
-    ).rejects.toThrow(TRANSCRIPTION_FAILED_MESSAGE);
+    ).rejects.toThrow(new TranscriptionRequestError('TRANSCRIPTION_API_URL is not set'));
   });
 });

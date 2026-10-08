@@ -23,3 +23,15 @@ export const TRANSCRIPTION_PROVIDER = 'TRANSCRIPTION_PROVIDER';
 export interface TranscriptionProvider {
   transcribe(stream: Readable, contentType: string, signal: AbortSignal): Promise<string>;
 }
+
+/**
+ * What a provider throws when a recording was not transcribed, whatever the reason. Not for a
+ * user to read: the worker that asked chooses the stored reason itself, from what ended the
+ * request, so this carries what happened for the log — and never the endpoint's own words.
+ */
+export class TranscriptionRequestError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'TranscriptionRequestError';
+  }
+}

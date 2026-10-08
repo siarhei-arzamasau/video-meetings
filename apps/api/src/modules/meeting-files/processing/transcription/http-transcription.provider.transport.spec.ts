@@ -4,12 +4,9 @@ import { Readable } from 'node:stream';
 
 import { Logger } from '@nestjs/common';
 
-import { StepError } from '../step';
-import {
-  HttpTranscriptionProvider,
-  TRANSCRIPTION_FAILED_MESSAGE,
-} from './http-transcription.provider';
+import { HttpTranscriptionProvider } from './http-transcription.provider';
 import { audio, config, startServer } from './http-transcription.provider.fixture';
+import { TranscriptionRequestError } from './transcription-provider';
 
 /** 64 KiB each: 64 GiB, which no spec uploads — one that tried would time out. */
 const ENDLESS_ENOUGH_CHUNKS = 1_048_576;
@@ -126,7 +123,7 @@ describe('HttpTranscriptionProvider: the transport', () => {
         .transcribe(recording, 'video/mp4', AbortSignal.timeout(10_000))
         .catch((error: unknown) => error);
 
-      expect(failure).toBeInstanceOf(StepError);
+      expect(failure).toBeInstanceOf(TranscriptionRequestError);
       expect(failed).toHaveBeenCalledWith(expect.stringContaining('answered 413'));
 
       // The recording is let go of, not read to its end for a server that has stopped
@@ -141,7 +138,7 @@ describe('HttpTranscriptionProvider: the transport', () => {
     }
   });
 
-  it('turns a timeout into the same StepError rather than hanging', async () => {
+  it('rejects on a timeout rather than hanging', async () => {
     const server = await startServer(() => {
       // Never answers: the request is only ended by the abort.
     });
@@ -152,11 +149,10 @@ describe('HttpTranscriptionProvider: the transport', () => {
       .transcribe(audio(), 'audio/mpeg', AbortSignal.timeout(150))
       .catch((error: unknown) => error);
 
-    expect(failure).toBeInstanceOf(StepError);
-    expect((failure as StepError).userMessage).toBe(TRANSCRIPTION_FAILED_MESSAGE);
+    expect(failure).toBeInstanceOf(TranscriptionRequestError);
   });
 
-  it('turns a timeout that strikes while the body is still arriving into the same StepError', async () => {
+  it('rejects the same way on a timeout that strikes while the body is still arriving', async () => {
     const server = await startServer((_received, response) => {
       // Headers and half a transcript, then silence: the request has succeeded as far as
       // `fetch` is concerned, and only the body read can notice the abort.
@@ -170,7 +166,6 @@ describe('HttpTranscriptionProvider: the transport', () => {
       .transcribe(audio(), 'audio/mpeg', AbortSignal.timeout(150))
       .catch((error: unknown) => error);
 
-    expect(failure).toBeInstanceOf(StepError);
-    expect((failure as StepError).userMessage).toBe(TRANSCRIPTION_FAILED_MESSAGE);
+    expect(failure).toBeInstanceOf(TranscriptionRequestError);
   });
 });
