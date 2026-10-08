@@ -719,7 +719,10 @@ a run. It needs no database, which is why it is not an e2e spec, and nothing run
 - **The token comes from the env files, not the shell.** The spec builds a `ConfigModule` over
   `ENV_FILE_PATHS`, the files `AppModule` reads, relative to `apps/api`. They are gitignored,
   so **a fresh worktree has none**, and the suite fails with `ANTHROPIC_AUTH_TOKEN is not set`
-  until one exists there.
+  until one exists there. The spec deletes the variable from `process.env` before loading
+  them, and that is the one place it departs from the API on purpose: `ConfigModule` lets the
+  environment win, so a token exported in a developer's shell would otherwise be the one a
+  run spends — or the reason it fails with a good token in the file.
 - **The script sets `NODE_OPTIONS=--experimental-vm-modules`**, which is what lets Jest load
   the ESM-only SDK. A spec in any other suite that sends a prompt fails on that import.
 - **The refused-token test is what makes the other one evidence.** It swaps in a token

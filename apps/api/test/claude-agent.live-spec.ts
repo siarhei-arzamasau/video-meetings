@@ -19,8 +19,8 @@ const NEVER_ISSUED_TOKEN = 'sk-ant-api03-never-issued-by-anthropic';
  * every test spends a real request and needs the network and a working `ANTHROPIC_AUTH_TOKEN`.
  * That is why this is `test:live` and neither `pnpm test` nor `test:e2e` picks it up.
  *
- * The token is read the way the API reads it: from the env files `AppModule` names, through
- * `ConfigService`. Exporting one in the shell is not needed and proves less.
+ * The token is read from the env files `AppModule` names, through `ConfigService`, and from
+ * nowhere else: one exported in the shell is dropped before the files are loaded.
  */
 describe('ClaudeAgentService against the real Anthropic API', () => {
   let testingModule: TestingModule;
@@ -29,6 +29,12 @@ describe('ClaudeAgentService against the real Anthropic API', () => {
   let configuredToken: string | undefined;
 
   beforeAll(async () => {
+    // `ConfigModule` lets a variable already in `process.env` win over the env files — right
+    // for the API, wrong here: a token exported in the developer's shell, their own or a
+    // gateway's, would be the one this run spends, whatever the file says. Jest gives each
+    // spec file its own `process.env`, so this reaches nothing outside this suite.
+    delete process.env[AUTH_TOKEN_VARIABLE];
+
     testingModule = await Test.createTestingModule({
       imports: [
         ConfigModule.forRoot({ isGlobal: true, envFilePath: ENV_FILE_PATHS }),
