@@ -33,7 +33,8 @@ const MINUTE_MS = 60_000;
 /**
  * What happens to a transcription when the thing doing it goes away: a process that shuts
  * down, a process that dies, and a file deleted from under it. None of them may leave a
- * recording in Transcribing for ever, and only repeated deaths may fail one.
+ * recording in Transcribing for ever, and only repeated deaths may fail one. And what a
+ * delete leaves of a transcript, whenever it was stored: nothing.
  */
 describe('a transcription that is interrupted', () => {
   const suite = useApiSuite();
@@ -145,7 +146,16 @@ describe('a transcription that is interrupted', () => {
     ]);
   });
 
-  describe('a recording deleted while it is being transcribed', () => {
+  describe('a deleted recording', () => {
+    /** Deletes it and runs the purge, which removes whatever is on disk at that moment. */
+    const deleteAndPurge = async (host: RegisteredUser, file: MeetingFile): Promise<void> => {
+      await suite
+        .delete(meetingFileUrl(file.meetingId, file.id))
+        .set('Authorization', `Bearer ${host.token}`)
+        .expect(204);
+      await expect(transcription.fileWorker().drain()).resolves.toBe(1);
+    };
+
     const deleteMidRun = async (): Promise<{
       host: RegisteredUser;
       file: MeetingFile;
@@ -155,13 +165,8 @@ describe('a transcription that is interrupted', () => {
       transcriber.reply = () => ({ kind: 'hold' });
       const drained = transcription.transcriptionWorker().drain();
       await transcriber.arrived(1);
-
-      await suite
-        .delete(meetingFileUrl(file.meetingId, file.id))
-        .set('Authorization', `Bearer ${host.token}`)
-        .expect(204);
-      // The purge runs while the transcription is still in flight, and removes what exists.
-      await expect(transcription.fileWorker().drain()).resolves.toBe(1);
+      // The purge runs while the transcription is still in flight.
+      await deleteAndPurge(host, file);
 
       return { host, file, drained };
     };
@@ -170,7 +175,6 @@ describe('a transcription that is interrupted', () => {
       await expect(findMeetingFileRow(suite.prisma(), file.id)).resolves.toMatchObject({
         status: 'deleted',
         purged_at: expect.any(String),
-        transcript_key: null,
       });
       expect(fs.existsSync(objectPath(file.meetingId, file.id))).toBe(false);
       expect(fs.existsSync(transcriptPath(file.meetingId, file.id))).toBe(false);
@@ -183,17 +187,30 @@ describe('a transcription that is interrupted', () => {
       expect(messageOf(transcript)).toBe('File not found');
     };
 
-    it('removes the transcript it had already been given, and the URL is a 404', async () => {
-      const { host, file, drained } = await deleteMidRun();
+    it('loses a transcript stored before the delete, at the purge', async () => {
+      const { host, file } = await queuedRecording();
+      await transcription.transcriptionWorker().drain();
+      expect(fs.readFileSync(transcriptPath(file.meetingId, file.id), 'utf8')).toBe(TRANSCRIPT);
 
-      // The answer arrives after the purge: the worker writes it, loses the race, removes it.
-      transcriber.release(TRANSCRIPT);
-      await expect(drained).resolves.toBe(1);
+      await deleteAndPurge(host, file);
 
       await expectNothingLeft(host, file);
     });
 
-    it('stops the work when it finds the claim gone, rather than waiting on the endpoint', async () => {
+    it('loses a transcript that arrives after the purge, and the URL is a 404', async () => {
+      const { host, file, drained } = await deleteMidRun();
+
+      // The worker writes the answer, loses the race for the row, and removes what it wrote.
+      transcriber.release(TRANSCRIPT);
+      await expect(drained).resolves.toBe(1);
+
+      await expectNothingLeft(host, file);
+      await expect(findMeetingFileRow(suite.prisma(), file.id)).resolves.toMatchObject({
+        transcript_key: null,
+      });
+    });
+
+    it('stops transcribing when it finds the claim gone, rather than waiting on the endpoint', async () => {
       const { host, file, drained } = await deleteMidRun();
 
       // Nothing answers. The lease renewal, a third of the run's five second lease later,
