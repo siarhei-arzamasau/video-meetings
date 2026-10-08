@@ -16,28 +16,18 @@ import {
   validateSync,
 } from 'class-validator';
 
-import { ORIGIN_PATTERN, corsOriginsOf, parseBoolean } from './env-values';
+import {
+  GENERATE_SECRET_ADVICE,
+  NodeEnv,
+  ORIGIN_PATTERN,
+  PUBLISHED_JWT_SECRETS,
+  corsOriginsOf,
+  parseBoolean,
+} from './env-values';
 import {
   DEFAULT_TRANSCRIPTION_MODEL,
   DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS,
 } from './transcription.defaults';
-
-/**
- * Signing keys this repository has published. Rejected by value because length alone cannot
- * catch them: the placeholder below is 44 characters, so it satisfies `@MinLength(32)` and a
- * deployment that never set `JWT_SECRET` would boot and sign real tokens with a key anybody
- * who has read the repository knows. User ids are not secret — they travel in meeting and
- * file payloads — so that key is an account-takeover primitive, not a weak default.
- */
-const PUBLISHED_JWT_SECRETS: readonly string[] = ['dev-only-replace-with-openssl-rand-base64-32'];
-
-const GENERATE_SECRET_ADVICE = 'Generate one with `openssl rand -base64 32`.';
-
-export enum NodeEnv {
-  Development = 'development',
-  Production = 'production',
-  Test = 'test',
-}
 
 /**
  * Environment contract for the API. Anything the app cannot start without belongs here,

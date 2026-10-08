@@ -71,3 +71,23 @@ export function parseBoolean(value: unknown): unknown {
       return value;
   }
 }
+
+/**
+ * Signing keys this repository has published. Rejected by value because length alone cannot
+ * catch them: the placeholder below is 44 characters, so it satisfies `@MinLength(32)` and a
+ * deployment that never set `JWT_SECRET` would boot and sign real tokens with a key anybody
+ * who has read the repository knows. User ids are not secret — they travel in meeting and
+ * file payloads — so that key is an account-takeover primitive, not a weak default.
+ */
+export const PUBLISHED_JWT_SECRETS: readonly string[] = [
+  'dev-only-replace-with-openssl-rand-base64-32',
+];
+
+export const GENERATE_SECRET_ADVICE = 'Generate one with `openssl rand -base64 32`.';
+
+/** What `NODE_ENV` may be. Production is the one value the contract treats differently. */
+export enum NodeEnv {
+  Development = 'development',
+  Production = 'production',
+  Test = 'test',
+}
