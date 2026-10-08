@@ -3,6 +3,13 @@
  * Kept apart from it so that file states what is required, and this one how it is read.
  */
 
+/**
+ * The env files the API reads, the first to name a variable winning. Exported so a suite that
+ * builds its own `ConfigModule` reads a variable from the files `AppModule` would, not from
+ * a list of its own that can drift.
+ */
+export const ENV_FILE_PATHS: string[] = ['.env.local', '.env'];
+
 /** What `pnpm dev` serves the web app on when `WEB_PORT` says nothing else. */
 const DEFAULT_WEB_PORT = 3000;
 

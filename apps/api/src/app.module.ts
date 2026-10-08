@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
+import { ENV_FILE_PATHS } from './config/env-values';
 import { validate } from './config/env.validation';
 import { AuthModule } from './modules/auth/auth.module';
+import { ClaudeAgentModule } from './modules/claude-agent/claude-agent.module';
 import { HealthModule } from './modules/health/health.module';
 import { MeetingFilesModule } from './modules/meeting-files/meeting-files.module';
 import { MeetingsModule } from './modules/meetings/meetings.module';
@@ -15,7 +17,7 @@ import { UserModule } from './modules/user/user.module';
       isGlobal: true,
       cache: true,
       validate,
-      envFilePath: ['.env.local', '.env'],
+      envFilePath: ENV_FILE_PATHS,
     }),
     PrismaModule,
     HealthModule,
@@ -23,6 +25,7 @@ import { UserModule } from './modules/user/user.module';
     AuthModule,
     MeetingsModule,
     MeetingFilesModule,
+    ClaudeAgentModule,
   ],
 })
 export class AppModule {}

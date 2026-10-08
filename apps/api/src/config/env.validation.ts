@@ -220,6 +220,15 @@ export class EnvironmentVariables {
   @IsInt()
   @Min(30)
   TRANSCRIPTION_TIMEOUT_SECONDS: number = 600;
+
+  /**
+   * What the Claude Agent SDK authenticates with, sent to Anthropic as a bearer token.
+   * Optional, because nothing at boot needs it: `ClaudeAgentService` refuses a prompt without
+   * it instead, rather than let the SDK fall back to a credential it finds on the host.
+   */
+  @IsOptional()
+  @IsString()
+  ANTHROPIC_AUTH_TOKEN?: string;
 }
 
 export function validate(config: Record<string, unknown>): EnvironmentVariables {
