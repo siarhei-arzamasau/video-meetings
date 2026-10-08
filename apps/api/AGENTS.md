@@ -759,8 +759,10 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
 
 ## Claude (`src/modules/claude-agent`)
 
-`ClaudeAgentService.runPrompt(prompt, model)` is a prompt in and text out, through the Claude
-Agent SDK. No route reaches it; a feature that wants Claude imports `ClaudeAgentModule`.
+`ClaudeAgentService` is Claude through the Claude Agent SDK, two ways: `runPrompt(prompt, model)`
+is a prompt in and text out, and `runStructuredPrompt(request, signal)` is a system prompt, a
+prompt, and a JSON schema in and an object bound to that schema out, with its model, cost, and
+token counts. No route reaches either; a feature that wants Claude imports `ClaudeAgentModule`.
 
 - **The SDK is Claude Code as a library, not an HTTP client.** Each call starts a Claude Code
   process — a native binary of about 220 MB, installed as a per-platform optional dependency —
@@ -782,8 +784,91 @@ Agent SDK. No route reaches it; a feature that wants Claude imports `ClaudeAgent
   CommonJS build regardless, but Jest fails on it with `Cannot use import statement outside a
 module` unless Node runs with `--experimental-vm-modules`, and `ClaudeAgentModule` is in
   `AppModule`, so a top-level import would fail every e2e spec before its first test. The
-  `await import()` inside `runPrompt` runs only when a prompt is sent; everything else the
-  service takes from the package is `import type`.
+  `await import()` inside `ClaudeAgentSdkLoader.loadQuery` runs only when a prompt is sent;
+  everything else the module takes from the package is `import type`.
+- **`ClaudeAgentSdkLoader` is the seam the service's own decisions are tested through, and
+  nothing else.** The specs beside the service hand it a scripted process
+  (`claude-agent-process.fixture.ts`) and hold it to what it decides around one: that nothing
+  is started without a token, what a process is started with — the options and the
+  environment, variable by variable — and what becomes of a call its caller hung up on. They
+  say nothing about how the real process behaves; that stays `test:live`'s, because a scripted
+  SDK only repeats back what a spec assumed about it. Do not bind a fake over the loader to
+  give a feature's tests a Claude: those fake `ClaudeAgentService` itself.
+- **A schema-bound answer fits the single turn, and that was measured, not assumed.** With
+  `outputFormat` the SDK gives the model one tool of its own, `StructuredOutput` — there
+  whatever `tools: []` says, and the only tool the process then holds — and the model answers
+  by calling it. That call ends the turn with no second request, so `maxTurns` stays 1; the
+  result reports `num_turns: 2` all the same, counting the tool's reply. The numbers are beside
+  `SINGLE_TURN`. What the cap costs is the correction: an answer the SDK rejects against the
+  schema has no second request to be put right in, and ends as a failure. Raise it only for
+  that, and only with the process still holding no tool that touches the host.
+- **The structured output is `unknown`, and the caller validates it again.** The schema was
+  enforced by another process on the provider's word. A caller that stores or renders the
+  answer checks the shape itself, with bounds on every length.
+- **`signal` hangs up, and a call that was hung up on never resolves.** The SDK takes a
+  controller, closes the process's input on abort, and kills it about two seconds later — so
+  the rejection trails the abort by that much, and an answer that lands inside those two
+  seconds is discarded with its cost on the error. Without that, whether a time limit ended in
+  an answer would depend on which side of it the last token fell. The failure is `FAILED`
+  whatever the reason: the signal is the caller's, and so is knowing why it fired. The signal
+  is checked three times — before the call, after the SDK has loaded, and after the result —
+  and `claude-agent.service.abort.spec.ts` has a case for each; none of them is redundant.
+- **What a result becomes is `outcomeOf`, a pure function with a table beside it**
+  (`services/claude-agent-outcome.ts`). An API error arrives as a _successful_ result whose
+  text is the error; a refused token is told by the assistant message's `error`; a prompt past
+  the context window by the result's `terminal_reason` — `blocking_limit` when Claude Code
+  declines to send it, which costs nothing — and never by the text beside it, which is the
+  SDK's to reword. A shape the SDK surprises you with is a new row in that spec, taken from a
+  real run. `ClaudeAgentError` carries the `failure` a caller branches on, a message that is
+  **for the log and never for a user**, and `costUsd` whenever a result reported one: an
+  answer that could not be used was paid for all the same.
+- **Input is billed at the cache-write rate, a quarter above the listed one.** Claude Code
+  marks the prompt for Anthropic's prompt cache, and a one-turn call never reads it back.
+  The measurements are in `src/config/meeting-digest.defaults.ts`.
+
+Its first caller is `MeetingDigestGenerator` (`src/modules/meeting-digests`): transcripts in, a
+validated digest out, one request and no state — nothing calls it yet. The PRD is
+[`docs/prd-meeting-digest-summary-action-items-decisions.md`](../../docs/prd-meeting-digest-summary-action-items-decisions.md)
+and the decisions under it are in
+[its plan](../../docs/plan-meeting-digest-summary-action-items-decisions.md). Six things about
+it that read like omissions:
+
+- **The transcripts are sent whole or not at all.** Past `MAX_DIGEST_TRANSCRIPT_CHARACTERS`
+  the prompt builder throws and nothing is sent; nothing is ever cut to fit or summarised in
+  parts, because a digest of part of a meeting would be shown as the digest of the meeting.
+  The cap counts characters — tokens cannot be counted without asking Anthropic — so a denser
+  script can pass it and be refused by the model, which ends in the same failure.
+- **A transcript is not escaped, and the answer is not cleaned.** What was said goes into the
+  prompt as it was said, markup and text addressed to the model included; the instructions are
+  what keep it from being obeyed, and `test:live` holds the real model to that. So a
+  transcript can hold a `</recording>` of its own, which is why the instructions call the
+  _whole user message_ transcript rather than "what is inside a recording", and why the
+  injection fixture speaks from outside one. The guard keeps markup as the characters it is:
+  the digest is rendered as text, and the place that renders is the place that knows what is
+  safe.
+- **A blank transcript is sent, and only no transcript at all is refused.** Whisper
+  transcribes silence as empty text, and that recording is still one of the meeting's. The
+  instructions say what the digest of recordings with no speech is — a summary that says so,
+  and two empty lists — so a caller has one behaviour to rely on and this code never writes a
+  summary of its own. A caller that would rather not pay for it decides that for itself.
+- **A list past its bound is cut, and the summary says so.** `MAX_DIGEST_ITEMS` is fifty of
+  each; a meeting that states more gets the most important fifty and a closing sentence that
+  the list is not complete, because part of a list shown as all of it is the PRD's "part
+  presented as the whole" in small. The answer has no field for it — the sentence is the
+  model's, in the summary — and a model that returned all sixty instead would fail the call,
+  there being no second turn to cut them in. `test:live` measured that it does not.
+- **An owner in the answer is a name and can be nothing else.** The schema has no field for a
+  user and the guard refuses an answer with an extra one, so no answer can point at a
+  participant. Linking a name to one is the API's decision, made from the meeting's members.
+- **The guard is all or nothing.** One unfit field refuses the whole answer, and its `problem`
+  names a path and a rule without quoting the answer — it is for a log.
+
+The cap and the time limit's default are measurements, stated with their numbers beside
+`DEFAULT_MEETING_DIGEST_TIMEOUT_SECONDS`. Re-measure when the model changes, **and whenever
+the instructions do**, since they are part of every prompt: `MEETING_DIGEST_MEASURE_CHARACTERS`,
+`MEETING_DIGEST_MEASURE_RUSSIAN_CHARACTERS`, and `MEETING_DIGEST_MEASURE_OUTCOMES` switch on
+the runs of `test:live` that are too expensive to be on by default
+(`test/meeting-digest-measure.live-spec.ts`, which says what each costs).
 
 ## Bootstrap behaviour (`src/configure-app.ts`)
 
@@ -911,8 +996,12 @@ excludes the pattern as it does specs, so a fixture never reaches `dist`.
 
 **`test:live` is a third suite, and the only one that leaves the machine.** `test/*.live-spec.ts`
 under `test/jest-live.json` sends real requests to Anthropic — nothing mocked, nothing replayed
-— so it needs the network and a working `ANTHROPIC_AUTH_TOKEN`, and costs a fraction of a cent
-a run. It needs no database, which is why it is not an e2e spec, and nothing runs it but you.
+— so it needs the network and a working `ANTHROPIC_AUTH_TOKEN`, and costs a few cents a run. It needs no database, which is why it is not an e2e spec, and nothing runs it but you.
+`claude-agent.live-spec.ts` is the SDK itself; `meeting-digest.live-spec.ts` is the digest's
+instructions held to the PRD by the real model, over the reference transcripts in
+`test/fixtures/meeting-digest` (`test/utils/meeting-digest-fixtures.ts` says what each is, and
+how the recording of the script beside them was made); `meeting-digest-measure.live-spec.ts`
+is the digest's measurements, every one of them skipped unless its variable asks for it.
 
 - **The token comes from the env files, not the shell.** The spec builds a `ConfigModule` over
   `ENV_FILE_PATHS`, the files `AppModule` reads, relative to `apps/api`. They are gitignored,
@@ -926,9 +1015,13 @@ a run. It needs no database, which is why it is not an e2e spec, and nothing run
 - **The refused-token test is what makes the other one evidence.** It swaps in a token
   Anthropic never issued and expects `AUTHENTICATION`; were the SDK using a credential it
   found elsewhere on the host, that call would succeed too.
+- **A digest spec asserts what a digest holds, never how it is worded.** The model words the
+  same meeting differently on every run, so the reference is checked for two action items, an
+  owner, and a decision by pattern — and a wording assertion would be a flaky one.
 
-A mocked SDK would only repeat back what the mock assumed, so the unit spec beside
-`ClaudeAgentService` covers the one thing decided before a request leaves: no token, no call.
+A mocked SDK would only repeat back what the mock assumed, so the unit specs cover what is
+decided on this side of it: no token, no call; a call already called off starts nothing; and
+`outcomeOf`'s table of what each result the SDK is known to produce becomes.
 
 E2E specs run against the **real database** `DATABASE_URL` points at — by default your
 development one; point it elsewhere if local rows matter to you. `test/utils/create-test-app.ts`

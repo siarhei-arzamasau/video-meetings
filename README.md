@@ -174,9 +174,10 @@ suite needs Whisper running.
 Both truncate the `users` table in whatever `DATABASE_URL` points at, and they share it, so run
 one at a time.
 
-A third suite sends real requests to Anthropic through the Claude Agent SDK. It needs no
+A third suite sends real requests to Anthropic through the Claude Agent SDK — among them the
+transcripts of a made-up meeting, to check the digest Claude writes from them. It needs no
 database, but it does need the network and `ANTHROPIC_AUTH_TOKEN` in `apps/api/.env.local`
-or `apps/api/.env`:
+or `apps/api/.env`, and a run costs a few cents:
 
 ```bash
 pnpm --filter=@repo/api test:live

@@ -1,15 +1,13 @@
-import type {
-  Options,
-  SDKAssistantMessage,
-  SDKAssistantMessageError,
-  SDKMessage,
-  SDKResultMessage,
-} from '@anthropic-ai/claude-agent-sdk';
+import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { ClaudeAgentFailure, ClaudeModel } from '../claude-agent.constants';
 import { ClaudeAgentError } from '../claude-agent.error';
+import { readExchange } from './claude-agent-exchange';
+import { outcomeOf, structuredOutcomeOf } from './claude-agent-outcome';
+import type { ClaudeAgentExchange } from './claude-agent-outcome';
+import { ClaudeAgentSdkLoader } from './claude-agent-sdk.loader';
 
 const AUTH_TOKEN_VARIABLE = 'ANTHROPIC_AUTH_TOKEN';
 
@@ -25,11 +23,25 @@ const AUTH_TOKEN_VARIABLE = 'ANTHROPIC_AUTH_TOKEN';
  */
 const INHERITED_VARIABLES: readonly string[] = ['PATH', 'HOME', 'TMPDIR', 'LANG'];
 
-/** One prompt, one answer: with no tools there is no result a second turn could read. */
-const SINGLE_TURN = 1;
+const CALLED_OFF = 'The prompt was called off before Claude Code was started';
+const ANSWERED_TOO_LATE = 'The prompt was called off, and the answer that followed is discarded';
 
-/** How the SDK marks an assistant message that is really the API refusing the credential. */
-const REFUSED_CREDENTIAL: SDKAssistantMessageError = 'authentication_failed';
+/**
+ * One prompt, one answer: with no tools there is no result a second turn could read.
+ *
+ * **A schema-bound answer fits this cap too, and it was measured rather than assumed.** With
+ * `outputFormat` the SDK gives the model one tool of its own, `StructuredOutput` — there
+ * whatever `tools` says, and the only tool the process then holds — and the model answers by
+ * calling it. That call ends the turn: the SDK checks its input against the schema and hands
+ * it back as `structured_output`, with no second request. On 2026-10-08, SDK 0.3.292 and
+ * `claude-sonnet-5-5`: one request to the API and a `success` result under this cap, though
+ * the result counts the tool's own reply as a turn and reports `num_turns: 2`.
+ *
+ * What the cap costs is the correction: an input the SDK rejects against the schema would
+ * need a second request to put right, and here it ends as a failure instead. Raise this
+ * only for that, and only with the process still holding no tool that touches the host.
+ */
+const SINGLE_TURN = 1;
 
 export interface ClaudeAgentReply {
   text: string;
@@ -39,10 +51,26 @@ export interface ClaudeAgentReply {
   costUsd: number;
 }
 
-interface ClaudeAgentOutcome {
-  result: SDKResultMessage;
-  /** The last assistant message: it names the model, and carries the API's error if any. */
-  answer: SDKAssistantMessage | undefined;
+export interface ClaudeStructuredPrompt {
+  model: ClaudeModel;
+  /** Replaces Claude Code's own system prompt, which is about writing code. */
+  systemPrompt: string;
+  prompt: string;
+  /** A JSON schema the answer is bound to. The SDK checks the answer against it. */
+  schema: Record<string, unknown>;
+}
+
+export interface ClaudeStructuredReply {
+  /**
+   * What the model answered through the schema. **Still `unknown`**: the schema was enforced
+   * by the provider, which is the provider's word, and a caller validates it again.
+   */
+  output: unknown;
+  model: string;
+  costUsd: number;
+  /** Everything the model read — the prompt, the system prompt, and the SDK's own framing. */
+  inputTokens: number;
+  outputTokens: number;
 }
 
 /**
@@ -50,28 +78,80 @@ interface ClaudeAgentOutcome {
  * a Claude Code process, and that process is what talks to Anthropic. Left to its defaults it
  * would read this repository's `.claude` settings and `.mcp.json`, hold Bash and file tools,
  * and authenticate with whatever it found on the host. Every option below takes one of those
- * away, so what is left is a prompt in and text out, paid for by `ANTHROPIC_AUTH_TOKEN`.
+ * away, so what is left is a prompt in and an answer out — text, or an object bound to a
+ * schema — paid for by `ANTHROPIC_AUTH_TOKEN`.
  */
 @Injectable()
 export class ClaudeAgentService {
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly sdkLoader: ClaudeAgentSdkLoader,
+  ) {}
 
   async runPrompt(prompt: string, model: ClaudeModel): Promise<ClaudeAgentReply> {
-    const authToken = this.requireAuthToken();
-    // Imported here, not at the top of the file: the SDK is ESM-only, and Jest cannot load
-    // ESM without `--experimental-vm-modules`. A top-level import would run in every suite
-    // that imports `AppModule`; this one runs only where a prompt is really sent, which is
-    // `test:live`, and that script passes the flag. Node itself loads it either way.
-    const { query } = await import('@anthropic-ai/claude-agent-sdk');
-    const { result, answer } = await this.awaitOutcome(
-      query({ prompt, options: this.optionsFor(model, authToken) }),
-    );
+    const options = this.optionsFor(model, this.requireAuthToken());
+    const outcome = outcomeOf(await this.exchange(prompt, options));
 
-    if (result.subtype !== 'success' || result.is_error || answer === undefined) {
-      throw this.failureOf(result, answer);
+    if (outcome instanceof ClaudeAgentError) {
+      throw outcome;
     }
 
-    return { text: result.result, model: answer.message.model, costUsd: result.total_cost_usd };
+    return { text: outcome.text, model: outcome.model, costUsd: outcome.costUsd };
+  }
+
+  /**
+   * A prompt in and an object out, bound to `schema` — still one turn, no tool that reaches
+   * the host, a replaced environment, and nothing from disk.
+   *
+   * **`signal` hangs up, and a call that was hung up on never resolves.** The SDK closes the
+   * process's input and kills it about two seconds later, so the rejection follows the abort
+   * by that much; an answer that arrives inside those two seconds is discarded, its cost
+   * reported on the error. Otherwise whether a time limit ended in an answer would depend on
+   * which side of the limit the last token fell. Why it was called off is the caller's to
+   * know, since the signal is the caller's: the failure is `FAILED` either way.
+   */
+  async runStructuredPrompt(
+    request: ClaudeStructuredPrompt,
+    signal: AbortSignal,
+  ): Promise<ClaudeStructuredReply> {
+    const authToken = this.requireAuthToken();
+
+    if (signal.aborted) {
+      throw new ClaudeAgentError(ClaudeAgentFailure.FAILED, CALLED_OFF, { cause: signal.reason });
+    }
+
+    // The SDK takes a controller, not a signal, so the caller's signal is forwarded to one.
+    const abortController = new AbortController();
+    const forwardAbort = (): void => abortController.abort(signal.reason);
+    signal.addEventListener('abort', forwardAbort, { once: true });
+
+    try {
+      const exchange = await this.exchange(request.prompt, {
+        ...this.optionsFor(request.model, authToken),
+        systemPrompt: request.systemPrompt,
+        outputFormat: { type: 'json_schema', schema: request.schema },
+        abortController,
+      });
+
+      if (signal.aborted) {
+        throw new ClaudeAgentError(ClaudeAgentFailure.FAILED, ANSWERED_TOO_LATE, {
+          cause: signal.reason,
+          costUsd: exchange.result.total_cost_usd,
+        });
+      }
+
+      const outcome = structuredOutcomeOf(exchange);
+
+      if (outcome instanceof ClaudeAgentError) {
+        throw outcome;
+      }
+
+      const { structuredOutput: output, model, costUsd, inputTokens, outputTokens } = outcome;
+
+      return { output, model, costUsd, inputTokens, outputTokens };
+    } finally {
+      signal.removeEventListener('abort', forwardAbort);
+    }
   }
 
   /** Read per call rather than in the constructor, so a spec can change it between tests. */
@@ -95,7 +175,9 @@ export class ClaudeAgentService {
       model,
       env: { ...Object.fromEntries(inherited), [AUTH_TOKEN_VARIABLE]: authToken },
       // No built-in tool, so no prompt can have the process read a file or run a command on
-      // the API's host; `dontAsk` denies rather than waits, should one ever be added.
+      // the API's host; `dontAsk` denies rather than waits, should one ever be added. The one
+      // tool a schema-bound call still holds is the SDK's `StructuredOutput`, which takes the
+      // answer and does nothing else.
       tools: [],
       permissionMode: 'dontAsk',
       maxTurns: SINGLE_TURN,
@@ -108,46 +190,20 @@ export class ClaudeAgentService {
   }
 
   /**
-   * Returns at the result rather than draining the stream: after a result that reports an
-   * error the SDK also throws, and returning here closes the process before it does.
+   * Starts Claude Code on one prompt and waits for how it ended. `ClaudeAgentSdkLoader` says
+   * why the SDK is loaded per call, and not imported at the top of this file.
    */
-  private async awaitOutcome(messages: AsyncIterable<SDKMessage>): Promise<ClaudeAgentOutcome> {
-    let answer: SDKAssistantMessage | undefined;
+  private async exchange(prompt: string, options: Options): Promise<ClaudeAgentExchange> {
+    const query = await this.sdkLoader.loadQuery();
 
-    try {
-      for await (const message of messages) {
-        if (message.type === 'assistant') {
-          answer = message;
-        }
-
-        if (message.type === 'result') {
-          return { result: message, answer };
-        }
-      }
-    } catch (cause) {
-      throw new ClaudeAgentError(
-        ClaudeAgentFailure.FAILED,
-        'Claude Code stopped before it produced a result',
-        { cause },
-      );
+    // That load is the one wait between the caller's signal being checked and the process
+    // starting, and a process must not be started for a call that was hung up on meanwhile.
+    if (options.abortController?.signal.aborted) {
+      throw new ClaudeAgentError(ClaudeAgentFailure.FAILED, CALLED_OFF, {
+        cause: options.abortController.signal.reason,
+      });
     }
 
-    throw new ClaudeAgentError(ClaudeAgentFailure.FAILED, 'Claude Code ended without a result');
-  }
-
-  private failureOf(
-    result: SDKResultMessage,
-    answer: SDKAssistantMessage | undefined,
-  ): ClaudeAgentError {
-    // An API error still arrives as a `success` result, its text being the error; `errors`
-    // is only there when the turn itself could not finish.
-    const detail = result.subtype === 'success' ? result.result : result.errors.join('; ');
-
-    return answer?.error === REFUSED_CREDENTIAL
-      ? new ClaudeAgentError(
-          ClaudeAgentFailure.AUTHENTICATION,
-          `Anthropic refused ${AUTH_TOKEN_VARIABLE}: ${detail}`,
-        )
-      : new ClaudeAgentError(ClaudeAgentFailure.FAILED, `Claude did not answer: ${detail}`);
+    return readExchange(query({ prompt, options }));
   }
 }

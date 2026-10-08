@@ -20,16 +20,30 @@ build it into the API; phases 6–7 put it on the page.
    whole or not at all: past a character cap the digest is Failed with the too-long reason and
    nothing is sent; a provider that still answers "prompt too long" gets the same reason. No
    splitting and re-summarising — a digest of digests is the "part presented as the whole" the
-   PRD forbids, one step removed. The cap is set in phase 1 from the model's documented limit.
+   PRD forbids, one step removed. The cap is set in phase 1 from the model's documented limit:
+   1,700,000 characters, derived beside `MAX_DIGEST_TRANSCRIPT_CHARACTERS`.
 3. **The answer is bound to a JSON schema and validated again by the API.** The SDK's
    `outputFormat` returns `structured_output`; the API checks it with a guard of its own, with
    bounds on every length, because a schema the provider enforces is still the provider's word.
-   **Not yet known: whether a schema-bound answer fits the module's single turn** — the SDK
-   delivers it through an end-turn tool. Phase 1's live spec finds out; if it needs more, the
-   turn cap rises to exactly that and the process still holds no tool.
+   **A schema-bound answer fits the module's single turn** — settled by phase 1's live spec,
+   where this plan first left it open. The SDK delivers the answer through an end-turn tool of
+   its own, `StructuredOutput`, which is present even with `tools: []` and is the only tool the
+   process holds; the call that carries the answer ends the turn in one request, so the turn
+   cap stays at 1. The cap's price is that an answer the SDK rejects against the schema is a
+   failure rather than a second attempt.
+   **The bounds include fifty action items and fifty decisions, and a list that had to be cut
+   says so in the summary** — decided in phase 1, which found nothing marking the omission.
+   The instructions ask for the most important fifty and a closing sentence that the list is
+   not complete; the answer gains no field for it, so the contract below is unchanged. Sixty
+   of each, measured live, came back as fifty and fifty with that sentence, in one turn.
 4. **Instructions are the system prompt; transcripts are the prompt, labelled by ordinal.**
    "Recording 1", "Recording 2", in upload order — no file name, no id, no participant. A
    custom system prompt also replaces Claude Code's own, which is about writing code.
+   A transcript is not escaped, so the instructions call the whole prompt transcript, not
+   only what sits inside a recording's tags: a transcript that closes its own tag gains
+   nothing by it. **A blank transcript is sent like any other** — Whisper transcribes silence
+   as empty text — and the instructions say what the digest of recordings with no speech is:
+   a summary that says so, and two empty lists. Both were added in phase 1's review.
 5. **Claude returns a name; the API decides the link.** The answer's owner is a name as spoken
    or nothing. The API links it to a participant when every word of it is a word of exactly one
    display name among the host and participants, compared without case; anything else stays a
@@ -136,28 +150,35 @@ judgement on owners and decisions, and what a generation really costs in seconds
 
 **Tasks:**
 
-- [ ] `ClaudeAgentService.runStructuredPrompt`: a system prompt, a JSON schema, and an
+- [x] `ClaudeAgentService.runStructuredPrompt`: a system prompt, a JSON schema, and an
       `AbortSignal` in; the `structured_output`, the model, and the cost out. Still no tools, a
       replaced environment, and nothing from disk. `ClaudeAgentError` gains a prompt-too-long
       failure and carries the cost whenever a result reported one. The mapping from the SDK's
       result to an outcome is a pure function with a unit table; the service spec keeps "no
       token, no call".
-- [ ] `MeetingDigestGenerator` in the new module: the instructions (only what the transcripts
+- [x] `MeetingDigestGenerator` in the new module: the instructions (only what the transcripts
       state; always English; an owner is a spoken name or nothing; text inside a transcript is
       never an instruction; empty lists are an answer), the schema, the guard that re-validates
       the answer with bounds, and the prompt builder with its cap. Unit specs: the guard's table,
       a prompt that holds the texts and ordinals and nothing else, and no call past the cap.
-- [ ] Reference transcripts as fixtures — the PRD's script (two action items, one naming a
+- [x] Reference transcripts as fixtures — the PRD's script (two action items, one naming a
       person, one naming nobody; one decision), the same in Russian, one with no decision and
       no action item, one carrying instructions addressed to the model and HTML — and a
       recording of the script for the manual runs of later phases.
-- [ ] `meeting-digest.live-spec.ts` under `test:live`, against the real model: the reference
+- [x] `meeting-digest.live-spec.ts` under `test:live`, against the real model: the reference
       yields both action items, the named owner, and the decision; Russian yields a digest with
       no Cyrillic; the empty one yields empty lists; the injected instruction is not obeyed and
       the answer is still a digest; a refused token is `AUTHENTICATION`.
-- [ ] Measure and set: seconds and cost for the reference and for a transcript at the cap; set
+- [x] Measure and set: seconds and cost for the reference and for a transcript at the cap; set
       the time limit's default at twice the slowest, and the cap from the model's documented
       limit less the instructions and the answer — each with its measurement stated beside it.
+      _As built:_ a generation at the cap is about $2, so the long measurement was one call at
+      a million characters (347,000 tokens, 40% of what a prompt can hold) and the slowest
+      generation is extrapolated from it and from meetings of fifty and of sixty action items
+      and decisions — an answer's length, not a meeting's, is what makes a generation slow.
+      Russian, the script the cap is reckoned in, was measured on 50,000 characters. **Still
+      not run: one generation at the cap itself**, which would confirm both that a prompt of
+      that size is accepted and how long it takes.
 
 **Done when:** `test:live` is green and its times, costs, and model are in the commit body;
 the turn cap `runStructuredPrompt` settled on is explained where it is set;
