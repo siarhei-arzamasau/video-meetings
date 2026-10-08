@@ -864,8 +864,7 @@ it for that reason, not for a coverage number.
 **A spec that needs a whole stored row builds it from a `*.fixture.ts` beside the code** and
 names only the columns its case is about — `buildMeetingFileRecord` is the one that exists —
 so a column added to the table is one edit there, not one in every spec. `tsconfig.build.json`
-excludes the pattern as it does specs, so a fixture never reaches `dist`. Specs older than the
-fixture still restate the row; move one over when it next has to change.
+excludes the pattern as it does specs, so a fixture never reaches `dist`.
 
 **`test:live` is a third suite, and the only one that leaves the machine.** `test/*.live-spec.ts`
 under `test/jest-live.json` sends real requests to Anthropic — nothing mocked, nothing replayed

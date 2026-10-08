@@ -4,7 +4,7 @@ import { Test } from '@nestjs/testing';
 
 import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
 import { MeetingFileRepository } from '../../services/meeting-file.repository';
-import type { MeetingFileRecord } from '../../services/meeting-file.mapper';
+import { buildMeetingFileRecord } from '../../services/meeting-file-record.fixture';
 import { RetryMeetingFileCommand } from '../retry-meeting-file.command';
 import { NOT_FAILED_MESSAGE, RetryMeetingFileHandler } from './retry-meeting-file.handler';
 
@@ -23,30 +23,15 @@ const MEETING = {
   participantIds: [UPLOADER_ID, OTHER_ID],
 };
 
-const RECORD: MeetingFileRecord = {
+const RECORD = buildMeetingFileRecord({
   id: FILE_ID,
   meetingId: MEETING_ID,
   uploaderId: UPLOADER_ID,
-  name: 'deck.pdf',
-  contentType: 'application/pdf',
-  size: 10,
-  storageKey: `${MEETING_ID}/${FILE_ID}`,
-  checksum: null,
-  thumbnailKey: null,
-  transcriptKey: null,
   status: 'failed',
   failureReason: 'The stored file is incomplete',
   attempts: 3,
-  leasedUntil: null,
-  createdAt: new Date('2026-09-01T10:00:00.000Z'),
   processedAt: new Date('2026-09-01T10:00:01.000Z'),
-  deletedAt: null,
-  purgedAt: null,
-  transcriptionStatus: null,
-  transcriptionFailureReason: null,
-  transcriptionAttempts: 0,
-  transcriptionLeasedUntil: null,
-};
+});
 
 describe('RetryMeetingFileHandler', () => {
   const execute = jest.fn();

@@ -14,6 +14,7 @@ import { MeetingFileChangedEvent } from '../events/meeting-file-changed.event';
 import { TranscriptionStatus } from '../services/meeting-file-transcription-status';
 import { MeetingFileTranscriptionRepository } from '../services/meeting-file-transcription.repository';
 import type { ClaimedTranscription } from '../services/meeting-file-transcription.repository';
+import { buildMeetingFileRecord } from '../services/meeting-file-record.fixture';
 import { MeetingFileStorage } from '../storage/meeting-file-storage';
 import {
   MEETING_FILE_TRANSCRIPTION_WORKER,
@@ -31,29 +32,21 @@ const { QUEUED, TRANSCRIBING, TRANSCRIBED, FAILED } = TranscriptionStatus;
 const PROVIDER_WORDS = 'whisper said: CUDA out of memory at 0x7f3a';
 
 const CLAIMED: ClaimedTranscription = {
-  id: FILE_ID,
-  meetingId: MEETING_ID,
-  uploaderId: '11111111-1111-4111-8111-111111111111',
-  name: 'standup.mp3',
-  contentType: 'audio/mpeg',
-  size: 10,
-  storageKey: KEY,
-  checksum: 'sha',
-  thumbnailKey: null,
-  transcriptKey: null,
-  status: 'ready',
-  failureReason: null,
-  attempts: 1,
-  leasedUntil: null,
-  createdAt: new Date('2026-10-07T10:00:00.000Z'),
-  processedAt: new Date('2026-10-07T10:00:01.000Z'),
-  deletedAt: null,
-  purgedAt: null,
-  transcriptionStatus: TRANSCRIBING,
+  ...buildMeetingFileRecord({
+    id: FILE_ID,
+    meetingId: MEETING_ID,
+    name: 'standup.mp3',
+    contentType: 'audio/mpeg',
+    storageKey: KEY,
+    checksum: 'sha',
+    status: 'ready',
+    attempts: 1,
+    processedAt: new Date('2026-10-07T10:00:01.000Z'),
+    transcriptionStatus: TRANSCRIBING,
+    transcriptionAttempts: 1,
+    transcriptionLeasedUntil: LEASE,
+  }),
   previousTranscriptionStatus: QUEUED,
-  transcriptionFailureReason: null,
-  transcriptionAttempts: 1,
-  transcriptionLeasedUntil: LEASE,
 };
 
 /** A provider that honours its signal, as the port requires, and never answers otherwise. */

@@ -4,6 +4,7 @@ import { MEETING_FILE_ALLOWED_TYPES } from '@repo/shared';
 
 import { TranscriptionStatus } from '../../services/meeting-file-transcription-status';
 import type { MeetingFileRecord } from '../../services/meeting-file.mapper';
+import { buildMeetingFileRecord } from '../../services/meeting-file-record.fixture';
 import type { MeetingFileStorage } from '../../storage/meeting-file-storage';
 import type { StepContext } from '../step';
 import { QueueTranscriptionStep } from './queue-transcription.step';
@@ -30,30 +31,16 @@ const step = (values: Record<string, unknown>): QueueTranscriptionStep =>
   } as unknown as ConfigService);
 
 describe('QueueTranscriptionStep', () => {
-  const record = (contentType: string): MeetingFileRecord => ({
-    id: FILE_ID,
-    meetingId: MEETING_ID,
-    uploaderId: '11111111-1111-4111-8111-111111111111',
-    name: 'standup',
-    contentType,
-    size: 12,
-    storageKey: `${MEETING_ID}/${FILE_ID}`,
-    checksum: null,
-    thumbnailKey: null,
-    transcriptKey: null,
-    status: 'processing',
-    failureReason: null,
-    attempts: 1,
-    leasedUntil: null,
-    createdAt: new Date(),
-    processedAt: null,
-    deletedAt: null,
-    purgedAt: null,
-    transcriptionStatus: null,
-    transcriptionFailureReason: null,
-    transcriptionAttempts: 0,
-    transcriptionLeasedUntil: null,
-  });
+  const record = (contentType: string): MeetingFileRecord =>
+    buildMeetingFileRecord({
+      id: FILE_ID,
+      meetingId: MEETING_ID,
+      name: 'standup',
+      contentType,
+      size: 12,
+      status: 'processing',
+      attempts: 1,
+    });
 
   /**
    * A storage that fails the test if it is touched: queueing is a decision about a row, and a

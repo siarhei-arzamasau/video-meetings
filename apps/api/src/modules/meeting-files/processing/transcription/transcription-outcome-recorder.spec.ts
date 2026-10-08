@@ -7,6 +7,7 @@ import type {
   ClaimedTranscription,
   MeetingFileTranscriptionRepository,
 } from '../../services/meeting-file-transcription.repository';
+import { buildMeetingFileRecord } from '../../services/meeting-file-record.fixture';
 import type { MeetingFileStorage } from '../../storage/meeting-file-storage';
 import { TranscriptionOutcomeRecorder } from './transcription-outcome-recorder';
 
@@ -19,29 +20,21 @@ const STARTED_AT = Date.now();
 const { QUEUED, TRANSCRIBING, TRANSCRIBED, FAILED } = TranscriptionStatus;
 
 const CLAIMED: ClaimedTranscription = {
-  id: FILE_ID,
-  meetingId: MEETING_ID,
-  uploaderId: '11111111-1111-4111-8111-111111111111',
-  name: 'standup.mp3',
-  contentType: 'audio/mpeg',
-  size: 10,
-  storageKey: KEY,
-  checksum: 'sha',
-  thumbnailKey: null,
-  transcriptKey: null,
-  status: 'ready',
-  failureReason: null,
-  attempts: 1,
-  leasedUntil: null,
-  createdAt: new Date('2026-10-07T10:00:00.000Z'),
-  processedAt: new Date('2026-10-07T10:00:01.000Z'),
-  deletedAt: null,
-  purgedAt: null,
-  transcriptionStatus: TRANSCRIBING,
+  ...buildMeetingFileRecord({
+    id: FILE_ID,
+    meetingId: MEETING_ID,
+    name: 'standup.mp3',
+    contentType: 'audio/mpeg',
+    storageKey: KEY,
+    checksum: 'sha',
+    status: 'ready',
+    attempts: 1,
+    processedAt: new Date('2026-10-07T10:00:01.000Z'),
+    transcriptionStatus: TRANSCRIBING,
+    transcriptionAttempts: 1,
+    transcriptionLeasedUntil: LEASE,
+  }),
   previousTranscriptionStatus: QUEUED,
-  transcriptionFailureReason: null,
-  transcriptionAttempts: 1,
-  transcriptionLeasedUntil: LEASE,
 };
 
 describe('TranscriptionOutcomeRecorder', () => {

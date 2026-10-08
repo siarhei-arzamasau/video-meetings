@@ -5,7 +5,7 @@ import { Test } from '@nestjs/testing';
 import { FindVisibleMeetingQuery } from '../../meetings/queries/find-visible-meeting.query';
 import { MeetingFileStorage } from '../storage/meeting-file-storage';
 import { MeetingFileRepository } from './meeting-file.repository';
-import type { MeetingFileRecord } from './meeting-file.mapper';
+import { buildMeetingFileRecord } from './meeting-file-record.fixture';
 import { MeetingFilesService } from './meeting-files.service';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
@@ -21,30 +21,7 @@ const MEETING = {
   participantIds: [],
 };
 
-const RECORD: MeetingFileRecord = {
-  id: FILE_ID,
-  meetingId: MEETING_ID,
-  uploaderId: USER_ID,
-  name: 'deck.pdf',
-  contentType: 'application/pdf',
-  size: 10,
-  storageKey: `${MEETING_ID}/${FILE_ID}`,
-  checksum: null,
-  thumbnailKey: null,
-  transcriptKey: null,
-  status: 'uploaded',
-  failureReason: null,
-  attempts: 0,
-  leasedUntil: null,
-  createdAt: new Date('2026-09-01T10:00:00.000Z'),
-  processedAt: null,
-  deletedAt: null,
-  purgedAt: null,
-  transcriptionStatus: null,
-  transcriptionFailureReason: null,
-  transcriptionAttempts: 0,
-  transcriptionLeasedUntil: null,
-};
+const RECORD = buildMeetingFileRecord({ id: FILE_ID, meetingId: MEETING_ID, uploaderId: USER_ID });
 
 describe('MeetingFilesService', () => {
   const execute = jest.fn();

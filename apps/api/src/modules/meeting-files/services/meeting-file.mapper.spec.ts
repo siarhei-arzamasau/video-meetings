@@ -1,43 +1,26 @@
 import { MAX_MEETING_FILE_NAME_LENGTH, MEETING_FILE_TRANSCRIPTION_STATUSES } from '@repo/shared';
 
 import {
-  MeetingFileRecord,
   normaliseFileName,
   storageKeyOf,
   thumbnailKeyOf,
   toMeetingFile,
   transcriptKeyOf,
 } from './meeting-file.mapper';
+import { buildMeetingFileRecord } from './meeting-file-record.fixture';
 import { TranscriptionStatus } from './meeting-file-transcription-status';
 
 const MEETING_ID = '44444444-4444-4444-8444-444444444444';
 const FILE_ID = '55555555-5555-4555-8555-555555555555';
 const UPLOADER_ID = '11111111-1111-4111-8111-111111111111';
 
-const RECORD: MeetingFileRecord = {
+const RECORD = buildMeetingFileRecord({
   id: FILE_ID,
   meetingId: MEETING_ID,
   uploaderId: UPLOADER_ID,
-  name: 'deck.pdf',
-  contentType: 'application/pdf',
   size: 1234,
-  storageKey: `${MEETING_ID}/${FILE_ID}`,
   checksum: 'sha',
-  thumbnailKey: null,
-  transcriptKey: null,
-  status: 'uploaded',
-  failureReason: null,
-  attempts: 0,
-  leasedUntil: null,
-  createdAt: new Date('2026-09-01T10:00:00.000Z'),
-  processedAt: null,
-  deletedAt: null,
-  purgedAt: null,
-  transcriptionStatus: null,
-  transcriptionFailureReason: null,
-  transcriptionAttempts: 0,
-  transcriptionLeasedUntil: null,
-};
+});
 
 describe('toMeetingFile', () => {
   it('maps the base fields and omits everything the worker owns', () => {

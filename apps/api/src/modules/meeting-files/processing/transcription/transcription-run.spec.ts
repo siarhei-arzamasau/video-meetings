@@ -4,7 +4,7 @@ import type { Readable } from 'node:stream';
 import { Logger } from '@nestjs/common';
 
 import { TranscriptionStatus } from '../../services/meeting-file-transcription-status';
-import type { MeetingFileRecord } from '../../services/meeting-file.mapper';
+import { buildMeetingFileRecord } from '../../services/meeting-file-record.fixture';
 import type { MeetingFileStorage } from '../../storage/meeting-file-storage';
 import { runTranscription } from './transcription-run';
 import type { TranscriptionRun } from './transcription-run';
@@ -14,30 +14,20 @@ const FILE_ID = '55555555-5555-4555-8555-555555555555';
 const KEY = `${MEETING_ID}/${FILE_ID}`;
 const LEASE = new Date(Date.now() + 60_000);
 
-const CLAIMED: MeetingFileRecord = {
+const CLAIMED = buildMeetingFileRecord({
   id: FILE_ID,
   meetingId: MEETING_ID,
-  uploaderId: '11111111-1111-4111-8111-111111111111',
   name: 'standup.mp3',
   contentType: 'audio/mpeg',
-  size: 10,
   storageKey: KEY,
   checksum: 'sha',
-  thumbnailKey: null,
-  transcriptKey: null,
   status: 'ready',
-  failureReason: null,
   attempts: 1,
-  leasedUntil: null,
-  createdAt: new Date('2026-10-07T10:00:00.000Z'),
   processedAt: new Date('2026-10-07T10:00:01.000Z'),
-  deletedAt: null,
-  purgedAt: null,
   transcriptionStatus: TranscriptionStatus.TRANSCRIBING,
-  transcriptionFailureReason: null,
   transcriptionAttempts: 1,
   transcriptionLeasedUntil: LEASE,
-};
+});
 
 const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
