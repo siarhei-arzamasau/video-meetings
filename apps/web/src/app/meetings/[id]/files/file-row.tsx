@@ -146,7 +146,9 @@ export function FileRow({
         onOpen={transcript.open}
       />
 
-      <div className="ml-auto flex items-center gap-1">
+      {/* `flex-wrap`: four actions — Retry and Dismiss beside the two every row has — are wider
+          than a phone, and a group that cannot wrap pushes Delete off the page. */}
+      <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
         {retryTarget !== null && canManage && (
           <Button
             variant="secondary"
