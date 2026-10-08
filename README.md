@@ -117,6 +117,14 @@ pnpm --filter=@repo/web test:e2e        # Playwright; starts the API and the web
 Both truncate the `users` table in whatever `DATABASE_URL` points at, and they share it, so run
 one at a time.
 
+A third suite sends real requests to Anthropic through the Claude Agent SDK. It needs no
+database, but it does need the network and `ANTHROPIC_AUTH_TOKEN` in `apps/api/.env.local`
+or `apps/api/.env`:
+
+```bash
+pnpm --filter=@repo/api test:live
+```
+
 ## Layout
 
 ```
