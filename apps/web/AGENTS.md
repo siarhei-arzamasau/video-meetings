@@ -219,7 +219,7 @@ so the Processing chip goes the moment the worker finishes. A transcription movi
 same event — the whole file, with a new `transcriptionStatus` — so the row follows it with no
 code of its own. The hook is three composed, each the one place its concern lives:
 `useFilesSnapshot` holds the list and puts a fetch and an event in order, `useFilesStream`
-holds the connection and gives up on it, and `useFallbackPoll` runs when it has. Five rules,
+holds the connection and gives up on it, and `useFallbackPoll` runs when it has. Six rules,
 each of which was a bug once:
 
 - **The list is refetched every time a stream opens, and events arriving during a fetch are
@@ -237,6 +237,11 @@ each of which was a bug once:
   requested after the retry is covered by the rule above; a lone answer has nothing to be
   ordered by, because `MeetingFile` carries no version. `files-section.retry.test.tsx` pins
   the order that broke — events first, answer last — for both retries.
+- **The upload's answer is the one answer the list still takes, and only as a row it does not
+  have.** `add` never replaces: that answer is the file as it was created, the earliest state
+  it will ever have, so a row the stream has already delivered is as new or newer. Written
+  over it, a file the worker had finished went back to Processing — and for a PDF, which
+  nothing more happens to, stayed there. `use-meeting-files.add.test.ts` pins that order.
 - **`EventSource` is not used, and cannot be while the token is in `localStorage`**: it sends
   no `Authorization` header, and a token in the URL is logged by every proxy. The stream is
   opened with `fetch` and parsed by `src/lib/sse.ts` — a file the cookie migration deletes.

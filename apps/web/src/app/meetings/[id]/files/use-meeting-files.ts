@@ -16,7 +16,7 @@ export interface MeetingFiles {
   list: FilesList;
   /** Refetch now. Used by "Try again", by the poll, and by a row whose retry was answered. */
   refresh(): void;
-  /** Puts a just-uploaded file into the list without waiting for a refetch. */
+  /** Puts a just-uploaded file into the list without waiting for a refetch — if it is not there. */
   add(file: MeetingFile): void;
   /** Takes a just-deleted file out of the list without waiting for a refetch. */
   remove(fileId: string): void;
@@ -25,6 +25,14 @@ export interface MeetingFiles {
 /**
  * The two changes the page makes to the list on its own account, without waiting for a
  * refetch: its own upload arriving, and its own delete going.
+ *
+ * **`add` never replaces a row.** What it is handed is the upload's answer — the file as it
+ * was created, the earliest state it will ever have — on a connection of its own, so the
+ * stream may already have said `uploaded`, `processing` and `ready` by the time it lands. A
+ * row the list already has for that file is therefore as new or newer and is left alone; the
+ * answer only fills the gap when the stream has not delivered the file yet, or there is no
+ * stream. Written over the row it would put a finished file back to Processing, and for a
+ * file nothing more happens to, no event would follow to correct it.
  */
 function useLocalEdits({
   list,
@@ -43,8 +51,8 @@ function useLocalEdits({
       }
 
       setList((current) =>
-        current.state === 'ready'
-          ? { state: 'ready', files: [file, ...current.files.filter(({ id }) => id !== file.id)] }
+        current.state === 'ready' && !current.files.some(({ id }) => id === file.id)
+          ? { state: 'ready', files: [file, ...current.files] }
           : current,
       );
     },
