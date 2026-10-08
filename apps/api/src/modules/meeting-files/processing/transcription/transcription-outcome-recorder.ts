@@ -1,5 +1,6 @@
 import type { Logger } from '@nestjs/common';
 import type { EventBus } from '@nestjs/cqrs';
+import { MEETING_FILE_TRANSCRIPTION_FAILED_MESSAGE } from '@repo/shared';
 
 import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
 import { TranscriptionStatus } from '../../services/meeting-file-transcription-status';
@@ -38,7 +39,14 @@ export class TranscriptionOutcomeRecorder {
     this.announce(claimed, claimed.previousTranscriptionStatus, TRANSCRIBING, {}, startedAt);
   }
 
-  /** The transcript first, then the row: a row that says transcribed never points at nothing. */
+  /**
+   * The transcript first, then the row: a row that says transcribed never points at nothing.
+   *
+   * A transcript that cannot be written at all — a full disk, a volume gone read-only — is a
+   * failed transcription, and is recorded as one in the generic sentence. Left to escape, it
+   * kept the row `TRANSCRIBING` until the lease lapsed and the recording was transcribed from
+   * scratch, twice more, to end the same way with "repeated attempts" for a reason.
+   */
   async complete(
     claimed: ClaimedTranscription,
     lease: Date,
@@ -48,7 +56,11 @@ export class TranscriptionOutcomeRecorder {
     const transcriptKey = transcriptKeyOf(claimed.storageKey);
     const patch = { transcriptKey };
 
-    await this.storage.writeText(transcriptKey, text);
+    if (!(await this.store(claimed, transcriptKey, text))) {
+      await this.fail(claimed, lease, MEETING_FILE_TRANSCRIPTION_FAILED_MESSAGE, startedAt);
+
+      return;
+    }
 
     if (await this.transcriptions.transition(claimed.id, TRANSCRIBING, TRANSCRIBED, patch, lease)) {
       this.logger.log(
@@ -58,6 +70,26 @@ export class TranscriptionOutcomeRecorder {
     } else {
       this.lost(claimed, 'recorded as transcribed');
       await this.removeUnlessReclaimed(claimed.id, transcriptKey);
+    }
+  }
+
+  /** Whether the transcript is on disk. The cause of a write that failed goes to the log. */
+  private async store(
+    claimed: ClaimedTranscription,
+    transcriptKey: string,
+    text: string,
+  ): Promise<boolean> {
+    try {
+      await this.storage.writeText(transcriptKey, text);
+
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `File ${claimed.id} of meeting ${claimed.meetingId}: the transcript could not be stored`,
+        error instanceof Error ? error.stack : String(error),
+      );
+
+      return false;
     }
   }
 

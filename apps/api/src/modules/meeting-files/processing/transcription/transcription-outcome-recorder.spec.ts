@@ -119,6 +119,31 @@ describe('TranscriptionOutcomeRecorder', () => {
       ]);
     });
 
+    it('records a transcript that cannot be stored as a failed transcription, in fixed copy', async () => {
+      writeText.mockRejectedValue(new Error('ENOSPC: no space left on device'));
+
+      await recorder.complete(CLAIMED, LEASE, 'Good morning, everyone.', STARTED_AT);
+
+      // One write, and it is the failure: the row is not left transcribing for its lease to
+      // lapse and the recording to be transcribed from scratch.
+      expect(transition.mock.calls).toEqual([
+        [
+          FILE_ID,
+          TRANSCRIBING,
+          FAILED,
+          { transcriptionFailureReason: 'The recording could not be transcribed.' },
+          LEASE,
+        ],
+      ]);
+      expect(announced()).toEqual([
+        expect.objectContaining({
+          transcriptionStatus: 'failed',
+          transcriptionFailureReason: 'The recording could not be transcribed.',
+        }),
+      ]);
+      expect(JSON.stringify(announced())).not.toContain('ENOSPC');
+    });
+
     it('removes the transcript it wrote, and announces nothing, when the file was deleted mid-run', async () => {
       // Zero rows, and the file is no longer `ready`: the purge may already have been and gone.
       transition.mockResolvedValue(false);
