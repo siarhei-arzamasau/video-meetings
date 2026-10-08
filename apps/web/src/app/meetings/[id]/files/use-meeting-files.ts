@@ -121,7 +121,7 @@ export function useMeetingFiles(
     onUnauthorized,
   });
 
-  useFallbackPoll(streamAvailable, list, refresh);
+  useFallbackPoll(streamAvailable, list, snapshot.settled, refresh);
 
   const { add, remove } = useLocalEdits(snapshot);
 

@@ -254,7 +254,10 @@ each of which was a bug once:
   being processed, or a recording whose transcription is queued or running. A recording is
   `ready` minutes before its transcript is, so gated on `isProcessing` a page without a stream
   would sit on "Transcribing…" until it was reloaded. `isProcessing` stays what the Processing
-  chip and the announcement below count.
+  chip and the announcement below count. **A poll that fails arms the next one**: the timer is
+  re-armed by `settled`, the count of fetches that came back, not by the list. A failed fetch
+  keeps the list it had — the same object — so a poll armed by the list stopped at its first
+  failure, which is the API restarting: the one time the page has nothing but the poll.
 - **One polite `role="status"` region** (`FilesSection`, visually hidden) announces how many
   files are processing: one per section, never one per row, and empty on first render so
   nothing is read aloud for arriving.

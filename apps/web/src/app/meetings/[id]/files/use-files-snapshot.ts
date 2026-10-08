@@ -16,6 +16,11 @@ export type FilesList =
 export interface FilesSnapshot {
   list: FilesList;
   setList: Dispatch<SetStateAction<FilesList>>;
+  /**
+   * How many fetches have settled, landed or failed. A fetch that fails leaves `list` the very
+   * object it was, so this is the only thing that says one has come back.
+   */
+  settled: number;
   /** Refetch now. */
   refresh(): void;
   /** Applies one change from the event stream, where the insert / replace / remove rule puts it. */
@@ -29,6 +34,7 @@ interface Fetch {
   isActive(): boolean;
   pending: RefObject<MeetingFile[] | null>;
   setList: Dispatch<SetStateAction<FilesList>>;
+  onSettled(): void;
   onUnauthorized(): void;
 }
 
@@ -39,6 +45,7 @@ async function load({
   isActive,
   pending,
   setList,
+  onSettled,
   onUnauthorized,
 }: Fetch): Promise<void> {
   try {
@@ -58,6 +65,7 @@ async function load({
       state: 'ready',
       files: missed.reduce<ReadonlyArray<MeetingFile>>(applyFileEvent, files),
     });
+    onSettled();
   } catch (error) {
     if (!isActive()) {
       return;
@@ -75,6 +83,7 @@ async function load({
       // A poll that fails does not blank a list that was fine a moment ago.
       current.state === 'ready' ? current : { state: 'failed', message: describeFailure(error) },
     );
+    onSettled();
   }
 }
 
@@ -96,6 +105,7 @@ export function useFilesSnapshot(
 ): FilesSnapshot {
   const [list, setList] = useState<FilesList>({ state: 'loading' });
   const [tick, setTick] = useState(0);
+  const [settled, setSettled] = useState(0);
   // Events that arrived while a fetch was in flight, to replay on top of the snapshot it
   // brings back; `null` while nothing is in flight. A ref, so `applyChange` stays stable.
   const pending = useRef<MeetingFile[] | null>(null);
@@ -108,7 +118,15 @@ export function useFilesSnapshot(
     let active = true;
     pending.current = [];
 
-    void load({ token, meetingId, isActive: () => active, pending, setList, onUnauthorized });
+    void load({
+      token,
+      meetingId,
+      isActive: () => active,
+      pending,
+      setList,
+      onSettled: () => setSettled((count) => count + 1),
+      onUnauthorized,
+    });
 
     return () => {
       active = false;
@@ -128,5 +146,5 @@ export function useFilesSnapshot(
     );
   }, []);
 
-  return { list, setList, refresh, applyChange };
+  return { list, setList, settled, refresh, applyChange };
 }

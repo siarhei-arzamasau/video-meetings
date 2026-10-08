@@ -92,4 +92,24 @@ describe('the fallback poll', () => {
     expect(await listRequestsDuringOneInterval()).toBe(1);
     expect(await listRequestsDuringOneInterval()).toBe(0);
   });
+
+  it('keeps asking after a poll that failed, so an API that was restarting is caught up with', async () => {
+    vi.mocked(listMeetingFiles).mockResolvedValue([
+      recording({ transcriptionStatus: 'transcribing' }),
+    ]);
+    await mountWithoutStream();
+    // The API is down: a poll that fails leaves the list as it was.
+    vi.mocked(listMeetingFiles).mockRejectedValue(new TypeError('Failed to fetch'));
+
+    expect(await listRequestsDuringOneInterval()).toBe(1);
+    expect(await listRequestsDuringOneInterval()).toBe(1);
+
+    // And it is back, with the transcript finished meanwhile.
+    vi.mocked(listMeetingFiles).mockResolvedValue([
+      recording({ transcriptionStatus: 'transcribed' }),
+    ]);
+
+    expect(await listRequestsDuringOneInterval()).toBe(1);
+    expect(await listRequestsDuringOneInterval()).toBe(0);
+  });
 });

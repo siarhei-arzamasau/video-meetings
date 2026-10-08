@@ -19,12 +19,16 @@ export const POLL_INTERVAL_MS = 3_000;
  * poll beside it would be three requests a second across an open meeting page for nothing.
  * `isAwaitingWorker` still gates it, so the fallback stops once both workers are done.
  *
- * **`list` is a dependency on purpose.** Each list that lands is what arms the next timer; on
- * a condition alone the poll would fire once and stop.
+ * **`settled` is a dependency on purpose.** Each fetch that comes back is what arms the next
+ * timer; on a condition alone the poll would fire once and stop. It is the count and not the
+ * list, because a fetch that fails keeps the list it had — the very same object — and a poll
+ * armed by `list` therefore died at the first failure: exactly when the API is restarting,
+ * which is when the stream has just been given up on and the poll is all the page has.
  */
 export function useFallbackPoll(
   streamAvailable: boolean,
   list: FilesList,
+  settled: number,
   refresh: () => void,
 ): void {
   useEffect(() => {
@@ -37,5 +41,5 @@ export function useFallbackPoll(
     return () => {
       clearTimeout(timer);
     };
-  }, [streamAvailable, list, refresh]);
+  }, [streamAvailable, list, settled, refresh]);
 }
