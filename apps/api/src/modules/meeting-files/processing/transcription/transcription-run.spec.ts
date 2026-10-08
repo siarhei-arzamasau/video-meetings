@@ -45,7 +45,7 @@ describe('runTranscription', () => {
   const transcribe = jest.fn();
   const renewLease = jest.fn();
   const openRead = jest.fn();
-  const shutdown = new AbortController();
+  let shutdown: AbortController;
 
   const run = (leaseSeconds = 30, limitSeconds = 720): Promise<TranscriptionRun> =>
     runTranscription({
@@ -64,6 +64,7 @@ describe('runTranscription', () => {
     (transcribe.mock.calls[0] as [Readable, string, AbortSignal])[2];
 
   beforeEach(() => {
+    shutdown = new AbortController();
     transcribe.mockReset().mockResolvedValue('Good morning, everyone.');
     renewLease.mockReset().mockResolvedValue(new Date(Date.now() + 30_000));
     openRead.mockReset().mockImplementation(() => new PassThrough());
@@ -74,6 +75,7 @@ describe('runTranscription', () => {
       held: LEASE,
       outcome: { text: 'Good morning, everyone.' },
       timedOut: false,
+      shuttingDown: false,
     });
 
     expect(openRead).toHaveBeenCalledWith(KEY);
@@ -101,6 +103,7 @@ describe('runTranscription', () => {
       held: LEASE,
       outcome: { error: refused },
       timedOut: false,
+      shuttingDown: false,
     });
   });
 
@@ -114,6 +117,7 @@ describe('runTranscription', () => {
       held: LEASE,
       outcome: { error: unopenable },
       timedOut: false,
+      shuttingDown: false,
     });
     expect(transcribe).not.toHaveBeenCalled();
 
@@ -181,6 +185,7 @@ describe('runTranscription', () => {
       held: renewed,
       outcome: { text: 'Late, but whole.' },
       timedOut: false,
+      shuttingDown: false,
     });
     expect(renewLease).toHaveBeenCalledWith(FILE_ID, LEASE, 3);
   });
@@ -203,7 +208,38 @@ describe('runTranscription', () => {
     await settle(20);
     shutdown.abort();
 
-    await expect(running).resolves.toMatchObject({ held: LEASE, timedOut: false });
+    await expect(running).resolves.toMatchObject({
+      held: LEASE,
+      timedOut: false,
+      shuttingDown: true,
+    });
     expect(signalSeen().aborted).toBe(true);
+  });
+
+  it('does not call a provider error a shutdown because one began while the heartbeat stopped', async () => {
+    const refused = new Error('refused');
+    const provider: { fail?: (error: Error) => void } = {};
+    const renewal = holdWrite<Date>();
+    renewLease.mockReturnValue(renewal.answered);
+    transcribe.mockImplementation(
+      () =>
+        new Promise<string>((_resolve, reject) => {
+          provider.fail = reject;
+        }),
+    );
+
+    // The renewal goes out a second in and stays out; the provider fails, and only then does
+    // the process start to shut down, while `stop` is still waiting for that renewal.
+    const running = run(3);
+    await settle(1_100);
+    provider.fail?.(refused);
+    await settle(20);
+    shutdown.abort();
+    renewal.answer(new Date(Date.now() + 3_000));
+
+    await expect(running).resolves.toMatchObject({
+      outcome: { error: refused },
+      shuttingDown: false,
+    });
   });
 });

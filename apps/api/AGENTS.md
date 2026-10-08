@@ -694,9 +694,13 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   `TRANSCRIPTION_TIMEOUT_SECONDS` when that limit is what aborted the request, and one for a
   fourth claim. Which applies is decided from what ended the request — the worker owns the time
   limit, the shutdown, and the lost-claim signals — and never from what the provider threw, so
-  nothing Whisper says can reach `transcriptionFailureReason`. The first error ends it: there is
-  no automatic retry, and the only way back to `queued` is the uploader or the host asking for
-  it — the transcription retry under _Delete, retry, and the purge marker_.
+  nothing Whisper says can reach `transcriptionFailureReason`. **The limit and the shutdown
+  are read as the provider settles, not once the heartbeat has stopped**: stopping waits for a
+  renewal in flight, and one that fires during that wait did not end the request. Read late,
+  an ordinary error became the failure with no Retry, or a claim handed back for the next
+  process to run again unasked. The first error ends it: there is no automatic retry, and the
+  only way back to `queued` is the uploader or the host asking for it — the transcription
+  retry under _Delete, retry, and the purge marker_.
 - **The provider is a port with one adapter.** `TranscriptionProvider` is
   `transcribe(stream, contentType, signal)` and nothing else, bound under the string token
   `TRANSCRIPTION_PROVIDER` so a spec can substitute a fake without importing the module. The

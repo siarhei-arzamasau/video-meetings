@@ -15,6 +15,8 @@ export interface TranscriptionRun {
   outcome: { text: string } | { error: unknown };
   /** Whether the time limit fired, which is what makes a failure name it. */
   timedOut: boolean;
+  /** Whether shutdown had begun, which is what makes an error a claim to hand back. */
+  shuttingDown: boolean;
 }
 
 export interface TranscriptionRunOptions {
@@ -35,14 +37,14 @@ export interface TranscriptionRunOptions {
  * reports how it ended. It writes nothing: what the row is told is the caller's decision.
  *
  * Three things end the request early, and the caller can tell which: the time limit
- * (`timedOut`), shutdown (the signal it passed in), and a renewal that found the claim gone —
+ * (`timedOut`), shutdown (`shuttingDown`), and a renewal that found the claim gone —
  * the file deleted, or the lease lapsed and reclaimed — after which `held` is `null` and there
  * is nothing left to write. The last is why the heartbeat is given an `onLost`: a
  * transcription runs for minutes, and nobody is left to read the answer.
  *
  * The heartbeat is stopped before this returns, so the caller's conditional writes are made
- * against a lease no renewal is about to replace. `timedOut` is decided before that stop, at
- * the moment the provider settles.
+ * against a lease no renewal is about to replace. `timedOut` and `shuttingDown` are decided
+ * before that stop, at the moment the provider settles.
  */
 export async function runTranscription({
   claimed,
@@ -90,11 +92,13 @@ export async function runTranscription({
     stream?.destroy();
   }
 
-  // Read now, as the provider settles, and not after the heartbeat has: `stop` waits for a
-  // renewal in flight, and a limit that fires during that wait is not what ended the request.
-  // Read late, a provider error just short of the limit was recorded as the time limit — the
-  // one failure with no Retry.
+  // Both read now, as the provider settles, and not after the heartbeat has: `stop` waits for
+  // a renewal in flight, and a limit or a shutdown that fires during that wait is not what
+  // ended the request. Read late, a provider error just short of the limit was recorded as the
+  // time limit — the one failure with no Retry — and one just short of a shutdown was handed
+  // back to the queue, for the next process to try again unasked.
   const timedOut = timeLimit.aborted;
+  const shuttingDown = shutdown.aborted;
 
-  return { held: await heartbeat.stop(), outcome, timedOut };
+  return { held: await heartbeat.stop(), outcome, timedOut, shuttingDown };
 }

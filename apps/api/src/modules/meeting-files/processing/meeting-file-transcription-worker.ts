@@ -179,7 +179,7 @@ export class MeetingFileTranscriptionWorker implements OnApplicationBootstrap, O
       'TRANSCRIPTION_TIMEOUT_SECONDS',
       DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS,
     );
-    const { held, outcome, timedOut } = await runTranscription({
+    const { held, outcome, timedOut, shuttingDown } = await runTranscription({
       claimed,
       provider: this.provider,
       storage: this.storage,
@@ -194,7 +194,9 @@ export class MeetingFileTranscriptionWorker implements OnApplicationBootstrap, O
       this.recorder.lost(claimed, 'finished');
     } else if ('text' in outcome) {
       await this.recorder.complete(claimed, held, outcome.text, startedAt);
-    } else if (this.shutdown.signal.aborted) {
+    } else if (shuttingDown) {
+      // As the run saw it when the provider settled, not as the signal reads now: a shutdown
+      // that began after an ordinary error must not turn that error into a second attempt.
       await this.recorder.release(claimed, held, startedAt);
     } else {
       const reason = timedOut
