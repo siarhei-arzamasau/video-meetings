@@ -53,8 +53,8 @@ interface EndpointAnswer {
  * `TRANSCRIPTION_TIMEOUT_SECONDS` said. Here the only bound is the `signal`.
  *
  * Every failure — a non-2xx, a timeout, a dropped connection — is one `StepError` with one
- * message. The real cause is logged with its stack; what reaches `failureReason`, and so the
- * user, says the recording could not be transcribed and nothing about the endpoint.
+ * message, and the real cause is logged here with its stack. Neither reaches a user: the
+ * transcription worker chooses the stored reason itself, from what ended the request.
  */
 @Injectable()
 export class HttpTranscriptionProvider implements TranscriptionProvider {
@@ -86,8 +86,8 @@ export class HttpTranscriptionProvider implements TranscriptionProvider {
 
       answer = await post(url, headers, body, signal);
     } catch (error) {
-      // An abort lands here too — the step's timeout, or the worker's shutdown — and is not
-      // distinguished on purpose: the user's answer is the same either way.
+      // An abort lands here too — the time limit, a lost claim, the worker's shutdown — and
+      // is not distinguished on purpose: the worker that aborted knows which it was.
       stream.destroy();
       this.logger.error(
         `Transcription request to model ${model} failed for ${contentType}`,

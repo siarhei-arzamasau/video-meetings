@@ -40,6 +40,10 @@ const RECORD: MeetingFileRecord = {
   processedAt: null,
   deletedAt: null,
   purgedAt: null,
+  transcriptionStatus: null,
+  transcriptionFailureReason: null,
+  transcriptionAttempts: 0,
+  transcriptionLeasedUntil: null,
 };
 
 describe('MeetingFilesService', () => {

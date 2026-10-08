@@ -37,7 +37,11 @@ export type {
 export { MAX_MEETINGS_LIMIT, MEETING_STATUSES, MEETINGS_ORDERS } from './types/meeting';
 export type { ApiErrorResponse } from './types/error';
 export type { HealthResponse } from './types/health';
-export type { MeetingFile, MeetingFileStatus } from './types/meeting-file';
+export type {
+  MeetingFile,
+  MeetingFileStatus,
+  MeetingFileTranscriptionStatus,
+} from './types/meeting-file';
 export {
   MAX_MEETING_FILE_NAME_LENGTH,
   MAX_MEETING_FILE_SIZE_BYTES,
@@ -49,7 +53,11 @@ export {
   MEETING_FILE_PROCESSING_FAILED_MESSAGE,
   MEETING_FILE_SIZE_MESSAGE,
   MEETING_FILE_STATUSES,
+  MEETING_FILE_TRANSCRIPTION_FAILED_MESSAGE,
+  MEETING_FILE_TRANSCRIPTION_REPEATED_FAILURE_MESSAGE,
+  MEETING_FILE_TRANSCRIPTION_STATUSES,
   MEETING_FILE_TYPE_MESSAGE,
+  meetingFileTranscriptionTimeLimitMessage,
 } from './types/meeting-file';
 export type { MeetingFileUpload } from './types/meeting-file-upload';
 export {

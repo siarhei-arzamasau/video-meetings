@@ -1,0 +1,176 @@
+import { PassThrough } from 'node:stream';
+import type { Readable } from 'node:stream';
+
+import { Logger } from '@nestjs/common';
+
+import { TranscriptionStatus } from '../../services/meeting-file-transcription-status';
+import type { MeetingFileRecord } from '../../services/meeting-file.mapper';
+import type { MeetingFileStorage } from '../../storage/meeting-file-storage';
+import { runTranscription } from './transcription-run';
+import type { TranscriptionRun } from './transcription-run';
+
+const MEETING_ID = '44444444-4444-4444-8444-444444444444';
+const FILE_ID = '55555555-5555-4555-8555-555555555555';
+const KEY = `${MEETING_ID}/${FILE_ID}`;
+const LEASE = new Date(Date.now() + 60_000);
+
+const CLAIMED: MeetingFileRecord = {
+  id: FILE_ID,
+  meetingId: MEETING_ID,
+  uploaderId: '11111111-1111-4111-8111-111111111111',
+  name: 'standup.mp3',
+  contentType: 'audio/mpeg',
+  size: 10,
+  storageKey: KEY,
+  checksum: 'sha',
+  thumbnailKey: null,
+  transcriptKey: null,
+  status: 'ready',
+  failureReason: null,
+  attempts: 1,
+  leasedUntil: null,
+  createdAt: new Date('2026-10-07T10:00:00.000Z'),
+  processedAt: new Date('2026-10-07T10:00:01.000Z'),
+  deletedAt: null,
+  purgedAt: null,
+  transcriptionStatus: TranscriptionStatus.TRANSCRIBING,
+  transcriptionFailureReason: null,
+  transcriptionAttempts: 1,
+  transcriptionLeasedUntil: LEASE,
+};
+
+const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A provider that honours its signal, as the port requires, and answers only when told to. */
+const answerOnDemand =
+  (answers: { resolve?: (text: string) => void }) =>
+  (_stream: Readable, _type: string, signal: AbortSignal): Promise<string> =>
+    new Promise<string>((resolve, reject) => {
+      answers.resolve = resolve;
+      signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    });
+
+describe('runTranscription', () => {
+  const transcribe = jest.fn();
+  const renewLease = jest.fn();
+  const openRead = jest.fn();
+  const shutdown = new AbortController();
+
+  const run = (leaseSeconds = 30, limitSeconds = 720): Promise<TranscriptionRun> =>
+    runTranscription({
+      claimed: CLAIMED,
+      provider: { transcribe },
+      storage: { openRead } as unknown as MeetingFileStorage,
+      leases: { renewLease },
+      logger: new Logger('test'),
+      leaseSeconds,
+      limitSeconds,
+      shutdown: shutdown.signal,
+    });
+
+  /** The signal the provider was handed on its one call. */
+  const signalSeen = (): AbortSignal =>
+    (transcribe.mock.calls[0] as [Readable, string, AbortSignal])[2];
+
+  beforeEach(() => {
+    transcribe.mockReset().mockResolvedValue('Good morning, everyone.');
+    renewLease.mockReset().mockResolvedValue(new Date(Date.now() + 30_000));
+    openRead.mockReset().mockImplementation(() => new PassThrough());
+  });
+
+  it('hands the provider the object as a stream, its type, and a signal nothing has aborted', async () => {
+    await expect(run()).resolves.toEqual({
+      held: LEASE,
+      outcome: { text: 'Good morning, everyone.' },
+      timedOut: false,
+    });
+
+    expect(openRead).toHaveBeenCalledWith(KEY);
+    const [stream, contentType] = transcribe.mock.calls[0] as [Readable, string];
+    // A stream, not a buffer: a gigabyte of video must not be read into memory to be sent.
+    expect(typeof stream.pipe).toBe('function');
+    expect(contentType).toBe('audio/mpeg');
+    expect(signalSeen().aborted).toBe(false);
+  });
+
+  it('closes the stream it opened, whether the provider answered or threw', async () => {
+    await run();
+    transcribe.mockRejectedValue(new Error('refused'));
+    await run();
+
+    const streams = openRead.mock.results.map(({ value }) => value as Readable);
+    expect(streams.map((stream) => stream.destroyed)).toEqual([true, true]);
+  });
+
+  it('reports a provider error as an outcome rather than throwing it', async () => {
+    const refused = new Error('refused');
+    transcribe.mockRejectedValue(refused);
+
+    await expect(run()).resolves.toEqual({
+      held: LEASE,
+      outcome: { error: refused },
+      timedOut: false,
+    });
+  });
+
+  it('does not renew for a request that answers well inside the lease', async () => {
+    await run();
+
+    expect(renewLease).not.toHaveBeenCalled();
+  });
+
+  it('aborts a request that outruns the time limit, and says the limit is what ended it', async () => {
+    transcribe.mockImplementation(answerOnDemand({}));
+
+    // Seconds, as the environment states them — a fraction only because a spec cannot wait
+    // out the contract's thirty second floor.
+    const ended = await run(30, 0.05);
+
+    expect(ended).toMatchObject({
+      held: LEASE,
+      outcome: { error: expect.any(Error) },
+      timedOut: true,
+    });
+    expect(signalSeen().aborted).toBe(true);
+  });
+
+  it('renews the lease while the provider works, and hands back the lease the row now holds', async () => {
+    const renewed = new Date(Date.now() + 3_000);
+    const answers: { resolve?: (text: string) => void } = {};
+    renewLease.mockResolvedValue(renewed);
+    transcribe.mockImplementation(answerOnDemand(answers));
+
+    const running = run(3);
+    await settle(1_200);
+    answers.resolve?.('Late, but whole.');
+
+    await expect(running).resolves.toEqual({
+      held: renewed,
+      outcome: { text: 'Late, but whole.' },
+      timedOut: false,
+    });
+    expect(renewLease).toHaveBeenCalledWith(FILE_ID, LEASE, 3);
+  });
+
+  it('hangs up on the provider when a renewal finds the claim gone, and holds no lease', async () => {
+    // Zero rows: the file was deleted, or the lease lapsed and another worker took the claim.
+    renewLease.mockResolvedValue(null);
+    transcribe.mockImplementation(answerOnDemand({}));
+
+    const ended = await run(3);
+
+    expect(ended).toMatchObject({ held: null, timedOut: false });
+    expect(signalSeen().aborted).toBe(true);
+  });
+
+  it('hangs up when the process is shutting down, with the lease still held', async () => {
+    transcribe.mockImplementation(answerOnDemand({}));
+
+    const running = run();
+    await settle(20);
+    shutdown.abort();
+
+    await expect(running).resolves.toMatchObject({ held: LEASE, timedOut: false });
+    expect(signalSeen().aborted).toBe(true);
+  });
+});

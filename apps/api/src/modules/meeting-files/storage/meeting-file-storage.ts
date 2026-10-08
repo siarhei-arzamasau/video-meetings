@@ -111,9 +111,9 @@ export class MeetingFileStorage implements OnModuleInit {
   }
 
   /**
-   * Text beside an object — the transcription step's output, written as UTF-8. Here rather
-   * than an `fs.writeFile` at the call site, so every filesystem call stays behind the key
-   * check: a step writes by key or not at all.
+   * Text beside an object — a recording's transcript, written as UTF-8. Here rather than an
+   * `fs.writeFile` at the call site, so every filesystem call stays behind the key check: a
+   * worker writes by key or not at all.
    */
   async writeText(key: string, contents: string): Promise<void> {
     const destination = this.pathOf(key);

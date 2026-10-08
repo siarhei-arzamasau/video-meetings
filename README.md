@@ -101,9 +101,12 @@ MEETING_FILES_TRANSCRIPTION_ENABLED=true
 TRANSCRIPTION_API_URL=http://localhost:8000/v1/audio/transcriptions
 ```
 
-Restart the API afterwards. An uploaded audio or video file is then transcribed once its own
-checks pass, and the text is served by `GET /api/meetings/:id/files/:fileId/transcript`; the
-web app does not show it yet. The API log names the model on every transcription
+Restart the API afterwards. An uploaded audio or video file is then ready and downloadable as
+soon as its own checks pass, and is transcribed after that, on its own: `GET
+/api/meetings/:id/files` reports a `transcriptionStatus` for it — `queued`, `transcribing`,
+then `transcribed` or `failed` with a `transcriptionFailureReason` — and the text is served by
+`GET /api/meetings/:id/files/:fileId/transcript`. A PDF or an image has no such status. The
+web app does not show any of it yet. The API log names the model on every transcription
 (`Model Systran/faster-whisper-small transcribed audio/mpeg`).
 
 What it costs:
@@ -116,13 +119,17 @@ What it costs:
 - **About six seconds of work per minute of audio**, measured on an 18-core Apple Silicon
   laptop. `TRANSCRIPTION_TIMEOUT_SECONDS` (default 720) bounds one transcription: that is a
   one-hour recording at twice the measured rate, so raise it on a slower machine or for
-  longer recordings.
+  longer recordings. A transcription that outruns it is marked failed with a reason that
+  names the limit; the file stays ready.
 
 Port 8000 taken? Set `WHISPER_PORT` in the root `.env` and the same port in
 `TRANSCRIPTION_API_URL`. `docker compose --profile transcription stop whisper` stops the
 service and keeps the model. The API boots and serves uploads and downloads whether or not
-Whisper is running; a recording uploaded while it is stopped fails to process and can be
-retried once it is back.
+Whisper is running: a recording uploaded while it is stopped is still ready and downloadable,
+and only its transcription is marked failed. Restarting the API in the middle of a
+transcription fails nothing — the recording goes back to `queued` and is picked up again.
+Setting the flag back to `false` stops new transcriptions and keeps every status and
+transcript already stored.
 
 Under `docker compose` the `api` service finds Whisper by itself: set
 `MEETING_FILES_TRANSCRIPTION_ENABLED=true` in the root `.env` and bring the stack up with

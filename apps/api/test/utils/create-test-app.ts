@@ -18,9 +18,8 @@ import { configureApp } from '../../src/configure-app';
  */
 export interface TestAppOptions {
   /**
-   * Providers to replace, by token. For the boundaries a spec must not cross for real — the
-   * transcription provider is the only one so far, and it is a string token precisely so a
-   * spec can bind a fake without importing the module it belongs to.
+   * Providers to replace, by token — for what a spec needs configured differently from the
+   * whole run, such as the throttler's options at a budget a test can spend.
    */
   overrides?: ReadonlyArray<{ token: unknown; value: unknown }>;
   /**

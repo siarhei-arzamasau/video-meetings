@@ -139,7 +139,7 @@ export class MeetingFilesController {
   }
 
   /**
-   * The transcript the pipeline wrote, inline as plain text. `nosniff` and `no-store` as for
+   * A recording's transcript, inline as plain text. `nosniff` and `no-store` as for
    * every other stream here: what is served is the output of a third party, and a browser
    * must not be given the chance to decide it is something other than text.
    */

@@ -11,6 +11,19 @@ export const MEETING_FILE_STATUSES = [
 
 export type MeetingFileStatus = (typeof MEETING_FILE_STATUSES)[number];
 
+/**
+ * Where a recording's transcription stands. A status of its own: the file is `ready` and
+ * downloadable throughout, and a transcription that fails does not undo that.
+ */
+export const MEETING_FILE_TRANSCRIPTION_STATUSES = [
+  'queued',
+  'transcribing',
+  'transcribed',
+  'failed',
+] as const;
+
+export type MeetingFileTranscriptionStatus = (typeof MEETING_FILE_TRANSCRIPTION_STATUSES)[number];
+
 /** A file attached to a meeting, as `GET /api/meetings/:id/files` reports it. */
 export interface MeetingFile {
   id: string;
@@ -29,6 +42,10 @@ export interface MeetingFile {
   thumbnailPath?: string;
   /** Present when a transcript exists; a relative API path. */
   transcriptPath?: string;
+  /** Absent for a file that is not a recording, or that was never queued. */
+  transcriptionStatus?: MeetingFileTranscriptionStatus;
+  /** Present only when `transcriptionStatus` is `failed`. Safe to render. */
+  transcriptionFailureReason?: string;
   /** ISO 8601 instants, UTC. */
   createdAt: string;
   processedAt?: string;
@@ -52,6 +69,31 @@ export const MEETING_FILE_NAME_MESSAGE =
   'The file name must be 1–255 characters and contain no path separators';
 export const MEETING_FILE_PROCESSING_FAILED_MESSAGE =
   'Processing failed. You can still download the file.';
+
+/**
+ * Why a transcription failed, as the API stores it in `transcriptionFailureReason`. Fixed
+ * copy, chosen by the API from what happened and never from what the Whisper service said:
+ * its own error text stays in the server log. The first is also the web app's fallback for a
+ * `failed` transcription that carries no reason.
+ */
+export const MEETING_FILE_TRANSCRIPTION_FAILED_MESSAGE = 'The recording could not be transcribed.';
+export const MEETING_FILE_TRANSCRIPTION_REPEATED_FAILURE_MESSAGE =
+  'Transcription failed after repeated attempts.';
+
+const SECONDS_PER_MINUTE = 60;
+
+/**
+ * The reason for a transcription that outran the deployment's time limit, naming that limit:
+ * `the 12-minute limit` for a whole number of minutes, `the 90-second limit` otherwise.
+ */
+export function meetingFileTranscriptionTimeLimitMessage(limitSeconds: number): string {
+  const limit =
+    limitSeconds % SECONDS_PER_MINUTE === 0
+      ? `${String(limitSeconds / SECONDS_PER_MINUTE)}-minute`
+      : `${String(limitSeconds)}-second`;
+
+  return `Transcription took longer than the ${limit} limit.`;
+}
 
 /**
  * Media types the server stores, and the extensions the picker offers for each. One table, so

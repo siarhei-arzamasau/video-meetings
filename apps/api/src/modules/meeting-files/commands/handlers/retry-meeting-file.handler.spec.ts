@@ -42,6 +42,10 @@ const RECORD: MeetingFileRecord = {
   processedAt: new Date('2026-09-01T10:00:01.000Z'),
   deletedAt: null,
   purgedAt: null,
+  transcriptionStatus: null,
+  transcriptionFailureReason: null,
+  transcriptionAttempts: 0,
+  transcriptionLeasedUntil: null,
 };
 
 describe('RetryMeetingFileHandler', () => {

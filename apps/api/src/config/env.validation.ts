@@ -180,12 +180,12 @@ export class EnvironmentVariables {
   MEETING_FILE_UPLOAD_TTL_HOURS: number = 24;
 
   /**
-   * Whether the pipeline transcribes audio and video. Off by default: it is the one step that
-   * needs a second service, and a deployment that does not run one must still process files.
-   * Parsed like the worker flag, for the same reason.
-   *
-   * The URL below is validated whenever this is on — its shape, never the server behind it: a
-   * Whisper that is down fails a transcription, not the boot of what serves every upload.
+   * Whether an audio or video file is queued for transcription when it becomes `ready`, and
+   * whether the transcription worker claims anything. Off by default: it needs a second service.
+   * Switching it off keeps every stored status and leaves a queued recording waiting for it to
+   * come back. Parsed like the worker flag, for the same reason. The URL below is validated
+   * whenever this is on — its shape, never the server behind it: a Whisper that is down fails a
+   * transcription, not the boot of what serves every upload.
    */
   @Transform(({ obj, key }) => parseBoolean((obj as Record<string, unknown>)[key]))
   @IsBoolean()
@@ -216,10 +216,10 @@ export class EnvironmentVariables {
   TRANSCRIPTION_MODEL: string = DEFAULT_TRANSCRIPTION_MODEL;
 
   /**
-   * How long one transcription may take before it is aborted and the file fails with a
-   * specific reason rather than hanging on a lease that keeps being renewed. Twelve minutes
-   * by default: a one-hour recording at twice the rate measured beside the constant. At least
-   * thirty seconds, because a bound shorter than the request it bounds only fails files.
+   * How long one transcription may take before it is aborted and ends Failed with a reason naming
+   * this limit — the file stays `ready` — rather than hanging on a lease that keeps being renewed.
+   * Twelve minutes by default: a one-hour recording at twice the rate measured beside the constant.
+   * At least thirty seconds: a bound shorter than the request it bounds only fails transcriptions.
    */
   @IsInt()
   @Min(30)

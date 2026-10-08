@@ -48,7 +48,7 @@ Four worked examples, in the order worth reading them:
 - **`user`** — read before splitting a module in two. It owns the user record and exports
   nothing; two modules deep in a request path talk to it entirely over the buses.
 - **`meeting-files`** — the largest: two commands, a read service, a storage service over
-  `fs`, and a polling worker. It has its own section below because most of what it does
+  `fs`, and two polling workers. It has its own section below because most of what it does
   right is invisible in the code.
 
 `health` still shows the minimum a module needs when it changes no state and reaches no
@@ -372,7 +372,7 @@ reads sharing one `visibleTo` is the accepted price of the in-module read stayin
 What the code cannot say for itself. The PRD is `docs/specs/2026-09-19-meeting-file-upload-prd.md`
 and the settled design decisions are in `docs/plans/2026-09-19-meeting-file-upload-phase-1.md`
 and `-phase-2.md`; read those for _what_ was decided, this for what a reader of the code would
-get wrong.
+get wrong. Transcription has a PRD and a plan of its own, named under _Transcription_ below.
 
 **Upload and storage**
 
@@ -428,24 +428,29 @@ get wrong.
 
 **The worker's claim protocol**
 
-- **`claimNext` is the one raw SQL statement in the module, and it has to be.** A single
-  `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1)` sets `status = processing`,
-  `leased_until = now() + lease`, `attempts + 1`. Two replicas cannot claim one row, and a
-  worker that dies leaves a row whose lease expires. Prisma cannot express `SKIP LOCKED`.
+- **A claim is one raw SQL statement, and it has to be.** `MeetingFileRepository.claimNext` is
+  a single `UPDATE … WHERE id = (SELECT … FOR UPDATE SKIP LOCKED LIMIT 1)` that sets
+  `status = processing`, `leased_until = now() + lease`, `attempts + 1`. Two replicas cannot
+  claim one row, and a worker that dies leaves a row whose lease expires. Prisma cannot express
+  `SKIP LOCKED`. **Its `RETURNING` lists every column of `MeetingFileRecord`**: the worker's
+  events are built from that row, and a column left out is `undefined` where `toMeetingFile`
+  tests for `null`. A column added to `meeting_files` goes into this list and the transcription
+  claim's in the same commit.
 - **Every other status change goes through `MeetingFileRepository.transition`**
   (`id, from, to, patch, lease?`) — a conditional `updateMany` on the expected `from`, and
   for the worker also on the `leased_until` its claim was given, because a reclaim keeps the
   status at `processing` and status alone cannot tell the current holder from the one it
   replaced. A caller that gets `false` has lost a race and discards its result rather than
   overwriting — including removing the thumbnail it wrote, which nothing else would find.
-- **A slow step keeps its lease with a heartbeat.** Transcribing an hour of audio outlasts the
-  60 second lease, so the worker renews `leased_until` every `lease / 3` seconds through
-  `renewLease`, **the module's second raw statement**, which returns the lease the row now
-  holds. That return value is why it is raw: the final `transition` is conditional on the value
-  the _last renewal_ set, not the one the claim did. A renewal updating zero rows means the row
-  is no longer ours — the heartbeat reports `null`, both conditional updates miss on purpose,
-  and the patch and its bytes are discarded. Renewals never overlap and `stop()` waits for the
-  one in flight, since each is conditional on the lease the previous one set.
+- **A slow claim keeps its lease with a heartbeat.** `startLeaseHeartbeat` renews the lease
+  every `lease / 3` seconds through the repository's `renewLease` — raw as well, because it
+  returns the lease the row now holds, and the final conditional write is on the value the
+  _last renewal_ set, not the one the claim did. A renewal updating zero rows means the row is
+  no longer ours — the heartbeat reports `null`, the conditional writes miss on purpose, and the
+  result and its bytes are discarded. Renewals never overlap and `stop()` waits for the one in
+  flight, since each is conditional on the lease the previous one set. Both workers use it. No
+  file step outlasts the 60 second lease today; a transcription always does, and passes an
+  `onLost` so its request is hung up the moment the claim is gone rather than minutes later.
 - **`attempts` counts claims, not failures.** A row claimed a fourth time is failed unrun; a
   purge claimed a fourth time is marked purged unrun with its keys logged at error level, so an
   object the process cannot unlink is not reclaimed every lease for ever. **The delete resets
@@ -455,13 +460,40 @@ get wrong.
   for only when no file is claimable, because a file someone is waiting on outranks a chunk tree
   nobody will read again. `claimExpired` is the sessions' `claimNext`, under the same lease.
 - **Shutdown aborts a step, and an aborted step is released, not failed.**
-  `onApplicationShutdown` aborts the `signal` every step gets before waiting for the tick —
-  otherwise a deploy would wait on a third party for up to `TRANSCRIPTION_TIMEOUT_SECONDS` and
-  end in a SIGKILL and a lapsed lease anyway. A throw after that abort is not the file's fault:
-  the worker takes `processing → uploaded`, removes what earlier steps wrote, and leaves the row
-  for the next claim. A step that waits on anything outside the process must honour the signal.
+  `onApplicationShutdown` aborts the `signal` every step gets before waiting for the tick, so a
+  step that waits on something outside the process cannot hold a deploy for as long as its own
+  timeout allows. A throw after that abort is not the file's fault: the worker takes
+  `processing → uploaded`, removes what earlier steps wrote, and leaves the row for the next
+  claim, its claim count as it was. No step waits on anything outside the process today; one
+  that does must honour the signal.
+- **Transcription has a claim of its own, on the same row.** `MeetingFileTranscriptionRepository`
+  and `MeetingFileTranscriptionWorker` mirror the pair above on `transcription_leased_until` and
+  `transcription_attempts`. The file's lease and count cannot be shared: the purge claims on
+  them and a delete resets them. Four things differ from the file claim, each on purpose:
+  - **A polling loop of its own.** `MeetingFileWorker` handles one claim per tick, so a
+    ten-minute transcription inside it would hold every other upload at `uploaded`. One loop per
+    process also bounds a replica to one transcription at a time. It polls only where the file
+    worker does and only while transcription is switched on, and the e2e suite drains it under a
+    token of its own, `MEETING_FILE_TRANSCRIPTION_WORKER` — which is how a spec sees a file
+    that is `ready` while its transcription is still queued.
+  - **Every write requires `status = 'ready'`**, as well as the expected transcription status
+    and the lease. That one condition is all of "deleted while transcribing": the delete handler
+    knows nothing about transcription, the row simply stops being `ready`, the next renewal
+    finds nothing and hangs up, and a transcript that was already written is removed by the
+    write that then misses.
+  - **A graceful shutdown hands the claim back uncounted.** `release` is `TRANSCRIBING → QUEUED`
+    with `transcription_attempts - 1`, and `transition` refuses that edge so nothing takes it
+    without the decrement. A deploy is expected to land on work that runs for minutes, so no
+    number of deploys may fail a recording. A crash decrements nothing: the lease lapses, the
+    next claim counts, and a fourth claim is failed unrun — which bounds a recording that kills
+    the process that transcribes it.
+  - **It lets go in `onModuleDestroy`, not `onApplicationShutdown`.** Handing a claim back is a
+    write, and `PrismaService` disconnects in its own `onModuleDestroy`, which Nest runs last for
+    a global module — so the connection is still open. The worker also waits for a claim that
+    `drain()` started, not only the loop's, and takes none once shutdown has begun, or it would
+    claim straight back the row it has just released.
 - **The worker is in-process, behind `MEETING_FILES_WORKER_ENABLED` (default on).** A second
-  entry point would be a second thing to start everywhere for two steps that take milliseconds.
+  entry point would be a second thing to start everywhere for steps that take milliseconds.
   Every replica polls when it is on. **`test/setup-env.ts` turns it off** and the API e2e suite
   drives it through `drain()` instead, which is what makes "the row is now ready" an assertion
   rather than a race; `drain()` is reached under the string token `MEETING_FILE_WORKER`, so a
@@ -539,8 +571,9 @@ get wrong.
 **Events and the SSE stream**
 
 - **One publisher per write, and never before it commits.** Every status change is announced on
-  the in-process `EventBus` as `MeetingFileChangedEvent(meetingId, file)`: by the worker on the
-  `true` branch of each conditional transition and after `markPurged`, and by the upload, delete,
+  the in-process `EventBus` as `MeetingFileChangedEvent(meetingId, file)`: by the file worker on
+  the `true` branch of each conditional transition and after `markPurged`, by the transcription
+  worker after a claim and on the `true` branch of each of its writes, and by the upload, delete,
   and retry handlers after theirs. A transition that lost its race changed nothing, so it
   announces nothing. The chunked path needs no publisher because `CompleteUploadHandler` ends in
   `UploadMeetingFileCommand`. The event carries the whole `MeetingFile`, not a diff: the contract
@@ -566,15 +599,39 @@ get wrong.
 
 **Transcription**
 
-- **It is one more `PIPELINE` entry, and that was the point of the list.** Adding
-  `TranscribeStep` changed no status, no route, and nothing in the worker except the heartbeat
-  and the shutdown abort. It is behind `MEETING_FILES_TRANSCRIPTION_ENABLED`, **off by default**,
-  and turning it on is a restart like any other environment change. A file the step does not
-  apply to — a PDF, or anything uploaded while the flag was off — is **skipped, not failed**: it
-  reaches `ready` with no transcript and no reason, and turning the flag on later does not
-  reprocess it. Retry does, one file at a time. `TRANSCRIPTION_API_URL` is validated at boot when
-  the flag is on — **its shape, never the server**. A Whisper that is not running fails a
-  recording's processing; it must not stop the process that serves every upload and download.
+- **A recording is `ready` first, and its transcription is a status of its own.**
+  `MeetingFile.transcriptionStatus` — `queued`, `transcribing`, `transcribed`, `failed`, or
+  absent — moves beside `status`, which never waits for a transcript and is never changed by
+  one. The contract is [the PRD](../../docs/prd-local-whisper-transcription-status.md) and the
+  decisions under it are in [its plan](../../docs/plan-local-whisper-transcription-status.md).
+  The stored enum is UPPER_CASE, as `.claude/rules/prisma.md` asks, and the wire's is
+  lower-case; `meeting-file.mapper.ts` is the one place that translates, through a `Record`
+  that does not compile with a status missing. `transcriptPath` is still "a transcript
+  exists": `transcript_key` is set by the write that makes a row `transcribed` and by no other.
+- **Queueing is the pipeline's last step, and that is all the pipeline has to do with it.**
+  `QueueTranscriptionStep` returns `transcriptionStatus: QUEUED` for an audio or video file
+  while `MEETING_FILES_TRANSCRIPTION_ENABLED` is on, and the file worker merges a step's patch
+  into its `processing → ready` write — so "ready" and "queued" are one statement and one
+  event. Everything else follows from the position: a file that fails a step never gets a
+  status, a retried file gets one when it reaches `ready`, a PDF never does, and **a file that
+  became `ready` while the setting was off is never queued**, because nothing revisits a
+  `ready` row. Keep it last: the patch of a step that ran before one that threw is written with
+  the failure, so a step after it would put `queued` on a failed file.
+- **Switching the setting off stops new work and nothing else.** No file is queued and the
+  transcription worker claims nothing; a `transcribed` row keeps its transcript, a `failed` row
+  its reason, and a `queued` row waits for the setting to come back. Turning it on is a restart
+  like any other environment change — but the step and the worker ask `ConfigService` when they
+  run, not in a constructor, so the e2e suite can flip it with `ConfigService.set` between
+  tests, as it does the stream's TTL. `TRANSCRIPTION_API_URL` is validated at boot when the
+  setting is on — **its shape, never the server**. A Whisper that is not running fails a
+  transcription; it must not stop the process that serves every upload and download.
+- **A failed transcription stores fixed copy the worker chose, and is not retried.** Three
+  sentences from `@repo/shared`: a generic one, one that names `TRANSCRIPTION_TIMEOUT_SECONDS`
+  when that limit is what aborted the request, and one for a fourth claim. Which applies is
+  decided from what ended the request — the worker owns the time limit, the shutdown, and the
+  lost-claim signals — and never from what the provider threw, so nothing Whisper says can
+  reach `transcriptionFailureReason`. The first error ends it: there is no automatic retry, and
+  until the retry route exists nothing takes `failed → queued`.
 - **The provider is a port with one adapter.** `TranscriptionProvider` is
   `transcribe(stream, contentType, signal)` and nothing else, bound under the string token
   `TRANSCRIPTION_PROVIDER` so a spec can substitute a fake without importing the module. The
@@ -583,8 +640,8 @@ get wrong.
   so a gigabyte of video costs a chunk of memory; it goes out chunked, with no `Content-Length`,
   because nothing has measured it. The endpoint's filename is derived from the sniffed type
   (`recording.mp3`), never the user's: the endpoint routes on that extension, and the user's
-  text has no business on another service's wire. Every failure is one `StepError` with one
-  message; the server's own words stay in the log, next to the model that was asked for.
+  text has no business on another service's wire. Every failure is one throw the worker never
+  quotes; the server's own words stay in the log, next to the model that was asked for.
 - **The request is `node:http`, not `fetch`, and must not be simplified back.** A Whisper server
   sends no response header until the whole transcription is done, and Node's `fetch` waits 300
   seconds for the first one — undici's `headersTimeout`, reachable only through a dispatcher,
@@ -597,7 +654,7 @@ get wrong.
   frees the API, not Whisper**: the server finishes the transcription it started, at full
   load, with nobody left to read the answer.
 - **The local Whisper is the `whisper` Compose service — Speaches, behind the `transcription`
-  profile.** Five things about it that `docker-compose.yml` can only half say:
+  profile.** Six things about it that `docker-compose.yml` can only half say:
   - **Pinned to `0.9.0-rc.3-cpu`, never `latest-cpu`.** That tag is still 0.8.3, which has no
     `PRELOAD_MODELS` and names its settings differently. Check `linux/arm64` on any bump.
   - **`TRANSCRIPTION_MODEL` must be the model the service holds** — `Systran/faster-whisper-small`,
@@ -611,6 +668,11 @@ get wrong.
     are there. It restates the image's command, so re-read it when the tag changes.
   - **It decodes MP3, M4A, WAV, MP4, M4V, and WebM itself**, which is why the API image carries
     no ffmpeg and the adapter sends the object as stored.
+  - **It transcribes whatever decodes, so "damaged" is not "failed".** An MP3 cut off half-way
+    comes back `transcribed` with the words that survived, and a tag and one frame header with
+    nothing after them came back as the single word "you". Only bytes it cannot decode at all
+    are a 415, `Failed to decode audio` — which is what `undecodableMp3` in
+    `test/utils/transcription-suite.ts` is, checked against the real service.
   - **Its log says `ERROR … Unexpected streaming transcription response type` on every
     request.** That is a stray line in this release, logged before the answer is built; the
     request it belongs to succeeded.
@@ -618,10 +680,8 @@ get wrong.
   `src/config/transcription.defaults.ts` holds the default model and
   `DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS` with the numbers behind it: about six seconds of work
   per minute of audio, so twelve minutes covers a one-hour recording at twice that. The rate is
-  the host's — re-measure rather than reason about it, through the API, from the worker's
-  `transcribed … in …ms` line.
-- **Both the flag and the TTL are read per run, not in a constructor**, so the e2e suite can
-  change them with `ConfigService.set` between tests.
+  the host's — re-measure rather than reason about it, through the API, from the transcription
+  worker's `transcribed … in …ms` line.
 
 ## Bootstrap behaviour (`src/configure-app.ts`)
 
@@ -729,6 +789,12 @@ Postgres), **so a module whose only coverage is an e2e spec is uncovered as far 
 concerned.** Every command handler, query handler, and read service gets a `*.spec.ts` beside
 it for that reason, not for a coverage number.
 
+**A spec that needs a whole stored row builds it from a `*.fixture.ts` beside the code** and
+names only the columns its case is about — `buildMeetingFileRecord` is the one that exists —
+so a column added to the table is one edit there, not one in every spec. `tsconfig.build.json`
+excludes the pattern as it does specs, so a fixture never reaches `dist`. Specs older than the
+fixture still restate the row; move one over when it next has to change.
+
 E2E specs run against the **real database** `DATABASE_URL` points at — by default your
 development one; point it elsewhere if local rows matter to you. `test/utils/create-test-app.ts`
 boots `AppModule` and `useApiSuite` truncates the tables it touches, so `test:e2e` needs
@@ -739,7 +805,7 @@ test inherits another's rows (which is also what makes a repeated run independen
 `afterAll` so the final test's fixtures are not stranded. **The web app's Playwright suite
 truncates the same table, so the two must never run at the same time.**
 
-Six things about that setup are easy to get wrong:
+Seven things about that setup are easy to get wrong:
 
 - **Environment must be set in `test/setup-env.ts`, not in a helper.** `ConfigModule.forRoot()`
   is evaluated when `app.module.ts` is _imported_ and prefers `process.env`, so anything
@@ -763,12 +829,19 @@ Six things about that setup are easy to get wrong:
   why the file specs need no cleanup of their own and why there is deliberately no second
   truncation helper to disagree with it about what "clean" means. The files' helpers also seed
   states a route cannot produce on demand (`leased_until`, `attempts`, `purged_at`, a past
-  `expires_at`).
+  `expires_at`, a transcription claim whose worker died).
 - **`test/utils/sse.ts` is the only client that can read a stream route**, over Node's `http`
   directly. Supertest buffers a whole response and resolves when the server ends it, which for
   `files/events` is after the TTL — ordering could not be asserted and every test would cost the
   TTL. The helper parses events as they arrive and hands them over one at a time; a non-200 is
   read to completion and exposed as `body`.
+- **`test/utils/fake-transcriber.ts` is the Whisper the transcription specs talk to** — an
+  OpenAI-shaped endpoint on loopback that a spec tells to answer, fail, or hold — rather than a
+  fake bound to `TRANSCRIPTION_PROVIDER`. The application's own HTTP adapter is therefore what
+  runs: an error body really crosses the wire before a spec asserts it reached no row, and a
+  request the worker aborts really is hung up on (`hangUps`). `useTranscriptionSuite` starts
+  it, points the application at it, and switches the setting on before each test; every other
+  spec file runs with transcription off, which is why none of them had to change.
 - **`test/utils/jwt.ts` verifies tokens with `node:crypto` alone**, never the library the API
   signs with, so a token only `@nestjs/jwt` can read fails the assertion. It is checked against
   a signature produced by `openssl dgst -sha256 -hmac`. Do not "simplify" it into `JwtService`.

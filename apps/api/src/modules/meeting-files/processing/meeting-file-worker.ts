@@ -110,11 +110,11 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
 
   /**
    * Stops the loop, tells a step in flight to let go, and waits for the tick to finish, so
-   * shutdown never abandons a claim. The abort matters now that a step can take minutes: a
-   * transcription in progress is dropped and its row handed back (see `release`), rather
-   * than the process waiting on a third party for up to `TRANSCRIPTION_TIMEOUT_SECONDS` —
-   * which is longer than any orchestrator's grace period, so the wait would end in a
-   * SIGKILL and a lapsed lease anyway.
+   * shutdown never abandons a claim. The abort is for a step that waits on something outside
+   * the process: its row is handed back (see `release`) rather than the process waiting for
+   * as long as that step's own timeout allows — which can outlast an orchestrator's grace
+   * period, so the wait would end in a SIGKILL and a lapsed lease anyway. No step does
+   * today: transcription, which did, has a worker of its own.
    */
   async onApplicationShutdown(): Promise<void> {
     // Aborted before the wait, never after: the tick in flight has to be told to let go
@@ -198,9 +198,9 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
    * Runs the steps with the claim's lease held, and hands back both the outcome and the lease
    * the row actually holds — which is what every write below is conditional on.
    *
-   * The lease is extended while the steps run: a step slower than the lease — transcribing an
-   * hour of audio — would otherwise have its row reclaimed by another worker and its result
-   * thrown away for no reason. The heartbeat is stopped exactly once, whichever way the steps
+   * The lease is extended while the steps run: a step slower than the lease — checksumming
+   * a gigabyte off a slow disk — would otherwise have its row reclaimed by another worker and
+   * its result thrown away. The heartbeat is stopped exactly once, whichever way the steps
    * ended, and before anything is written, which is why its `stop` waits for a renewal still
    * in flight. A renewal that found the row was no longer ours leaves `null`, which makes the
    * caller's conditional updates miss on purpose and the result be discarded.
@@ -283,10 +283,6 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
   private async discard(patch: StepPatch): Promise<void> {
     if (patch.thumbnailKey !== undefined) {
       await this.storage.remove(patch.thumbnailKey);
-    }
-
-    if (patch.transcriptKey !== undefined) {
-      await this.storage.remove(patch.transcriptKey);
     }
   }
 

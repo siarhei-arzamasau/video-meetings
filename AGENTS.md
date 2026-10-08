@@ -26,7 +26,7 @@ rather than mirror the input language.
 is its client. Two things are worth knowing before reading either: **pages are gated on the
 client**, because the token lives in `localStorage` where neither the server nor middleware
 can read it, and **`meeting-files` is the largest module** — CQRS over local-disk storage
-with an in-process worker. Each app has its own `AGENTS.md` with the detail.
+with two in-process workers. Each app has its own `AGENTS.md` with the detail.
 
 The design this implements:
 [`docs/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/specs/2026-07-29-video-meetings-monorepo-design.md),
@@ -40,12 +40,23 @@ the storage layout, and the module's file layout in
 [phase 1](docs/plans/2026-09-19-meeting-file-upload-phase-1.md)'s _Design decisions_; the
 1 GiB cap, the 8 MiB chunk size, the session table, and why a completed session enters the
 phase 1 pipeline unchanged in [phase 2](docs/plans/2026-09-19-meeting-file-upload-phase-2.md)'s
-_Assumptions_ and _Design constraints_; retry and the transcription step in
+_Assumptions_ and _Design constraints_; retry in
 [phase 3](docs/plans/2026-09-19-meeting-file-upload-phase-3.md); the SSE stream that replaced
 the poll in [phase 4](docs/plans/2026-09-19-meeting-file-upload-phase-4.md). The technology
 choices behind all four (multer, `file-type`, the lease protocol, SSE over polling) are argued
 in [`docs/research-meeting-upload.md`](docs/research-meeting-upload.md). Read those before
 changing that module; do not import them into a session wholesale.
+
+**Transcription is no longer what phase 3 describes.** That plan made it a pipeline step that
+held a recording at `processing` and failed the file with it. It is now
+[`docs/prd-local-whisper-transcription-status.md`](docs/prd-local-whisper-transcription-status.md):
+a local Whisper `small`, and a transcription status of its own beside a file that is `ready`
+throughout. The decisions that PRD leaves open — the columns, the second worker and its
+claim, what a shutdown and a switched-off setting do, the failure copy — are settled in
+[`docs/plan-local-whisper-transcription-status.md`](docs/plan-local-whisper-transcription-status.md).
+Its phases 1 and 2 are built — Whisper, and the status in the API. Phases 3 to 5, the meeting
+page and the retry of a failed transcription, are not: until they are, nothing in `apps/web`
+shows a transcript and a failed transcription stays failed.
 
 ## Commands
 

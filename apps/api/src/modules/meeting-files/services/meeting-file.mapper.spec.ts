@@ -1,4 +1,4 @@
-import { MAX_MEETING_FILE_NAME_LENGTH } from '@repo/shared';
+import { MAX_MEETING_FILE_NAME_LENGTH, MEETING_FILE_TRANSCRIPTION_STATUSES } from '@repo/shared';
 
 import {
   MeetingFileRecord,
@@ -8,6 +8,7 @@ import {
   toMeetingFile,
   transcriptKeyOf,
 } from './meeting-file.mapper';
+import { TranscriptionStatus } from './meeting-file-transcription-status';
 
 const MEETING_ID = '44444444-4444-4444-8444-444444444444';
 const FILE_ID = '55555555-5555-4555-8555-555555555555';
@@ -32,6 +33,10 @@ const RECORD: MeetingFileRecord = {
   processedAt: null,
   deletedAt: null,
   purgedAt: null,
+  transcriptionStatus: null,
+  transcriptionFailureReason: null,
+  transcriptionAttempts: 0,
+  transcriptionLeasedUntil: null,
 };
 
 describe('toMeetingFile', () => {
@@ -77,6 +82,82 @@ describe('toMeetingFile', () => {
     expect(
       toMeetingFile({ ...RECORD, processedAt: new Date('2026-09-01T10:00:01.000Z') }),
     ).toMatchObject({ processedAt: '2026-09-01T10:00:01.000Z' });
+  });
+
+  describe('the transcription status', () => {
+    it('is absent for a row that has none, reason and all', () => {
+      const file = toMeetingFile({ ...RECORD, transcriptionFailureReason: 'Left behind' });
+
+      expect(file).not.toHaveProperty('transcriptionStatus');
+      expect(file).not.toHaveProperty('transcriptionFailureReason');
+    });
+
+    it.each([
+      [TranscriptionStatus.QUEUED, 'queued'],
+      [TranscriptionStatus.TRANSCRIBING, 'transcribing'],
+      [TranscriptionStatus.TRANSCRIBED, 'transcribed'],
+      [TranscriptionStatus.FAILED, 'failed'],
+    ] as const)('translates the stored %s to the wire\u2019s %s', (stored, wire) => {
+      expect(toMeetingFile({ ...RECORD, transcriptionStatus: stored })).toMatchObject({
+        transcriptionStatus: wire,
+      });
+    });
+
+    it('covers the whole shared vocabulary, so no stored status is left without a word', () => {
+      const translated = Object.values(TranscriptionStatus).map(
+        (stored) => toMeetingFile({ ...RECORD, transcriptionStatus: stored }).transcriptionStatus,
+      );
+
+      expect(translated.toSorted()).toEqual([...MEETING_FILE_TRANSCRIPTION_STATUSES].toSorted());
+    });
+
+    it('carries the reason only when the transcription failed', () => {
+      const failed = { ...RECORD, transcriptionFailureReason: 'Nope' };
+
+      expect(
+        toMeetingFile({ ...failed, transcriptionStatus: TranscriptionStatus.FAILED }),
+      ).toMatchObject({ transcriptionStatus: 'failed', transcriptionFailureReason: 'Nope' });
+      // A reason left behind by a retry must not surface on a transcription that is queued again.
+      expect(
+        toMeetingFile({ ...failed, transcriptionStatus: TranscriptionStatus.QUEUED }),
+      ).not.toHaveProperty('transcriptionFailureReason');
+      expect(
+        toMeetingFile({
+          ...RECORD,
+          transcriptionStatus: TranscriptionStatus.FAILED,
+          transcriptionFailureReason: null,
+        }),
+      ).not.toHaveProperty('transcriptionFailureReason');
+    });
+
+    it('is independent of the file\u2019s own status and reason', () => {
+      const file = toMeetingFile({
+        ...RECORD,
+        status: 'ready',
+        failureReason: 'A file reason',
+        transcriptionStatus: TranscriptionStatus.FAILED,
+        transcriptionFailureReason: 'A transcription reason',
+      });
+
+      expect(file).toMatchObject({
+        status: 'ready',
+        transcriptionStatus: 'failed',
+        transcriptionFailureReason: 'A transcription reason',
+      });
+      expect(file).not.toHaveProperty('failureReason');
+    });
+
+    it('never lets the claim\u2019s count or lease out', () => {
+      const file = toMeetingFile({
+        ...RECORD,
+        transcriptionStatus: TranscriptionStatus.TRANSCRIBING,
+        transcriptionAttempts: 2,
+        transcriptionLeasedUntil: new Date(),
+      });
+
+      expect(file).not.toHaveProperty('transcriptionAttempts');
+      expect(file).not.toHaveProperty('transcriptionLeasedUntil');
+    });
   });
 });
 

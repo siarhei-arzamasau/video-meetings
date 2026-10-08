@@ -42,6 +42,10 @@ describe('PreviewStep', () => {
     processedAt: null,
     deletedAt: null,
     purgedAt: null,
+    transcriptionStatus: null,
+    transcriptionFailureReason: null,
+    transcriptionAttempts: 0,
+    transcriptionLeasedUntil: null,
   });
 
   const store = async (bytes: Buffer): Promise<void> => {

@@ -18,6 +18,12 @@ export interface LeaseHeartbeatOptions {
   /** The lease the claim was given. `null` disables renewal, as a lost one does. */
   lease: Date | null;
   leaseSeconds: number;
+  /**
+   * Called once, the moment a renewal finds the row is no longer ours. For a caller whose
+   * work is a request to something outside the process: without it a transcription whose file
+   * was deleted would run on for minutes to produce a result that is already discarded.
+   */
+  onLost?: () => void;
 }
 
 /**
@@ -34,50 +40,14 @@ export interface LeaseHeartbeatOptions {
  * A third of the lease, so two renewals may be lost before it expires. The timer is `unref`ed:
  * a heartbeat must never be the reason the process stays alive.
  */
-export function startLeaseHeartbeat({
-  files,
-  logger,
-  fileId,
-  meetingId,
-  lease,
-  leaseSeconds,
-}: LeaseHeartbeatOptions): LeaseHeartbeat {
-  const everyMs = Math.max(1_000, Math.floor((leaseSeconds / 3) * 1_000));
-  let current = lease;
-  let running = true;
+export function startLeaseHeartbeat(options: LeaseHeartbeatOptions): LeaseHeartbeat {
+  const everyMs = Math.max(1_000, Math.floor((options.leaseSeconds / 3) * 1_000));
+  const renewal = new LeaseRenewal(options);
   let inFlight: Promise<void> | undefined;
-
-  const beat = async (): Promise<void> => {
-    if (!running || current === null) {
-      return;
-    }
-
-    try {
-      const renewed = await files.renewLease(fileId, current, leaseSeconds);
-
-      if (renewed === null) {
-        // Deleted, or reclaimed after an expiry this heartbeat did not prevent. Stop
-        // renewing; the result will be discarded when the step finishes.
-        logger.warn(`File ${fileId} of meeting ${meetingId}: lease lost while processing`);
-        current = null;
-
-        return;
-      }
-
-      current = renewed;
-    } catch (error) {
-      // A failed renewal is not a lost lease: the next beat tries again, and the transition
-      // at the end is the real check.
-      logger.error(
-        `File ${fileId}: renewing the lease failed`,
-        error instanceof Error ? error.stack : String(error),
-      );
-    }
-  };
 
   const timer = setInterval(() => {
     if (inFlight === undefined) {
-      inFlight = beat().finally(() => {
+      inFlight = renewal.renew().finally(() => {
         inFlight = undefined;
       });
     }
@@ -86,11 +56,66 @@ export function startLeaseHeartbeat({
 
   return {
     stop: async () => {
-      running = false;
+      renewal.halt();
       clearInterval(timer);
       await inFlight;
 
-      return current;
+      return renewal.lease;
     },
   };
+}
+
+/**
+ * One claim's lease as its heartbeat knows it: the value the row holds, and the one renewal
+ * that replaces it. The timer above decides when a renewal runs and that two never overlap;
+ * this decides what one does.
+ */
+class LeaseRenewal {
+  private current: Date | null;
+  private running = true;
+
+  constructor(private readonly options: LeaseHeartbeatOptions) {
+    this.current = options.lease;
+  }
+
+  /** The lease the row holds now — `null` once a renewal found the claim gone. */
+  get lease(): Date | null {
+    return this.current;
+  }
+
+  /** No renewal starts after this; one already in flight still finishes. */
+  halt(): void {
+    this.running = false;
+  }
+
+  async renew(): Promise<void> {
+    const { files, logger, fileId, meetingId, leaseSeconds, onLost } = this.options;
+
+    if (!this.running || this.current === null) {
+      return;
+    }
+
+    try {
+      const renewed = await files.renewLease(fileId, this.current, leaseSeconds);
+
+      if (renewed === null) {
+        // Deleted, or reclaimed after an expiry this heartbeat did not prevent. Stop
+        // renewing; the result will be discarded when the step finishes.
+        logger.warn(`File ${fileId} of meeting ${meetingId}: lease lost mid-run`);
+        this.current = null;
+        onLost?.();
+
+        return;
+      }
+
+      this.current = renewed;
+    } catch (error) {
+      // A failed renewal is not a lost lease: the next beat tries again, and the transition
+      // at the end is the real check.
+      logger.error(
+        `File ${fileId}: renewing the lease failed`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    }
+  }
 }

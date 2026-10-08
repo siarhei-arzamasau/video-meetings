@@ -8,12 +8,17 @@ import type { Readable } from 'node:stream';
 export const TRANSCRIPTION_PROVIDER = 'TRANSCRIPTION_PROVIDER';
 
 /**
- * What the transcription step needs from the outside world, and nothing more: bytes in, text
- * out. The step never learns which vendor answered, which is what makes the vendor
+ * What the transcription worker needs from the outside world, and nothing more: bytes in,
+ * text out. The worker never learns which server answered, which is what makes the server
  * configuration rather than code — and what lets every test run against a fake.
  *
- * The implementation must honour `signal`: the step's caller aborts a transcription that has
- * outrun its timeout, and a provider that ignores it holds a worker's lease for ever.
+ * The implementation must honour `signal`. The worker aborts a request that has outrun its
+ * time limit, one whose claim is gone, and whatever is in flight at shutdown — and a provider
+ * that ignores it holds a claim's lease for as long as it likes.
+ *
+ * **What an implementation throws is for the log, never for the user.** The worker decides
+ * the reason a failed transcription carries from what ended the request, so nothing a
+ * provider says — or a server said to it — can reach a row.
  */
 export interface TranscriptionProvider {
   transcribe(stream: Readable, contentType: string, signal: AbortSignal): Promise<string>;

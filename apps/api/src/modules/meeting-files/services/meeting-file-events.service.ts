@@ -130,7 +130,7 @@ export class MeetingFileEventsService implements OnModuleInit, BeforeApplication
    * validated boot-time value either way — changing the TTL is a restart, like every setting
    * here — but asking at subscribe is what lets the e2e suite shorten it with
    * `ConfigService.set` between tests instead of rebuilding the application, the same reason
-   * `TranscribeStep` asks for its flag when it runs.
+   * the transcription worker asks for its setting on every tick.
    */
   private ttlMs(): number {
     return this.config.get<number>('MEETING_FILES_STREAM_TTL_SECONDS', 300) * 1_000;

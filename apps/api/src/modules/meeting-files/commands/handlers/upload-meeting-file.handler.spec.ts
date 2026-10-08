@@ -12,6 +12,7 @@ import { Test } from '@nestjs/testing';
 
 import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
 import { ContentSniffer } from '../../services/content-sniffer';
+import { buildMeetingFileRecord } from '../../services/meeting-file-record.fixture';
 import { MeetingFileRepository } from '../../services/meeting-file.repository';
 import type { MeetingFileRecord } from '../../services/meeting-file.mapper';
 import { MeetingFileStorage } from '../../storage/meeting-file-storage';
@@ -48,26 +49,16 @@ describe('UploadMeetingFileHandler', () => {
 
     execute.mockReset().mockResolvedValue(MEETING);
     createWithinCap.mockReset().mockImplementation(
-      async (data: Partial<MeetingFileRecord>): Promise<MeetingFileRecord> => ({
-        id: data.id ?? '',
-        meetingId: data.meetingId ?? '',
-        uploaderId: data.uploaderId ?? '',
-        name: data.name ?? '',
-        contentType: data.contentType ?? '',
-        size: data.size ?? 0,
-        storageKey: data.storageKey ?? '',
-        checksum: null,
-        thumbnailKey: null,
-        transcriptKey: null,
-        status: 'uploaded',
-        failureReason: null,
-        attempts: 0,
-        leasedUntil: null,
-        createdAt: new Date('2026-09-01T10:00:00.000Z'),
-        processedAt: null,
-        deletedAt: null,
-        purgedAt: null,
-      }),
+      async (data: Partial<MeetingFileRecord>): Promise<MeetingFileRecord> =>
+        buildMeetingFileRecord({
+          id: data.id ?? '',
+          meetingId: data.meetingId ?? '',
+          uploaderId: data.uploaderId ?? '',
+          name: data.name ?? '',
+          contentType: data.contentType ?? '',
+          size: data.size ?? 0,
+          storageKey: data.storageKey ?? '',
+        }),
     );
     // A real `put` renames; the fake does the same so the temp-file assertions mean something.
     put.mockReset().mockImplementation(async (_key: string, source: string) => {
