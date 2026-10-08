@@ -12,6 +12,7 @@ This package's own:
 
 ```bash
 pnpm --filter=@repo/api test:e2e         # jest with test/jest-e2e.json — see Tests
+pnpm --filter=@repo/api test:live        # real requests to Anthropic — see Tests
 pnpm --filter=@repo/api test:watch
 pnpm --filter=@repo/api prisma:generate
 pnpm --filter=@repo/api prisma:migrate   # prisma migrate dev
@@ -694,6 +695,34 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   the host's — re-measure rather than reason about it, through the API, from the transcription
   worker's `transcribed … in …ms` line.
 
+## Claude (`src/modules/claude-agent`)
+
+`ClaudeAgentService.runPrompt(prompt, model)` is a prompt in and text out, through the Claude
+Agent SDK. No route reaches it; a feature that wants Claude imports `ClaudeAgentModule`.
+
+- **The SDK is Claude Code as a library, not an HTTP client.** Each call starts a Claude Code
+  process — a native binary of about 220 MB, installed as a per-platform optional dependency —
+  and that process is what talks to Anthropic. By the SDK's own defaults it loads the user's
+  and the project's settings and the MCP servers they configure, holds Bash and file tools, and
+  inherits the whole environment. `optionsFor` takes each of those away, and every line of it
+  is load-bearing: give the process a tool only together with a decision about what a prompt
+  may then make it do on the API's host.
+- **The environment is replaced, not inherited** — the SDK's `env` is not merged with
+  `process.env`. The process gets `INHERITED_VARIABLES` and the token: not the API's secrets,
+  and not the `ANTHROPIC_BASE_URL` and `CLAUDE_CODE_*` an API inherits when an agent session
+  started it, which would point the SDK, configured token and all, at that session's endpoint.
+  A variable the process really needs, a proxy for one, is added to that list.
+- **`ANTHROPIC_AUTH_TOKEN` is the only credential, and its absence is an error, not a
+  fallback.** It is optional at boot, since nothing in a request path needs it yet. Without the
+  check in `requireAuthToken` the process would authenticate with whatever the host has — on a
+  developer's machine, their own Claude login — and the call would succeed on the wrong account.
+- **Never import the SDK at the top of a file.** It is ESM-only. Node 24 loads it from this
+  CommonJS build regardless, but Jest fails on it with `Cannot use import statement outside a
+module` unless Node runs with `--experimental-vm-modules`, and `ClaudeAgentModule` is in
+  `AppModule`, so a top-level import would fail every e2e spec before its first test. The
+  `await import()` inside `runPrompt` runs only when a prompt is sent; everything else the
+  service takes from the package is `import type`.
+
 ## Bootstrap behaviour (`src/configure-app.ts`)
 
 **Every global belongs in `configureApp`, not in `main.ts`.** `main.ts` and the e2e test app
@@ -805,6 +834,27 @@ names only the columns its case is about — `buildMeetingFileRecord` is the one
 so a column added to the table is one edit there, not one in every spec. `tsconfig.build.json`
 excludes the pattern as it does specs, so a fixture never reaches `dist`. Specs older than the
 fixture still restate the row; move one over when it next has to change.
+
+**`test:live` is a third suite, and the only one that leaves the machine.** `test/*.live-spec.ts`
+under `test/jest-live.json` sends real requests to Anthropic — nothing mocked, nothing replayed
+— so it needs the network and a working `ANTHROPIC_AUTH_TOKEN`, and costs a fraction of a cent
+a run. It needs no database, which is why it is not an e2e spec, and nothing runs it but you.
+
+- **The token comes from the env files, not the shell.** The spec builds a `ConfigModule` over
+  `ENV_FILE_PATHS`, the files `AppModule` reads, relative to `apps/api`. They are gitignored,
+  so **a fresh worktree has none**, and the suite fails with `ANTHROPIC_AUTH_TOKEN is not set`
+  until one exists there. The spec deletes the variable from `process.env` before loading
+  them, and that is the one place it departs from the API on purpose: `ConfigModule` lets the
+  environment win, so a token exported in a developer's shell would otherwise be the one a
+  run spends — or the reason it fails with a good token in the file.
+- **The script sets `NODE_OPTIONS=--experimental-vm-modules`**, which is what lets Jest load
+  the ESM-only SDK. A spec in any other suite that sends a prompt fails on that import.
+- **The refused-token test is what makes the other one evidence.** It swaps in a token
+  Anthropic never issued and expects `AUTHENTICATION`; were the SDK using a credential it
+  found elsewhere on the host, that call would succeed too.
+
+A mocked SDK would only repeat back what the mock assumed, so the unit spec beside
+`ClaudeAgentService` covers the one thing decided before a request leaves: no token, no call.
 
 E2E specs run against the **real database** `DATABASE_URL` points at — by default your
 development one; point it elsewhere if local rows matter to you. `test/utils/create-test-app.ts`
