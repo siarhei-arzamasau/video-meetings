@@ -485,7 +485,13 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
     write that then misses. **That write removes it only when the file has gone.** A write
     that misses with the file still `ready` lost its claim to another worker instead, and the
     transcript's key is one per recording, not one per claim: by then it may hold what that
-    worker recorded, so it is left alone.
+    worker recorded, so it is left alone. **One key is safe because of two things, and both
+    have to stay true.** Two claims of a recording send the same bytes to the same model, so
+    either text is that recording's transcript; and `writeText` renames a finished file into
+    place, so a late claim replaces a committed transcript whole or not at all. A key per
+    claim would cost the purge its way of finding a transcript: it removes by the key it
+    derives, and a worker that died between writing its text and recording it would leave a
+    file no row names.
   - **A graceful shutdown hands the claim back uncounted.** `release` is `TRANSCRIBING → QUEUED`
     with `transcription_attempts - 1`, and `transition` refuses that edge so nothing takes it
     without the decrement. A deploy is expected to land on work that runs for minutes, so no

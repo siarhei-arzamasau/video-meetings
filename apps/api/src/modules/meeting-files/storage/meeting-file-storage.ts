@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import { open, mkdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -114,12 +115,24 @@ export class MeetingFileStorage implements OnModuleInit {
    * Text beside an object — a recording's transcript, written as UTF-8. Here rather than an
    * `fs.writeFile` at the call site, so every filesystem call stays behind the key check: a
    * worker writes by key or not at all.
+   *
+   * **Written beside the root and renamed into place, never written over.** A transcript's
+   * key is one per recording, so a second claim of that recording writes where a row may
+   * already point. Renamed, what is under the key is always one whole text — the old one or
+   * the new one — for a reader, and after a crash half-way through.
    */
   async writeText(key: string, contents: string): Promise<void> {
     const destination = this.pathOf(key);
+    const temporary = path.join(this.tempDir(), `text-${randomUUID()}`);
 
-    await mkdir(path.dirname(destination), { recursive: true });
-    await writeFile(destination, contents, 'utf8');
+    try {
+      await writeFile(temporary, contents, 'utf8');
+      await this.move(destination, temporary);
+    } catch (error) {
+      await rm(temporary, { force: true });
+
+      throw error;
+    }
   }
 
   openRead(key: string): fs.ReadStream {
