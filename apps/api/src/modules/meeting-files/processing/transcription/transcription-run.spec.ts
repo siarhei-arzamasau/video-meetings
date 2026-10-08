@@ -3,6 +3,7 @@ import type { Readable } from 'node:stream';
 
 import { Logger } from '@nestjs/common';
 
+import { holdWrite } from '../../services/held-write.fixture';
 import { TranscriptionStatus } from '../../services/meeting-file-transcription-status';
 import { buildMeetingFileRecord } from '../../services/meeting-file-record.fixture';
 import type { MeetingFileStorage } from '../../storage/meeting-file-storage';
@@ -140,6 +141,30 @@ describe('runTranscription', () => {
       timedOut: true,
     });
     expect(signalSeen().aborted).toBe(true);
+  });
+
+  it('does not blame the limit for a provider error because the heartbeat was slow to stop', async () => {
+    const refused = new Error('refused');
+    const provider: { fail?: (error: Error) => void } = {};
+    const renewal = holdWrite<Date>();
+    renewLease.mockReturnValue(renewal.answered);
+    transcribe.mockImplementation(
+      () =>
+        new Promise<string>((_resolve, reject) => {
+          provider.fail = reject;
+        }),
+    );
+
+    // A renewal goes out a second in and stays out. The provider fails at 1.1s, inside the
+    // 1.3s limit; the limit then passes while `stop` is still waiting for that renewal.
+    const running = run(3, 1.3);
+    await settle(1_100);
+    provider.fail?.(refused);
+    await settle(400);
+    renewal.answer(new Date(Date.now() + 3_000));
+
+    await expect(running).resolves.toMatchObject({ outcome: { error: refused }, timedOut: false });
+    expect(renewLease).toHaveBeenCalledTimes(1);
   });
 
   it('renews the lease while the provider works, and hands back the lease the row now holds', async () => {

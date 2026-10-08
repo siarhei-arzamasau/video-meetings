@@ -41,7 +41,8 @@ export interface TranscriptionRunOptions {
  * transcription runs for minutes, and nobody is left to read the answer.
  *
  * The heartbeat is stopped before this returns, so the caller's conditional writes are made
- * against a lease no renewal is about to replace.
+ * against a lease no renewal is about to replace. `timedOut` is decided before that stop, at
+ * the moment the provider settles.
  */
 export async function runTranscription({
   claimed,
@@ -89,5 +90,11 @@ export async function runTranscription({
     stream?.destroy();
   }
 
-  return { held: await heartbeat.stop(), outcome, timedOut: timeLimit.aborted };
+  // Read now, as the provider settles, and not after the heartbeat has: `stop` waits for a
+  // renewal in flight, and a limit that fires during that wait is not what ended the request.
+  // Read late, a provider error just short of the limit was recorded as the time limit — the
+  // one failure with no Retry.
+  const timedOut = timeLimit.aborted;
+
+  return { held: await heartbeat.stop(), outcome, timedOut };
 }
