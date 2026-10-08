@@ -74,6 +74,15 @@ aliases in sync if either changes.
   the digest's request. It is a class at each call site rather than an override of
   `--danger` in `globals.css`, because darkening the token would darken every danger button
   with it.
+  **HeroUI's own form text gets the same colour from `globals.css`, not from a class**: a
+  field's error message (12px), the label of an invalid field, and a required field's
+  asterisk are all written in `--danger` by HeroUI's stylesheet, where no call site can
+  reach. The rule there redefines `--danger` as `--danger-soft-foreground` inside `.label`
+  and `.field-error` only — two components that draw nothing but text — which reaches all
+  three whatever selector paints them, and leaves every danger button and the token itself
+  alone. Measured on the sign-in and registration forms: 6.70:1 on a light card, 6.30:1 on
+  a dark one. **A HeroUI component adopted later that writes text in `--danger`** — a
+  danger menu or list-box item does — **is added to that rule**, after measuring it.
 - **`globals.css` also gives dark-mode form fields their edge back and their hover state, and
   the two values are one decision.** HeroUI paints a field the same colour as the card in _both_
   themes — white on white in light, `oklch(21.03%)` on itself in dark — with `--field-border`
