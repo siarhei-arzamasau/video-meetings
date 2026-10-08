@@ -14,6 +14,9 @@ import { useFilesAnnouncement } from './use-files-announcement';
 import { useMeetingFiles } from './use-meeting-files';
 import { useUploadQueue } from './use-upload-queue';
 
+/** One array for every render without a list, so nothing downstream sees it change. */
+const NO_FILES: ReadonlyArray<MeetingFile> = [];
+
 interface FilesSectionProps {
   token: string;
   meeting: Meeting;
@@ -46,8 +49,9 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
   const [deleting, setDeleting] = useState<MeetingFile | null>(null);
   const input = useRef<HTMLInputElement>(null);
 
-  const files = list.state === 'ready' ? sortNewestFirst(list.files) : [];
-  const announcement = useFilesAnnouncement(files);
+  const listed = list.state === 'ready' ? list.files : NO_FILES;
+  const files = sortNewestFirst(listed);
+  const announcement = useFilesAnnouncement(listed);
   const isEmpty = list.state === 'ready' && files.length === 0 && uploads.length === 0;
   // The queue is shown whenever it has rows, even while the list is loading or failed to load:
   // an upload the user just started must show its progress, its Cancel, or its rejection.

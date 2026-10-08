@@ -45,4 +45,32 @@ describe('useFilesAnnouncement', () => {
 
     expect(result.current).toBe('All files have finished processing.');
   });
+
+  it('says when a transcription it was following ends, which no chip would tell a listener', () => {
+    const { result, rerender } = announce([file('a', { transcriptionStatus: 'queued' })]);
+
+    rerender({ list: [file('a', { transcriptionStatus: 'transcribing' })] });
+    expect(result.current).toBe('');
+
+    rerender({ list: [file('a', { transcriptionStatus: 'transcribed' })] });
+    expect(result.current).toBe('The transcript of a.mp3 is ready.');
+  });
+
+  it('says two changes that arrive in one render as one phrase, not the second alone', () => {
+    const { result, rerender } = announce([
+      file('a', { status: 'processing' }),
+      file('b', { transcriptionStatus: 'transcribing' }),
+    ]);
+
+    rerender({
+      list: [
+        file('a', { transcriptionStatus: 'queued' }),
+        file('b', { transcriptionStatus: 'failed' }),
+      ],
+    });
+
+    expect(result.current).toBe(
+      'All files have finished processing. Transcription of b.mp3 failed.',
+    );
+  });
 });
