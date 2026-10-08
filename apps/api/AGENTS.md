@@ -628,6 +628,8 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   lower-case; `meeting-file.mapper.ts` is the one place that translates, through a `Record`
   that does not compile with a status missing. `transcriptPath` is still "a transcript
   exists": `transcript_key` is set by the write that makes a row `transcribed` and by no other.
+  Recordings the old pipeline step transcribed had the key and no status; a migration gave
+  them `TRANSCRIBED`, so the page offers their transcripts too.
 - **Queueing is the pipeline's last step, and that is all the pipeline has to do with it.**
   `QueueTranscriptionStep` returns `transcriptionStatus: QUEUED` for an audio or video file
   while `MEETING_FILES_TRANSCRIPTION_ENABLED` is on, and the file worker merges a step's patch
