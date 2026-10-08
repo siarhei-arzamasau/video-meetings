@@ -27,7 +27,8 @@ src/
   configure-app.ts      Every global that shapes request handling
   app.module.ts         Root module — register new feature modules here
   config/               Environment contract
-  common/               Cross-cutting filters and interceptors
+  common/               Cross-cutting filters and interceptors, and shutdown/ for what
+                        the process does with its connections when it is stopped
   modules/<feature>/    One directory per feature: module, controller, specs, and
                         commands/ — a command class plus its handler per write operation.
                         queries/ mirrors it where a read crosses a module boundary.
@@ -731,6 +732,18 @@ assert behaviour that only exists because of these, and would keep passing again
 that had quietly diverged. Only process-level concerns (`enableShutdownHooks`, `listen`) stay
 in `main.ts`.
 
+- **`ConnectionDrainService`'s middleware, first in the chain**, and its provider in the root
+  module. Until shutdown it only counts; from the first shutdown hook on it makes every
+  connection carry its last answer: `Connection: close` on any response not yet started, and
+  the socket closed behind one already under way. **Node does not do this.** `server.close()`
+  closes idle connections once, when it is called; a connection busy at that moment — a files
+  stream is, on every open meeting page — is kept alive again afterwards, and a page that
+  reopens its stream after a second and polls every three never gives it the five idle
+  seconds that would close it. A stopped API answered one open page for 96 seconds, workers
+  gone and Prisma disconnected. **Not `forceCloseConnections`**, which destroys every socket
+  and an upload in flight with it. The spec beside the class pins the Node behaviour too, in a
+  case with no drain, so the day Node closes those connections itself that case fails and the
+  class can go.
 - **Global prefix `api`** — a controller at `@Controller('health')` serves `/api/health`.
 - **Express's `trust proxy`, from `TRUST_PROXY_HOPS`** (default 0) — what `req.ip` is, and so
   whose budget the auth throttle charges. Here and not in `main.ts` so the e2e app has it too.

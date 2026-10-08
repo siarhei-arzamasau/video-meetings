@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
+import { ConnectionDrainService } from './common/shutdown/connection-drain.service';
 import { ENV_FILE_PATHS } from './config/env-values';
 import { validate } from './config/env.validation';
 import { AuthModule } from './modules/auth/auth.module';
@@ -27,5 +28,8 @@ import { UserModule } from './modules/user/user.module';
     MeetingFilesModule,
     ClaudeAgentModule,
   ],
+  // Here and not in a feature module: the root module's destroy hook is the first one Nest
+  // runs, and letting go of kept-alive connections has to begin before anything else stops.
+  providers: [ConnectionDrainService],
 })
 export class AppModule {}
