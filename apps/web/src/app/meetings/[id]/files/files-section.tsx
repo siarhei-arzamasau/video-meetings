@@ -2,19 +2,15 @@
 
 import { Alert, Button, Card, EmptyState, Separator, Skeleton } from '@heroui/react';
 import type { Meeting, MeetingFile, User } from '@repo/shared';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { FileIcon, PlusIcon, WarningIcon } from '@/components/icons';
-import {
-  acceptAttribute,
-  isProcessing,
-  processingAnnouncement,
-  sortNewestFirst,
-} from '@/lib/meeting-files';
+import { acceptAttribute, sortNewestFirst } from '@/lib/meeting-files';
 import { DeleteFileDialog } from './delete-file-dialog';
 import { FileRow } from './file-row';
 import { UploadRow } from './upload-row';
 import { useDropTarget } from './use-drop-target';
+import { useFilesAnnouncement } from './use-files-announcement';
 import { useMeetingFiles } from './use-meeting-files';
 import { useUploadQueue } from './use-upload-queue';
 
@@ -28,9 +24,10 @@ interface FilesSectionProps {
 /**
  * The files of a meeting: the list, an upload queue that feeds it, and a drop target.
  *
- * Three hooks hold what moves — `useMeetingFiles` the list and its stream, `useUploadQueue`
- * the rows waiting to be sent, `useDropTarget` the drag state — and this component is what
- * remains: which of them is rendered, and the announcement that follows the list.
+ * Four hooks hold what moves — `useMeetingFiles` the list and its stream, `useUploadQueue`
+ * the rows waiting to be sent, `useDropTarget` the drag state, `useFilesAnnouncement` what a
+ * screen reader is told as the list changes — and this component is what remains: which of
+ * them is rendered.
  *
  * Pick and drop go through one `enqueue`, and a finished upload goes straight into the list
  * through `add`. The queue is rendered on `uploads.length` rather than on the list being
@@ -47,29 +44,14 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
   });
   const { isDragging, handlers } = useDropTarget(enqueue);
   const [deleting, setDeleting] = useState<MeetingFile | null>(null);
-  const [announcement, setAnnouncement] = useState('');
   const input = useRef<HTMLInputElement>(null);
 
   const files = list.state === 'ready' ? sortNewestFirst(list.files) : [];
-  const processingCount = files.filter((file) => isProcessing([file])).length;
+  const announcement = useFilesAnnouncement(files);
   const isEmpty = list.state === 'ready' && files.length === 0 && uploads.length === 0;
   // The queue is shown whenever it has rows, even while the list is loading or failed to load:
   // an upload the user just started must show its progress, its Cancel, or its rejection.
   const showRows = uploads.length > 0 || (list.state === 'ready' && !isEmpty);
-
-  // Announced only on a change, never on the first render: a live region that reads the
-  // page's opening state aloud is noise. Derived from the list rather than from stream
-  // events, so the poll fallback announces the same thing.
-  const previousProcessing = useRef<number | null>(null);
-
-  useEffect(() => {
-    const previous = previousProcessing.current;
-    previousProcessing.current = processingCount;
-
-    if (previous !== null && previous !== processingCount) {
-      setAnnouncement(processingAnnouncement(processingCount));
-    }
-  }, [processingCount]);
 
   return (
     <Card
