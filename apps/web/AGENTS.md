@@ -138,7 +138,10 @@ aliases in sync if either changes.
   pool of PostCSS workers the dead parent never reaps — thousands of idle `node` processes
   within minutes, and a health-check URL that never answers, so the browser suite times out.
   Diagnosis: `curl` one route that works and one that hangs. Cure:
-  `pnpm --filter=@repo/web clean` (it is `rm -rf .next`). Nothing in the app causes it or can
+  `pnpm --filter=@repo/web run clean` (it is `rm -rf .next`). **`run` is not optional**: pnpm 11
+  has a `clean` command of its own, and with a filter the bare `pnpm --filter=@repo/web clean`
+  is that command — it prints `Unknown option: 'recursive'` and removes nothing, so the cache
+  is still corrupt when you start `next dev` again. Nothing in the app causes it or can
   prevent it; do not go looking there first.
 - **An authenticated image needs an object URL.** The token is in `localStorage`, so an
   `<img src="/api/…/thumbnail">` would arrive with no credentials and a 401. `Thumbnail`

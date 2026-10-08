@@ -73,7 +73,10 @@ Run from the repository root; Turborepo fans them out.
 | `pnpm format` / `pnpm format:check` | Oxfmt across the workspace                                             |
 | `pnpm clean`                        | Removes build output and caches                                        |
 
-Scope to one package with a filter: `pnpm build --filter=@repo/api`.
+Scope to one package with a filter: `pnpm build --filter=@repo/api`. **`clean` is the one
+that cannot be scoped that way**: pnpm 11 has a `clean` command of its own, and a filter makes
+`pnpm clean --filter=@repo/web` that command, which fails with `Unknown option: 'recursive'`
+and removes nothing. Use `pnpm --filter=@repo/web run clean`.
 
 **Ordering matters: `build` must run before `typecheck`.** `@repo/shared` has to emit its
 `.d.ts` files, and Next.js generates `next-env.d.ts` and `.next/types` during its build.
