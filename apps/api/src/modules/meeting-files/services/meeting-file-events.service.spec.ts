@@ -129,6 +129,28 @@ describe('MeetingFileEventsService', () => {
     });
   });
 
+  it('says nothing more about a file once its delete has gone out, but that it is deleted', () => {
+    const watcher = watch(MEETING_A);
+    const gone = file(MEETING_A, { status: 'deleted' });
+
+    bus.next(new MeetingFileChangedEvent(MEETING_A, gone));
+    // A worker's write that committed before the delete, announced after it.
+    bus.next(new MeetingFileChangedEvent(MEETING_A, file(MEETING_A)));
+    // The purge repeats the delete, and that still goes out.
+    bus.next(new MeetingFileChangedEvent(MEETING_A, gone));
+
+    expect(filesOf(watcher)).toEqual([gone, gone]);
+  });
+
+  it('remembers a delete nobody was watching, for the page that opens before the late event', () => {
+    bus.next(new MeetingFileChangedEvent(MEETING_A, file(MEETING_A, { status: 'deleted' })));
+    const watcher = watch(MEETING_A);
+
+    bus.next(new MeetingFileChangedEvent(MEETING_A, file(MEETING_A)));
+
+    expect(filesOf(watcher)).toEqual([]);
+  });
+
   it('keeps meetings apart: a change to one is not sent to a stream on the other', () => {
     const a = watch(MEETING_A);
     const b = watch(MEETING_B);
@@ -204,6 +226,17 @@ describe('MeetingFileEventsService', () => {
     // The bus subscription is gone too: a later event reaches nothing.
     bus.next(new MeetingFileChangedEvent(MEETING_A, file(MEETING_A)));
     expect(filesOf(watcher)).toHaveLength(0);
+  });
+
+  it('ends a stream opened after shutdown began at once, instead of holding it until the TTL', () => {
+    service.beforeApplicationShutdown();
+
+    // A client reopens its stream a second after it ended, and a kept-alive socket can still
+    // carry that request to the process that is closing.
+    const late = watch(MEETING_A);
+
+    expect(late.completed).toBe(true);
+    expect(subjects()).toEqual([]);
   });
 
   /** The meeting ids the service is holding a subject for. */

@@ -11,6 +11,19 @@ export const MEETING_FILE_STATUSES = [
 
 export type MeetingFileStatus = (typeof MEETING_FILE_STATUSES)[number];
 
+/**
+ * Where a recording's transcription stands. A status of its own: the file is `ready` and
+ * downloadable throughout, and a transcription that fails does not undo that.
+ */
+export const MEETING_FILE_TRANSCRIPTION_STATUSES = [
+  'queued',
+  'transcribing',
+  'transcribed',
+  'failed',
+] as const;
+
+export type MeetingFileTranscriptionStatus = (typeof MEETING_FILE_TRANSCRIPTION_STATUSES)[number];
+
 /** A file attached to a meeting, as `GET /api/meetings/:id/files` reports it. */
 export interface MeetingFile {
   id: string;
@@ -29,6 +42,10 @@ export interface MeetingFile {
   thumbnailPath?: string;
   /** Present when a transcript exists; a relative API path. */
   transcriptPath?: string;
+  /** Absent for a file that is not a recording, or that was never queued. */
+  transcriptionStatus?: MeetingFileTranscriptionStatus;
+  /** Present only when `transcriptionStatus` is `failed`. Safe to render. */
+  transcriptionFailureReason?: string;
   /** ISO 8601 instants, UTC. */
   createdAt: string;
   processedAt?: string;
@@ -52,6 +69,53 @@ export const MEETING_FILE_NAME_MESSAGE =
   'The file name must be 1–255 characters and contain no path separators';
 export const MEETING_FILE_PROCESSING_FAILED_MESSAGE =
   'Processing failed. You can still download the file.';
+
+/**
+ * Why a transcription failed, as the API stores it in `transcriptionFailureReason`. Fixed
+ * copy, chosen by the API from what happened and never from what the Whisper service said:
+ * its own error text stays in the server log. The first is also the web app's fallback for a
+ * `failed` transcription that carries no reason.
+ */
+export const MEETING_FILE_TRANSCRIPTION_FAILED_MESSAGE = 'The recording could not be transcribed.';
+export const MEETING_FILE_TRANSCRIPTION_REPEATED_FAILURE_MESSAGE =
+  'Transcription failed after repeated attempts.';
+
+const SECONDS_PER_MINUTE = 60;
+
+/** How the time limit's reason opens, whatever the limit was: what recognises it below. */
+const TIME_LIMIT_REASON_OPENING = 'Transcription took longer than the ';
+const TIME_LIMIT_REASON_ADVICE =
+  'A retry would end the same way; whoever runs this deployment can raise the limit.';
+
+/**
+ * The reason for a transcription that outran the deployment's time limit, naming that limit:
+ * `the 12-minute limit` for a whole number of minutes, `the 90-second limit` otherwise. It
+ * also says why the row offers no Retry — see `isMeetingFileTranscriptionTimeLimitReason`.
+ */
+export function meetingFileTranscriptionTimeLimitMessage(limitSeconds: number): string {
+  const limit =
+    limitSeconds % SECONDS_PER_MINUTE === 0
+      ? `${String(limitSeconds / SECONDS_PER_MINUTE)}-minute`
+      : `${String(limitSeconds)}-second`;
+
+  return `${TIME_LIMIT_REASON_OPENING}${limit} limit. ${TIME_LIMIT_REASON_ADVICE}`;
+}
+
+/**
+ * Whether a stored failure reason is the time limit's — **the one failed transcription that is
+ * not retried.** The same recording under the same limit ends the same way, and worse than
+ * that: hanging up on Whisper does not stop it, so every retry starts a second transcription
+ * beside the one still running and slows them both. The API refuses the retry and the row
+ * offers none.
+ *
+ * Recognised by how the sentence opens, which is why the sentence and this live in one file:
+ * the row stores copy, not a cause, and nothing else may spell that opening.
+ */
+export function isMeetingFileTranscriptionTimeLimitReason(
+  reason: string | null | undefined,
+): boolean {
+  return reason?.startsWith(TIME_LIMIT_REASON_OPENING) ?? false;
+}
 
 /**
  * Media types the server stores, and the extensions the picker offers for each. One table, so

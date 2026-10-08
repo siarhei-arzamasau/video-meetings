@@ -93,6 +93,13 @@ describe('ContentSniffer', () => {
     await expect(sniffer.sniff(wav, 'a.wav')).resolves.toBe('audio/wav');
   });
 
+  it('maps an MP4 whose major brand is M4V to the name on the allow-list', async () => {
+    // What ffmpeg and Apple's tools write for an .m4v; file-type calls that brand video/x-m4v.
+    const m4v = scratchFile('a.m4v', ftypBox('M4V ', ['M4V ', 'isom', 'iso2', 'avc1']));
+
+    await expect(sniffer.sniff(m4v, 'a.m4v')).resolves.toBe('video/mp4');
+  });
+
   it('rejects a detected type that is not on the allow-list', async () => {
     const zip = scratchFile('a.zip', Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0, 0, 0, 0, 0]));
 
@@ -154,6 +161,23 @@ function asfLoop(): Buffer {
   asf.writeBigUInt64LE(0n, 46);
 
   return asf;
+}
+
+/**
+ * The `ftyp` box an ISO base media file opens with: a major brand, a minor version, and the
+ * brands it is compatible with. file-type decides the type from the major brand alone.
+ */
+function ftypBox(majorBrand: string, compatibleBrands: ReadonlyArray<string>): Buffer {
+  const minorVersion = Buffer.from([0x00, 0x00, 0x02, 0x00]);
+  const body = Buffer.concat([
+    Buffer.from(`ftyp${majorBrand}`, 'latin1'),
+    minorVersion,
+    Buffer.from(compatibleBrands.join(''), 'latin1'),
+  ]);
+  const size = Buffer.alloc(4);
+  size.writeUInt32BE(size.length + body.length);
+
+  return Buffer.concat([size, body]);
 }
 
 /** An empty ID3v2.4 tag. file-type skips a tag and runs its detection again from the end of it. */

@@ -1,30 +1,31 @@
 'use client';
 
-import { Button, Chip, Spinner, Tooltip } from '@heroui/react';
+import { Button, Chip, Spinner } from '@heroui/react';
 import type { MeetingFile } from '@repo/shared';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
-import {
-  CloseIcon,
-  DownloadIcon,
-  FileIcon,
-  RetryIcon,
-  TrashIcon,
-  WarningIcon,
-} from '@/components/icons';
-import { ApiError, downloadMeetingFile, fetchThumbnail, retryMeetingFile } from '@/lib/api-client';
+import { CloseIcon, DownloadIcon, RetryIcon, TrashIcon, WarningIcon } from '@/components/icons';
+import { ApiError, downloadMeetingFile } from '@/lib/api-client';
 import { formatRelativeTime } from '@/lib/date-time';
-import { formatFileSize, statusPresentation } from '@/lib/meeting-files';
+import { retryTargetOf } from '@/lib/meeting-file-retry';
+import { formatFileSize, statusPresentation, transcriptionPresentation } from '@/lib/meeting-files';
+import { Thumbnail } from './thumbnail';
+import { TranscriptionStatus } from './transcription-status';
+import { useRetry } from './use-retry';
+import { useTranscript } from './use-transcript';
 
 interface FileRowProps {
   token: string;
   file: MeetingFile;
   isMine: boolean;
-  /** The uploader-or-host gate. Retry is gated the same way, so one flag covers both. */
+  /**
+   * The uploader-or-host gate. Delete, the file's retry, and the transcription's retry are
+   * gated the same way, so one flag covers all three.
+   */
   canManage: boolean;
   onDelete(file: MeetingFile): void;
-  /** The file as the retry left it, for the list to put back in place of this row's. */
-  onRetried(file: MeetingFile): void;
+  /** The API took the retry: refetch, because its answer may be older than the row is. */
+  onRetried(): void;
   /** Someone else moved the file meanwhile: refetch rather than guess what it is now. */
   onStale(): void;
   onUnauthorized(): void;
@@ -41,10 +42,13 @@ export function FileRow({
   onUnauthorized,
 }: FileRowProps) {
   const status = statusPresentation(file);
+  const transcription = transcriptionPresentation(file);
+  const transcript = useTranscript(token, file, onUnauthorized);
+  const retry = useRetry(token, file, { onRetried, onStale, onUnauthorized });
+  // The file's retry or the transcription's, never both: see `retryTargetOf`.
+  const retryTarget = retryTargetOf(file);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [retryError, setRetryError] = useState<string | null>(null);
-  const [isRetrying, setIsRetrying] = useState(false);
 
   async function download() {
     setIsDownloading(true);
@@ -76,38 +80,6 @@ export function FileRow({
     }
   }
 
-  /**
-   * Back through the pipeline. The answer is the file as `uploaded`, which the list puts in
-   * place of this row's — and because the list polls while anything is `uploaded`, that alone
-   * restarts the three second poll until the worker is done with it.
-   */
-  async function retry() {
-    setIsRetrying(true);
-    setRetryError(null);
-
-    try {
-      onRetried(await retryMeetingFile(token, file.meetingId, file.id));
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        onUnauthorized();
-
-        return;
-      }
-
-      // 409: it is no longer failed, because someone else retried it or the worker finished
-      // it. Nothing to report — refetch and let the list show whatever it really is.
-      if (error instanceof ApiError && error.status === 409) {
-        onStale();
-
-        return;
-      }
-
-      setRetryError(error instanceof ApiError ? error.message : 'The retry failed. Try again.');
-    } finally {
-      setIsRetrying(false);
-    }
-  }
-
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3">
       <Thumbnail token={token} file={file} />
@@ -125,14 +97,27 @@ export function FileRow({
           {' · '}
           <time dateTime={file.createdAt}>{formatRelativeTime(file.createdAt)}</time>
         </span>
+        {/* Why it failed, written out under the name for either failure and never kept in a
+            chip's tooltip: a tooltip opens on hover or keyboard focus, and a touch screen has
+            neither. For the transcription with no Retry, the sentence is also the only thing
+            on the row that says what would help. */}
+        {status.kind === 'failed' && <span className="text-muted text-sm">{status.reason}</span>}
+        {transcription.kind === 'failed' && (
+          <span className="text-muted text-sm">{transcription.reason}</span>
+        )}
         {downloadError !== null && (
           <span className="text-danger text-sm" role="alert">
             {downloadError}
           </span>
         )}
-        {retryError !== null && (
+        {retry.error !== null && (
           <span className="text-danger text-sm" role="alert">
-            {retryError}
+            {retry.error}
+          </span>
+        )}
+        {transcript.error !== null && (
+          <span className="text-danger text-sm" role="alert">
+            {transcript.error}
           </span>
         )}
       </div>
@@ -144,39 +129,43 @@ export function FileRow({
         </Chip>
       )}
       {status.kind === 'failed' && (
-        <Tooltip delay={0}>
-          <Tooltip.Trigger
-            tabIndex={0}
-            className="focus-visible:ring-focus rounded-full outline-none focus-visible:ring-2"
-          >
-            <Chip color="warning" variant="soft" size="sm">
-              <WarningIcon />
-              <Chip.Label>Processing failed</Chip.Label>
-            </Chip>
-          </Tooltip.Trigger>
-          <Tooltip.Content>
-            <Tooltip.Arrow />
-            {status.reason}
-          </Tooltip.Content>
-        </Tooltip>
+        <Chip color="warning" variant="soft" size="sm">
+          <WarningIcon />
+          <Chip.Label>Processing failed</Chip.Label>
+        </Chip>
       )}
 
-      <div className="ml-auto flex items-center gap-1">
-        {status.kind === 'failed' && canManage && (
+      {/* Beside the file's own status, never instead of it: a recording is ready, and can be
+          downloaded, the whole time its transcription is queued, running, or failed. */}
+      <TranscriptionStatus
+        transcription={transcription}
+        isOpening={transcript.isOpening}
+        onOpen={transcript.open}
+      />
+
+      {/* `flex-wrap`: four actions — Retry and Dismiss beside the two every row has — are wider
+          than a phone, and a group that cannot wrap pushes Delete off the page. */}
+      <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
+        {retryTarget !== null && canManage && (
           <Button
             variant="secondary"
             size="sm"
-            isDisabled={isRetrying}
-            onPress={() => {
-              void retry();
-            }}
+            isDisabled={retry.isRetrying}
+            onPress={() => retry.retry(retryTarget)}
           >
-            {isRetrying ? <Spinner size="sm" aria-hidden="true" /> : <RetryIcon />}
+            {retry.isRetrying ? <Spinner size="sm" aria-hidden="true" /> : <RetryIcon />}
             Retry
           </Button>
         )}
-        {retryError !== null && (
-          <Button variant="tertiary" size="sm" onPress={() => setRetryError(null)}>
+        {(retry.error !== null || transcript.error !== null) && (
+          <Button
+            variant="tertiary"
+            size="sm"
+            onPress={() => {
+              retry.dismiss();
+              transcript.dismiss();
+            }}
+          >
             <CloseIcon />
             Dismiss
           </Button>
@@ -201,60 +190,4 @@ export function FileRow({
       </div>
     </div>
   );
-}
-
-/**
- * The thumbnail once there is one, else a type icon. Fetched with the bearer header into an
- * object URL because an `<img src>` cannot carry the token; revoked when the row unmounts or
- * the thumbnail changes so the blob does not outlive the row.
- */
-function Thumbnail({ token, file }: { token: string; file: MeetingFile }) {
-  const { thumbnailPath, meetingId, id } = file;
-  const [url, setUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (thumbnailPath === undefined) {
-      setUrl(null);
-
-      return;
-    }
-
-    let objectUrl: string | null = null;
-    let active = true;
-
-    void fetchThumbnail(token, meetingId, id)
-      .then((blob) => {
-        if (!active) {
-          return;
-        }
-
-        objectUrl = URL.createObjectURL(blob);
-        setUrl(objectUrl);
-      })
-      .catch(() => {
-        // A missing thumbnail is a cosmetic loss: the icon stays.
-        if (active) {
-          setUrl(null);
-        }
-      });
-
-    return () => {
-      active = false;
-
-      if (objectUrl !== null) {
-        URL.revokeObjectURL(objectUrl);
-      }
-    };
-  }, [token, meetingId, id, thumbnailPath]);
-
-  if (url === null) {
-    return (
-      <span className="bg-default text-muted flex size-10 shrink-0 items-center justify-center rounded-lg">
-        <FileIcon />
-      </span>
-    );
-  }
-
-  // Decorative: the name beside it is the accessible text.
-  return <img src={url} alt="" className="size-10 shrink-0 rounded-lg object-cover" />;
 }

@@ -3,12 +3,12 @@ import type { MeetingFileStatus } from '@repo/shared';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { assertTransition } from './meeting-file-status';
+import type { TranscriptionStatus } from './meeting-file-transcription-status';
 import type { MeetingFileRecord } from './meeting-file.mapper';
 
 /** The columns a status change may set alongside the status itself. */
 export interface TransitionPatch {
   checksum?: string | null;
-  transcriptKey?: string | null;
   /** Only the retry and the delete set this, back to 0; every other writer leaves the claim count alone. */
   attempts?: number;
   thumbnailKey?: string | null;
@@ -16,6 +16,11 @@ export interface TransitionPatch {
   leasedUntil?: Date | null;
   processedAt?: Date | null;
   deletedAt?: Date | null;
+  /**
+   * Only the worker's `processing → ready` write sets this, to `QUEUED`, from the pipeline's
+   * last step. Every later change to it is `MeetingFileTranscriptionRepository`'s.
+   */
+  transcriptionStatus?: TranscriptionStatus;
 }
 
 /** A row the worker now owns, with the status it had before the claim, for the log line. */
@@ -171,6 +176,10 @@ export class MeetingFileRepository {
         f.processed_at AS "processedAt",
         f.deleted_at AS "deletedAt",
         f.purged_at AS "purgedAt",
+        f.transcription_status AS "transcriptionStatus",
+        f.transcription_failure_reason AS "transcriptionFailureReason",
+        f.transcription_attempts AS "transcriptionAttempts",
+        f.transcription_leased_until AS "transcriptionLeasedUntil",
         c.previous_status AS "previousStatus"
     `;
 

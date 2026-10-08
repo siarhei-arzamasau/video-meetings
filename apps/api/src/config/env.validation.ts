@@ -16,24 +16,15 @@ import {
   validateSync,
 } from 'class-validator';
 
-import { ORIGIN_PATTERN, corsOriginsOf, parseBoolean } from './env-values';
-
-/**
- * Signing keys this repository has published. Rejected by value because length alone cannot
- * catch them: the placeholder below is 44 characters, so it satisfies `@MinLength(32)` and a
- * deployment that never set `JWT_SECRET` would boot and sign real tokens with a key anybody
- * who has read the repository knows. User ids are not secret — they travel in meeting and
- * file payloads — so that key is an account-takeover primitive, not a weak default.
- */
-const PUBLISHED_JWT_SECRETS: readonly string[] = ['dev-only-replace-with-openssl-rand-base64-32'];
-
-const GENERATE_SECRET_ADVICE = 'Generate one with `openssl rand -base64 32`.';
-
-export enum NodeEnv {
-  Development = 'development',
-  Production = 'production',
-  Test = 'test',
-}
+import {
+  GENERATE_SECRET_ADVICE,
+  NodeEnv,
+  ORIGIN_PATTERN,
+  PUBLISHED_JWT_SECRETS,
+  corsOriginsOf,
+  parseBoolean,
+} from './env-values';
+import { DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS } from './transcription.defaults';
 
 /**
  * Environment contract for the API. Anything the app cannot start without belongs here,
@@ -176,22 +167,22 @@ export class EnvironmentVariables {
   MEETING_FILE_UPLOAD_TTL_HOURS: number = 24;
 
   /**
-   * Whether the pipeline transcribes audio and video. Off by default: it is the one step that
-   * calls a third party, and a deployment that has not chosen one must still process files.
-   * Parsed like the worker flag, for the same reason.
-   *
-   * The URL below is validated here whenever this is on, so a process cannot start in a
-   * state where every recording would fail.
+   * Whether an audio or video file is queued for transcription when it becomes `ready`, and
+   * whether the transcription worker claims anything. Off by default: it needs a second service.
+   * Switching it off keeps every stored status and leaves a queued recording waiting for it to
+   * come back. Parsed like the worker flag, for the same reason. The URL below is validated
+   * whenever this is on — its shape, never the server behind it: a Whisper that is down fails a
+   * transcription, not the boot of what serves every upload.
    */
   @Transform(({ obj, key }) => parseBoolean((obj as Record<string, unknown>)[key]))
   @IsBoolean()
   MEETING_FILES_TRANSCRIPTION_ENABLED: boolean = false;
 
   /**
-   * An OpenAI-compatible `audio/transcriptions` endpoint — hosted or a self-hosted Whisper
-   * server, which is what makes the vendor configuration rather than code. Required when the
-   * flag is on, and unvalidated when it is off so a deployment that does not transcribe needs
-   * no placeholder.
+   * An OpenAI-compatible `audio/transcriptions` endpoint: the `whisper` Compose service, at
+   * `http://localhost:8000/v1/audio/transcriptions` from the host and `http://whisper:8000/…`
+   * from the `api` container. Required when the flag is on, and unvalidated when it is off so
+   * a deployment that does not transcribe needs no placeholder.
    */
   @ValidateIf((env: EnvironmentVariables) => env.MEETING_FILES_TRANSCRIPTION_ENABLED)
   @IsUrl({ require_tld: false, require_protocol: true, protocols: ['http', 'https'] })
@@ -203,23 +194,27 @@ export class EnvironmentVariables {
   TRANSCRIPTION_API_KEY?: string;
 
   /**
-   * The `model` field of the request. An OpenAI-compatible endpoint requires one; a
-   * self-hosted server usually ignores whatever it is sent, which is why this has a default
-   * rather than being required alongside the URL.
+   * The `model` field of the request. Required when the flag is on and **never defaulted**: no
+   * one name is right everywhere — the local service answers 404 for a model it has not
+   * downloaded, a hosted endpoint for one it does not have — so a default fails every
+   * recording somewhere, one at a time and long after boot. `.env.example` and Compose name
+   * Whisper `small` as the local service knows it (its `WHISPER_MODEL`).
    */
-  @IsString()
-  @MinLength(1)
-  TRANSCRIPTION_MODEL: string = 'whisper-1';
+  @ValidateIf((env: EnvironmentVariables) => env.MEETING_FILES_TRANSCRIPTION_ENABLED)
+  @MinLength(1, {
+    message: 'TRANSCRIPTION_MODEL must be set when MEETING_FILES_TRANSCRIPTION_ENABLED is on.',
+  })
+  TRANSCRIPTION_MODEL: string = '';
 
   /**
-   * How long one transcription may take before it is aborted and the file fails with a
-   * specific reason rather than hanging on a lease that keeps being renewed. Ten minutes by
-   * default; at least thirty seconds, because a bound shorter than the request it bounds only
-   * fails files.
+   * How long one transcription may take before it is aborted and ends Failed with a reason naming
+   * this limit — the file stays `ready` — rather than hanging on a lease that keeps being renewed.
+   * Twelve minutes by default: a one-hour recording at twice the rate measured beside the constant.
+   * At least thirty seconds: a bound shorter than the request it bounds only fails transcriptions.
    */
   @IsInt()
   @Min(30)
-  TRANSCRIPTION_TIMEOUT_SECONDS: number = 600;
+  TRANSCRIPTION_TIMEOUT_SECONDS: number = DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS;
 
   /**
    * What the Claude Agent SDK authenticates with, sent to Anthropic as a bearer token.

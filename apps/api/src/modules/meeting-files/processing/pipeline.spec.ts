@@ -6,21 +6,27 @@ describe('PIPELINE', () => {
     expect(PIPELINE.map(({ name }) => name)).toEqual(['verify', 'preview']);
   });
 
-  it('appends transcription last, after the object is known to be whole and readable', () => {
-    const transcribe: ProcessingStep = { name: 'transcribe', run: () => Promise.resolve({}) };
+  it('queues for transcription last, so a file that fails a step is never queued', () => {
+    const queueTranscription: ProcessingStep = {
+      name: 'queue-transcription',
+      run: () => Promise.resolve({}),
+    };
 
-    expect(buildPipeline(transcribe).map(({ name }) => name)).toEqual([
+    expect(buildPipeline(queueTranscription).map(({ name }) => name)).toEqual([
       'verify',
       'preview',
-      'transcribe',
+      'queue-transcription',
     ]);
   });
 
   it('leaves PIPELINE untouched, so building it twice cannot grow the list', () => {
-    const transcribe: ProcessingStep = { name: 'transcribe', run: () => Promise.resolve({}) };
+    const queueTranscription: ProcessingStep = {
+      name: 'queue-transcription',
+      run: () => Promise.resolve({}),
+    };
 
-    buildPipeline(transcribe);
-    buildPipeline(transcribe);
+    buildPipeline(queueTranscription);
+    buildPipeline(queueTranscription);
 
     expect(PIPELINE).toHaveLength(2);
   });

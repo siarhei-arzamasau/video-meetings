@@ -26,7 +26,7 @@ rather than mirror the input language.
 is its client. Two things are worth knowing before reading either: **pages are gated on the
 client**, because the token lives in `localStorage` where neither the server nor middleware
 can read it, and **`meeting-files` is the largest module** — CQRS over local-disk storage
-with an in-process worker. Each app has its own `AGENTS.md` with the detail.
+with two in-process workers. Each app has its own `AGENTS.md` with the detail.
 
 The design this implements:
 [`docs/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/specs/2026-07-29-video-meetings-monorepo-design.md),
@@ -40,12 +40,23 @@ the storage layout, and the module's file layout in
 [phase 1](docs/plans/2026-09-19-meeting-file-upload-phase-1.md)'s _Design decisions_; the
 1 GiB cap, the 8 MiB chunk size, the session table, and why a completed session enters the
 phase 1 pipeline unchanged in [phase 2](docs/plans/2026-09-19-meeting-file-upload-phase-2.md)'s
-_Assumptions_ and _Design constraints_; retry and the transcription step in
+_Assumptions_ and _Design constraints_; retry in
 [phase 3](docs/plans/2026-09-19-meeting-file-upload-phase-3.md); the SSE stream that replaced
 the poll in [phase 4](docs/plans/2026-09-19-meeting-file-upload-phase-4.md). The technology
 choices behind all four (multer, `file-type`, the lease protocol, SSE over polling) are argued
 in [`docs/research-meeting-upload.md`](docs/research-meeting-upload.md). Read those before
 changing that module; do not import them into a session wholesale.
+
+**Transcription is no longer what phase 3 describes.** That plan made it a pipeline step that
+held a recording at `processing` and failed the file with it. It is now
+[`docs/prd-local-whisper-transcription-status.md`](docs/prd-local-whisper-transcription-status.md):
+a local Whisper `small`, and a transcription status of its own beside a file that is `ready`
+throughout. The decisions that PRD leaves open — the columns, the second worker and its
+claim, what a shutdown and a switched-off setting do, the failure copy — are settled in
+[`docs/plan-local-whisper-transcription-status.md`](docs/plan-local-whisper-transcription-status.md).
+All five of its phases are built: Whisper, the status in the API, the status and the
+transcript link on the meeting page, and the retry of a failed transcription — the route, and
+Retry on the row for the uploader or the host.
 
 ## Commands
 
@@ -62,7 +73,10 @@ Run from the repository root; Turborepo fans them out.
 | `pnpm format` / `pnpm format:check` | Oxfmt across the workspace                                             |
 | `pnpm clean`                        | Removes build output and caches                                        |
 
-Scope to one package with a filter: `pnpm build --filter=@repo/api`.
+Scope to one package with a filter: `pnpm build --filter=@repo/api`. **`clean` is the one
+that cannot be scoped that way**: pnpm 11 has a `clean` command of its own, and a filter makes
+`pnpm clean --filter=@repo/web` that command, which fails with `Unknown option: 'recursive'`
+and removes nothing. Use `pnpm --filter=@repo/web run clean`.
 
 **Ordering matters: `build` must run before `typecheck`.** `@repo/shared` has to emit its
 `.d.ts` files, and Next.js generates `next-env.d.ts` and `.next/types` during its build.
@@ -168,19 +182,31 @@ the decomposition is step one. Four repository-specific things make that work:
 ## Setup
 
 The steps are in [`README.md`](README.md#getting-started); `pnpm start:dev` does them all.
-Three facts that bite an agent more than a human:
+Four facts that bite an agent more than a human:
 
 - **`pnpm dev` does not generate the Prisma client**, and the client is gitignored. On a
   fresh clone or after a schema change, `pnpm --filter=@repo/api prisma:generate` first.
 - **The API refuses to boot** on a `JWT_SECRET` that is unset, under 32 characters, or a
   placeholder this repository has published, and — with `MEETING_FILES_TRANSCRIPTION_ENABLED`
-  on — on a missing `TRANSCRIPTION_API_URL`. All are boot-time validation, not first-request
-  failures. **The `.env.example` files ship `JWT_SECRET` empty on purpose**, so a fresh copy
-  does not boot until someone runs `openssl rand -base64 32`; do not "fix" that by putting a
-  value back.
+  on — on a missing `TRANSCRIPTION_API_URL` or `TRANSCRIPTION_MODEL`. All are boot-time
+  validation, not first-request failures. **The `.env.example` files ship `JWT_SECRET` empty
+  on purpose**, so a fresh copy does not boot until someone runs `openssl rand -base64 32`; do
+  not "fix" that by putting a value back.
 - **`apps/api/storage/` is where uploaded bytes live** (`MEETING_FILES_DIR`, gitignored);
   the database has only the records. Everything else about uploads is in
   [the API guide](apps/api/AGENTS.md#meeting-files-srcmodulesmeeting-files), which owns it.
+- **Whisper is a Compose profile, and nothing starts it for you.**
+  `docker compose --profile transcription up -d whisper` is the whole opt-in. It is a profile
+  because `scripts/start.mjs` runs `docker compose up -d postgres`, and a plain
+  `docker compose up` has to keep starting only what every developer needs — which a 0.6 GB
+  image, a 0.5 GB model, and 2 GB of memory are not. `pnpm start:dev` therefore never starts
+  it, no service depends on it, the API boots and serves uploads without it, and **no test may
+  need it**: the specs bind a fake transcriber or a stand-in endpoint on loopback, and both
+  `test:e2e` suites are run with the service stopped. Port 8000 belonging to something else
+  is `WHISPER_PORT` in the root `.env`.
+  What the service is pinned to, and the traps in running it, are in
+  [the API guide](apps/api/AGENTS.md#meeting-files-srcmodulesmeeting-files) under
+  _Transcription_.
 
 ### Agent tooling
 

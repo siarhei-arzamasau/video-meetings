@@ -3,11 +3,12 @@ import type { MessageEvent } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventBus } from '@nestjs/cqrs';
 import type { MeetingFile } from '@repo/shared';
-import { Observable, Subject, interval, merge, timer } from 'rxjs';
+import { Observable, ReplaySubject, Subject, interval, merge, timer } from 'rxjs';
 import type { Subscription } from 'rxjs';
 import { filter, map, startWith, takeUntil } from 'rxjs/operators';
 
 import { MeetingFileChangedEvent } from '../events/meeting-file-changed.event';
+import { AnnouncedDeletes } from './announced-deletes';
 
 /** The `event:` name every file change is sent under. A client filters on it. */
 export const FILE_EVENT = 'file';
@@ -46,8 +47,17 @@ export const HEARTBEAT_INTERVAL_MS = 15_000;
 export class MeetingFileEventsService implements OnModuleInit, BeforeApplicationShutdown {
   private readonly logger = new Logger(MeetingFileEventsService.name);
   private readonly meetings = new Map<string, Subject<MessageEvent>>();
-  /** Emits once on shutdown; every open stream takes until it. */
-  private readonly closed = new Subject<void>();
+  /** What makes `deleted` the last thing a stream says about a file. See the class. */
+  private readonly deleted = new AnnouncedDeletes();
+  /**
+   * Emits once on shutdown; every open stream takes until it. **Replayed, so a stream opened
+   * afterwards ends at once.** A client reopens its stream a second after it ended, and a
+   * kept-alive socket still carries that request to the process that is closing. With a plain
+   * `Subject` that stream missed the one emission and ran to the TTL: it kept the closing
+   * server alive for five minutes and showed its page nothing, because the bus subscription
+   * had already gone — while the process that replaced this one did the work.
+   */
+  private readonly closed = new ReplaySubject<void>(1);
   private subscription: Subscription | undefined;
 
   constructor(
@@ -68,6 +78,12 @@ export class MeetingFileEventsService implements OnModuleInit, BeforeApplication
         ),
       )
       .subscribe((event) => {
+        // Asked before the lookup, so a delete is remembered whether or not anyone is watching:
+        // the late event it guards against may find a page that opened in between.
+        if (!this.deleted.admits(event.file)) {
+          return;
+        }
+
         // No subject means nobody is watching this meeting. Dropping the event here is the
         // whole reason a missed one has to be harmless: the client's next list is the repair.
         this.meetings.get(event.meetingId)?.next(fileMessage(event.file));
@@ -130,7 +146,7 @@ export class MeetingFileEventsService implements OnModuleInit, BeforeApplication
    * validated boot-time value either way — changing the TTL is a restart, like every setting
    * here — but asking at subscribe is what lets the e2e suite shorten it with
    * `ConfigService.set` between tests instead of rebuilding the application, the same reason
-   * `TranscribeStep` asks for its flag when it runs.
+   * the transcription worker asks for its setting on every tick.
    */
   private ttlMs(): number {
     return this.config.get<number>('MEETING_FILES_STREAM_TTL_SECONDS', 300) * 1_000;

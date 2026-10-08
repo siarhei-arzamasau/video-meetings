@@ -8,6 +8,7 @@ import {
   MEETING_FILE_EMPTY_MESSAGE,
   MEETING_FILE_NAME_MESSAGE,
   MEETING_FILE_PROCESSING_FAILED_MESSAGE,
+  MEETING_FILE_TRANSCRIPTION_FAILED_MESSAGE,
   MEETING_FILE_TYPE_MESSAGE,
 } from '@repo/shared';
 
@@ -73,6 +74,37 @@ export function statusPresentation(
   }
 }
 
+/**
+ * What the row shows for a recording's transcription, beside the file's own status and never
+ * instead of it: the file is `ready` and downloadable in every one of these. `none` is a file
+ * that is not a recording, or one that was never queued — nothing is drawn for it, so a
+ * deployment with transcription switched off shows no status anywhere.
+ */
+export type TranscriptionPresentation =
+  | { kind: 'none' }
+  | { kind: 'queued' }
+  | { kind: 'transcribing' }
+  | { kind: 'transcribed' }
+  | { kind: 'failed'; reason: string };
+
+export function transcriptionPresentation(
+  file: Pick<MeetingFile, 'transcriptionStatus' | 'transcriptionFailureReason'>,
+): TranscriptionPresentation {
+  switch (file.transcriptionStatus) {
+    case undefined:
+      return { kind: 'none' };
+    case 'failed':
+      return {
+        kind: 'failed',
+        reason: file.transcriptionFailureReason ?? MEETING_FILE_TRANSCRIPTION_FAILED_MESSAGE,
+      };
+    case 'queued':
+    case 'transcribing':
+    case 'transcribed':
+      return { kind: file.transcriptionStatus };
+  }
+}
+
 /** The extension of a name, lowercased, with the dot — or `''` when there is none. */
 function extensionOf(name: string): string {
   const trimmed = name.trim();
@@ -126,9 +158,27 @@ export function acceptAttribute(): string {
   return MEETING_FILE_ACCEPT.join(',');
 }
 
-/** Whether the list should keep polling: any file the worker has not finished with. */
+/** Whether the file worker still owes any of these a result: what the Processing chip shows. */
 export function isProcessing(files: ReadonlyArray<Pick<MeetingFile, 'status'>>): boolean {
   return files.some(({ status }) => status === 'uploaded' || status === 'processing');
+}
+
+/**
+ * Whether the fallback poll should keep going: a file still being processed, or a recording
+ * whose transcription is queued or running. Wider than `isProcessing` on purpose — a recording
+ * is `ready` minutes before its transcript is, and a page that cannot hold the stream open
+ * would otherwise sit on "Transcribing…" until it was reloaded.
+ */
+export function isAwaitingWorker(
+  files: ReadonlyArray<Pick<MeetingFile, 'status' | 'transcriptionStatus'>>,
+): boolean {
+  return (
+    isProcessing(files) ||
+    files.some(
+      ({ transcriptionStatus }) =>
+        transcriptionStatus === 'queued' || transcriptionStatus === 'transcribing',
+    )
+  );
 }
 
 /**

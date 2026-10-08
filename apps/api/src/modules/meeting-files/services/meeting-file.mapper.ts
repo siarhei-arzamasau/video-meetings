@@ -1,5 +1,7 @@
-import type { MeetingFile, MeetingFileStatus } from '@repo/shared';
+import type { MeetingFile, MeetingFileStatus, MeetingFileTranscriptionStatus } from '@repo/shared';
 import { MAX_MEETING_FILE_NAME_LENGTH } from '@repo/shared';
+
+import { TranscriptionStatus } from './meeting-file-transcription-status';
 
 /**
  * The stored row, spelled out so `toMeetingFile` is unit-testable without the generated
@@ -24,12 +26,28 @@ export interface MeetingFileRecord {
   processedAt: Date | null;
   deletedAt: Date | null;
   purgedAt: Date | null;
+  transcriptionStatus: TranscriptionStatus | null;
+  transcriptionFailureReason: string | null;
+  transcriptionAttempts: number;
+  transcriptionLeasedUntil: Date | null;
 }
 
 /**
- * Row → wire shape. Omits everything the worker owns (`storageKey`, `checksum`, `attempts`,
- * `leasedUntil`, `deletedAt`, `purgedAt`); the optional fields are absent rather than null so
- * the JSON matches the shared interface exactly.
+ * The stored transcription status in the wire's words: UPPER_CASE in the database, lower-case
+ * in `@repo/shared`. The one place that translates — a `Record`, so a status added to either
+ * side without its word here does not compile.
+ */
+const WIRE_TRANSCRIPTION_STATUS: Record<TranscriptionStatus, MeetingFileTranscriptionStatus> = {
+  [TranscriptionStatus.QUEUED]: 'queued',
+  [TranscriptionStatus.TRANSCRIBING]: 'transcribing',
+  [TranscriptionStatus.TRANSCRIBED]: 'transcribed',
+  [TranscriptionStatus.FAILED]: 'failed',
+};
+
+/**
+ * Row → wire shape. Omits everything the workers own (`storageKey`, `checksum`, `attempts`,
+ * `leasedUntil`, `deletedAt`, `purgedAt`, and the transcription claim's count and lease); the
+ * optional fields are absent rather than null so the JSON matches the shared interface exactly.
  */
 export function toMeetingFile(record: MeetingFileRecord): MeetingFile {
   return {
@@ -50,8 +68,30 @@ export function toMeetingFile(record: MeetingFileRecord): MeetingFile {
     ...(record.transcriptKey !== null
       ? { transcriptPath: transcriptPathOf(record.meetingId, record.id) }
       : {}),
+    ...transcriptionOf(record),
     createdAt: record.createdAt.toISOString(),
     ...(record.processedAt !== null ? { processedAt: record.processedAt.toISOString() } : {}),
+  };
+}
+
+/**
+ * Nothing at all for a row that was never queued, and the reason only when failed: one left
+ * behind on a transcription that was queued again must not show.
+ */
+function transcriptionOf(
+  record: MeetingFileRecord,
+): Pick<MeetingFile, 'transcriptionStatus' | 'transcriptionFailureReason'> {
+  if (record.transcriptionStatus === null) {
+    return {};
+  }
+
+  const failed = record.transcriptionStatus === TranscriptionStatus.FAILED;
+
+  return {
+    transcriptionStatus: WIRE_TRANSCRIPTION_STATUS[record.transcriptionStatus],
+    ...(failed && record.transcriptionFailureReason !== null
+      ? { transcriptionFailureReason: record.transcriptionFailureReason }
+      : {}),
   };
 }
 

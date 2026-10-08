@@ -82,6 +82,23 @@ export function retryMeetingFile(
   });
 }
 
+/**
+ * Sends a `failed` transcription back to the queue — the recording itself is `ready` before
+ * and after, which is why this is not `retryMeetingFile`. The answer is the file with its
+ * transcription `queued` and no reason. A 409 means the transcription is no longer failed —
+ * someone else retried it — and a 404 means the caller is neither uploader nor host.
+ */
+export function retryMeetingFileTranscription(
+  token: string,
+  meetingId: string,
+  fileId: string,
+): Promise<MeetingFile> {
+  return apiFetch<MeetingFile>(`/meetings/${meetingId}/files/${fileId}/transcription/retry`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+}
+
 /** Soft delete. A 404 means the file is gone, or the caller is neither uploader nor host. */
 export function deleteMeetingFile(token: string, meetingId: string, fileId: string): Promise<void> {
   return apiFetch<void>(`/meetings/${meetingId}/files/${fileId}`, {
@@ -109,6 +126,31 @@ export function fetchThumbnail(token: string, meetingId: string, fileId: string)
   return apiFetchBlob(`/meetings/${meetingId}/files/${fileId}/thumbnail`, {
     headers: authHeaders(token),
   });
+}
+
+/** The type a transcript is opened under, whatever the response said it was. */
+const TRANSCRIPT_CONTENT_TYPE = 'text/plain;charset=utf-8';
+
+/**
+ * A recording's transcript, for anyone who can see the meeting. A `Blob` for the reason the
+ * download is one: the route needs the bearer header, which a plain link cannot send, so the
+ * caller opens this from an object URL. A 404 means there is no transcript — the recording is
+ * not transcribed, or it has been deleted.
+ *
+ * **Retyped here, and never trusted from the response.** An object URL is a document on the
+ * app's own origin, so a body opened under `text/html` would run its script beside the token
+ * in `localStorage`. The text is another service's output; the type it is shown under is ours.
+ */
+export async function fetchTranscript(
+  token: string,
+  meetingId: string,
+  fileId: string,
+): Promise<Blob> {
+  const transcript = await apiFetchBlob(`/meetings/${meetingId}/files/${fileId}/transcript`, {
+    headers: authHeaders(token),
+  });
+
+  return transcript.slice(0, transcript.size, TRANSCRIPT_CONTENT_TYPE);
 }
 
 /**

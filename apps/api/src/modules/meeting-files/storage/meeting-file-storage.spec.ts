@@ -99,8 +99,24 @@ describe('MeetingFileStorage', () => {
     expect(fs.readFileSync(storage.pathOf(`${key}.transcript.txt`), 'utf8')).toBe('second');
   });
 
-  it('writeText rejects a key outside the two shapes', async () => {
+  it('writeText replaces a transcript whole: a reader of the old one never sees half the new', async () => {
+    const transcript = storage.pathOf(`${key}.transcript.txt`);
+    await storage.writeText(`${key}.transcript.txt`, 'first pass');
+    const reader = fs.openSync(transcript, 'r');
+    const first = fs.fstatSync(reader).ino;
+
+    await storage.writeText(`${key}.transcript.txt`, 'second');
+
+    // Renamed into place, not written over: the open file is still the first text, entire.
+    expect(fs.statSync(transcript).ino).not.toBe(first);
+    expect(fs.readFileSync(reader, 'utf8')).toBe('first pass');
+    fs.closeSync(reader);
+    expect(fs.readdirSync(storage.tempDir())).toEqual([]);
+  });
+
+  it('writeText rejects a key outside the two shapes, and leaves nothing behind', async () => {
     await expect(storage.writeText('../escape.txt', 'no')).rejects.toThrow(/Invalid storage key/);
+    expect(fs.readdirSync(storage.tempDir())).toEqual([]);
   });
 
   it.each([

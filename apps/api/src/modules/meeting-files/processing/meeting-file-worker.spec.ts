@@ -6,6 +6,7 @@ import { MeetingFileChangedEvent } from '../events/meeting-file-changed.event';
 
 import { MeetingFileUploadRepository } from '../services/meeting-file-upload.repository';
 import type { MeetingFileUploadRecord } from '../services/meeting-file-upload.mapper';
+import { buildMeetingFileRecord } from '../services/meeting-file-record.fixture';
 import { MeetingFileRepository } from '../services/meeting-file.repository';
 import type { ClaimedFile } from '../services/meeting-file.repository';
 import { MeetingFileStorage } from '../storage/meeting-file-storage';
@@ -18,25 +19,20 @@ const FILE_ID = '55555555-5555-4555-8555-555555555555';
 const LEASE = new Date(Date.now() + 60_000);
 
 const CLAIMED: ClaimedFile = {
-  id: FILE_ID,
-  meetingId: MEETING_ID,
-  uploaderId: '11111111-1111-4111-8111-111111111111',
-  name: 'deck.pdf',
-  contentType: 'application/pdf',
-  size: 10,
-  storageKey: `${MEETING_ID}/${FILE_ID}`,
-  checksum: null,
-  thumbnailKey: null,
-  transcriptKey: null,
-  status: 'processing',
+  ...buildMeetingFileRecord({
+    id: FILE_ID,
+    meetingId: MEETING_ID,
+    uploaderId: '11111111-1111-4111-8111-111111111111',
+    name: 'deck.pdf',
+    contentType: 'application/pdf',
+    size: 10,
+    storageKey: `${MEETING_ID}/${FILE_ID}`,
+    status: 'processing',
+    attempts: 1,
+    leasedUntil: LEASE,
+    createdAt: new Date(),
+  }),
   previousStatus: 'uploaded',
-  failureReason: null,
-  attempts: 1,
-  leasedUntil: LEASE,
-  createdAt: new Date(),
-  processedAt: null,
-  deletedAt: null,
-  purgedAt: null,
 };
 
 const UPLOAD_ID = '66666666-6666-4666-8666-666666666666';
@@ -598,7 +594,7 @@ describe('MeetingFileWorker', () => {
 
       const drained = slow.drain();
       await settle(1_200);
-      step.release({ thumbnailKey: 'thumb', transcriptKey: 'transcript' });
+      step.release({ thumbnailKey: 'thumb' });
       await drained;
 
       // `null` is passed deliberately: it matches no row, so the result cannot be written
@@ -612,7 +608,6 @@ describe('MeetingFileWorker', () => {
       );
       // And the bytes the steps wrote are removed, exactly as for a lost race at the end.
       expect(remove).toHaveBeenCalledWith('thumb');
-      expect(remove).toHaveBeenCalledWith('transcript');
     });
 
     it('keeps the lease it has when a renewal throws, and lets the transition decide', async () => {
@@ -698,7 +693,7 @@ describe('MeetingFileWorker', () => {
 
   describe('shutdown while a step is running', () => {
     it('aborts the step through its context signal and hands the row back rather than failing it', async () => {
-      // A step that behaves like the transcription: it waits on something outside the
+      // A step that behaves like a request to another service: it waits on something outside the
       // process and lets go when told to.
       second.mockImplementationOnce(
         ({ signal }: { signal: AbortSignal }) =>

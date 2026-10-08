@@ -7,6 +7,7 @@ import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import type { MeetingFileRecord } from '../../services/meeting-file.mapper';
+import { buildMeetingFileRecord } from '../../services/meeting-file-record.fixture';
 import { MeetingFileStorage } from '../../storage/meeting-file-storage';
 import { StepError } from '../step';
 import { VerifyStep } from './verify.step';
@@ -24,26 +25,16 @@ describe('VerifyStep', () => {
   let storage: MeetingFileStorage;
   const bytes = Buffer.from('the quick brown fox');
 
-  const record = (size: number): MeetingFileRecord => ({
-    id: FILE_ID,
-    meetingId: MEETING_ID,
-    uploaderId: '11111111-1111-4111-8111-111111111111',
-    name: 'fox.txt',
-    contentType: 'text/plain',
-    size,
-    storageKey: `${MEETING_ID}/${FILE_ID}`,
-    checksum: null,
-    thumbnailKey: null,
-    transcriptKey: null,
-    status: 'processing',
-    failureReason: null,
-    attempts: 1,
-    leasedUntil: null,
-    createdAt: new Date(),
-    processedAt: null,
-    deletedAt: null,
-    purgedAt: null,
-  });
+  const record = (size: number): MeetingFileRecord =>
+    buildMeetingFileRecord({
+      id: FILE_ID,
+      meetingId: MEETING_ID,
+      name: 'fox.txt',
+      contentType: 'text/plain',
+      size,
+      status: 'processing',
+      attempts: 1,
+    });
 
   beforeEach(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'verify-step-'));

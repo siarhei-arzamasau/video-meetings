@@ -3,8 +3,10 @@ import { EventBus, QueryBus } from '@nestjs/cqrs';
 import { Test } from '@nestjs/testing';
 
 import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
+import { holdWrite, nextTurn } from '../../services/held-write.fixture';
+import { MeetingFileHandOvers } from '../../services/meeting-file-hand-overs';
 import { MeetingFileRepository } from '../../services/meeting-file.repository';
-import type { MeetingFileRecord } from '../../services/meeting-file.mapper';
+import { buildMeetingFileRecord } from '../../services/meeting-file-record.fixture';
 import { RetryMeetingFileCommand } from '../retry-meeting-file.command';
 import { NOT_FAILED_MESSAGE, RetryMeetingFileHandler } from './retry-meeting-file.handler';
 
@@ -23,26 +25,15 @@ const MEETING = {
   participantIds: [UPLOADER_ID, OTHER_ID],
 };
 
-const RECORD: MeetingFileRecord = {
+const RECORD = buildMeetingFileRecord({
   id: FILE_ID,
   meetingId: MEETING_ID,
   uploaderId: UPLOADER_ID,
-  name: 'deck.pdf',
-  contentType: 'application/pdf',
-  size: 10,
-  storageKey: `${MEETING_ID}/${FILE_ID}`,
-  checksum: null,
-  thumbnailKey: null,
-  transcriptKey: null,
   status: 'failed',
   failureReason: 'The stored file is incomplete',
   attempts: 3,
-  leasedUntil: null,
-  createdAt: new Date('2026-09-01T10:00:00.000Z'),
   processedAt: new Date('2026-09-01T10:00:01.000Z'),
-  deletedAt: null,
-  purgedAt: null,
-};
+});
 
 describe('RetryMeetingFileHandler', () => {
   const execute = jest.fn();
@@ -50,6 +41,7 @@ describe('RetryMeetingFileHandler', () => {
   const transition = jest.fn();
   const publish = jest.fn();
   let handler: RetryMeetingFileHandler;
+  let handOvers: MeetingFileHandOvers;
 
   beforeEach(async () => {
     execute.mockReset().mockResolvedValue(MEETING);
@@ -63,10 +55,12 @@ describe('RetryMeetingFileHandler', () => {
         { provide: QueryBus, useValue: { execute } },
         { provide: MeetingFileRepository, useValue: { findOneOf, transition } },
         { provide: EventBus, useValue: { publish } },
+        MeetingFileHandOvers,
       ],
     }).compile();
 
     handler = moduleRef.get(RetryMeetingFileHandler);
+    handOvers = moduleRef.get(MeetingFileHandOvers);
   });
 
   it.each([
@@ -156,5 +150,24 @@ describe('RetryMeetingFileHandler', () => {
     ).rejects.toThrow(ConflictException);
 
     expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('is a hand-over: a claim that comes back mid-retry is announced after it, not before', async () => {
+    const write = holdWrite<boolean>();
+    const order: string[] = [];
+    transition.mockReturnValue(write.answered);
+    publish.mockImplementation(() => order.push('uploaded'));
+
+    const retried = handler.execute(new RetryMeetingFileCommand(UPLOADER_ID, MEETING_ID, FILE_ID));
+    await nextTurn();
+    // The worker's side: its claim of this file came back while the write was still out.
+    const claimed = handOvers.announced(FILE_ID).then(() => order.push('processing'));
+    await nextTurn();
+    expect(order).toEqual([]);
+
+    write.answer(true);
+    await Promise.all([retried, claimed]);
+
+    expect(order).toEqual(['uploaded', 'processing']);
   });
 });

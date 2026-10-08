@@ -1,5 +1,6 @@
 import type { Logger } from '@nestjs/common';
 
+import type { TranscriptionStatus } from '../services/meeting-file-transcription-status';
 import type { MeetingFileRecord } from '../services/meeting-file.mapper';
 import type { MeetingFileStorage } from '../storage/meeting-file-storage';
 
@@ -21,7 +22,8 @@ export interface StepContext {
 export interface StepPatch {
   checksum?: string;
   thumbnailKey?: string;
-  transcriptKey?: string;
+  /** `QUEUED` and nothing else: a step may ask for a transcription, never report on one. */
+  transcriptionStatus?: typeof TranscriptionStatus.QUEUED;
 }
 
 export interface ProcessingStep {

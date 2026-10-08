@@ -1,11 +1,7 @@
 import 'reflect-metadata';
 
 import { validate } from './env.validation';
-
-const VALID = {
-  DATABASE_URL: 'postgresql://postgres:postgres@localhost:5433/video_meetings',
-  JWT_SECRET: 'a-secret-that-is-at-least-thirty-two-characters',
-};
+import { VALID } from './env.validation.fixture';
 
 describe('validate', () => {
   it('applies the defaults for everything optional', () => {
@@ -17,55 +13,7 @@ describe('validate', () => {
     expect(env.MEETING_FILES_LEASE_SECONDS).toBe(60);
     expect(env.MEETING_FILES_POLL_MS).toBe(1000);
     expect(env.MEETING_FILES_TRANSCRIPTION_ENABLED).toBe(false);
-    expect(env.TRANSCRIPTION_TIMEOUT_SECONDS).toBe(600);
-  });
-
-  it('boots with transcription off and no endpoint configured', () => {
-    // The whole point of the flag: a deployment that does not transcribe needs no placeholder
-    // URL, and the URL is not validated while nothing reads it.
-    expect(() =>
-      validate({ ...VALID, MEETING_FILES_TRANSCRIPTION_ENABLED: 'false' }),
-    ).not.toThrow();
-  });
-
-  it('refuses to boot with transcription on and no endpoint', () => {
-    expect(() => validate({ ...VALID, MEETING_FILES_TRANSCRIPTION_ENABLED: 'true' })).toThrow(
-      /TRANSCRIPTION_API_URL/,
-    );
-  });
-
-  it('refuses a transcription endpoint that is not an http(s) URL', () => {
-    expect(() =>
-      validate({
-        ...VALID,
-        MEETING_FILES_TRANSCRIPTION_ENABLED: 'true',
-        TRANSCRIPTION_API_URL: 'localhost:9000/v1/audio/transcriptions',
-      }),
-    ).toThrow(/TRANSCRIPTION_API_URL/);
-  });
-
-  it('accepts transcription on with an endpoint, and the key stays optional', () => {
-    const env = validate({
-      ...VALID,
-      MEETING_FILES_TRANSCRIPTION_ENABLED: 'true',
-      TRANSCRIPTION_API_URL: 'http://localhost:9000/v1/audio/transcriptions',
-      TRANSCRIPTION_TIMEOUT_SECONDS: '60',
-    });
-
-    expect(env.MEETING_FILES_TRANSCRIPTION_ENABLED).toBe(true);
-    expect(env.TRANSCRIPTION_API_KEY).toBeUndefined();
-    expect(env.TRANSCRIPTION_TIMEOUT_SECONDS).toBe(60);
-  });
-
-  it('rejects a transcription timeout under thirty seconds', () => {
-    expect(() =>
-      validate({
-        ...VALID,
-        MEETING_FILES_TRANSCRIPTION_ENABLED: 'true',
-        TRANSCRIPTION_API_URL: 'http://localhost:9000/v1/audio/transcriptions',
-        TRANSCRIPTION_TIMEOUT_SECONDS: '29',
-      }),
-    ).toThrow(/TRANSCRIPTION_TIMEOUT_SECONDS/);
+    expect(env.TRANSCRIPTION_TIMEOUT_SECONDS).toBe(720);
   });
 
   it.each([

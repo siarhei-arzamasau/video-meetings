@@ -6,22 +6,29 @@ import { AbortUploadHandler } from './commands/handlers/abort-upload.handler';
 import { CompleteUploadHandler } from './commands/handlers/complete-upload.handler';
 import { CreateUploadHandler } from './commands/handlers/create-upload.handler';
 import { DeleteMeetingFileHandler } from './commands/handlers/delete-meeting-file.handler';
+import { RetryMeetingFileTranscriptionHandler } from './commands/handlers/retry-meeting-file-transcription.handler';
 import { RetryMeetingFileHandler } from './commands/handlers/retry-meeting-file.handler';
 import { StoreChunkHandler } from './commands/handlers/store-chunk.handler';
 import { UploadMeetingFileHandler } from './commands/handlers/upload-meeting-file.handler';
 import { MeetingFileUploadsController } from './meeting-file-uploads.controller';
 import { MeetingFilesController } from './meeting-files.controller';
 import {
+  MEETING_FILE_TRANSCRIPTION_WORKER,
+  MeetingFileTranscriptionWorker,
+} from './processing/meeting-file-transcription-worker';
+import {
   MEETING_FILE_WORKER,
   MeetingFileWorker,
   PIPELINE_STEPS,
 } from './processing/meeting-file-worker';
 import { buildPipeline } from './processing/pipeline';
-import { TranscribeStep } from './processing/steps/transcribe.step';
+import { QueueTranscriptionStep } from './processing/steps/queue-transcription.step';
 import { HttpTranscriptionProvider } from './processing/transcription/http-transcription.provider';
 import { TRANSCRIPTION_PROVIDER } from './processing/transcription/transcription-provider';
 import { ContentSniffer } from './services/content-sniffer';
 import { MeetingFileEventsService } from './services/meeting-file-events.service';
+import { MeetingFileHandOvers } from './services/meeting-file-hand-overs';
+import { MeetingFileTranscriptionRepository } from './services/meeting-file-transcription.repository';
 import { MeetingFileUploadRepository } from './services/meeting-file-upload.repository';
 import { MeetingFileUploadsService } from './services/meeting-file-uploads.service';
 import { MeetingFileRepository } from './services/meeting-file.repository';
@@ -32,7 +39,8 @@ import { MeetingFileUploadInterceptor } from './storage/meeting-file-upload.inte
 import { VisibleMeetingGuard } from './visible-meeting.guard';
 
 /**
- * Files attached to meetings: upload, list, download, delete, and the processing worker.
+ * Files attached to meetings: upload, list, download, delete, and the two workers — one that
+ * processes a file, one that transcribes a recording once it is `ready`.
  *
  * Does not import `MeetingsModule`, and that is deliberate: visibility is resolved by
  * dispatching `FindVisibleMeetingQuery`, which the meetings module answers over the bus. The
@@ -51,36 +59,45 @@ import { VisibleMeetingGuard } from './visible-meeting.guard';
     UploadMeetingFileHandler,
     DeleteMeetingFileHandler,
     RetryMeetingFileHandler,
+    RetryMeetingFileTranscriptionHandler,
     CreateUploadHandler,
     StoreChunkHandler,
     CompleteUploadHandler,
     AbortUploadHandler,
     MeetingFilesService,
     MeetingFileEventsService,
+    // One instance for the module: the handlers and the file worker register their hand-overs
+    // in it, and both workers ask it before announcing a claim.
+    MeetingFileHandOvers,
     MeetingFileUploadsService,
     MeetingFileRepository,
+    MeetingFileTranscriptionRepository,
     MeetingFileUploadRepository,
     MeetingFileStorage,
     MeetingFileUploadInterceptor,
     MeetingFileChunkInterceptor,
     VisibleMeetingGuard,
     ContentSniffer,
-    TranscribeStep,
-    // The port's one implementation. A deployment swaps vendors through
+    QueueTranscriptionStep,
+    // The port's one implementation. A deployment swaps servers through
     // TRANSCRIPTION_API_URL; swapping *protocols* is this one line.
     { provide: TRANSCRIPTION_PROVIDER, useClass: HttpTranscriptionProvider },
     // The step list the worker runs. A provider rather than the module-level `PIPELINE`,
-    // because the transcription step has dependencies and `pipeline.ts` cannot `new` it.
+    // because the queueing step has a dependency and `pipeline.ts` cannot `new` it.
     {
       provide: PIPELINE_STEPS,
-      useFactory: (transcribe: TranscribeStep) => buildPipeline(transcribe),
-      inject: [TranscribeStep],
+      useFactory: (queueTranscription: QueueTranscriptionStep) => buildPipeline(queueTranscription),
+      inject: [QueueTranscriptionStep],
     },
     MeetingFileWorker,
     // Also under a string token, so the e2e spec can `app.get('MEETING_FILE_WORKER')` and
     // call `drain()` without importing anything from this module — which is what lets that
     // spec compile, and fail, before the worker exists.
     { provide: MEETING_FILE_WORKER, useExisting: MeetingFileWorker },
+    MeetingFileTranscriptionWorker,
+    // A token of its own for the same reason: the two workers are drained separately, which
+    // is how a spec sees a file that is `ready` while its transcription is still queued.
+    { provide: MEETING_FILE_TRANSCRIPTION_WORKER, useExisting: MeetingFileTranscriptionWorker },
   ],
 })
 export class MeetingFilesModule {}

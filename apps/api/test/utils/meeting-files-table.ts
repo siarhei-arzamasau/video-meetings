@@ -8,8 +8,9 @@ import { PrismaService } from '../../src/modules/prisma/prisma.service';
  * specs compile before the model exists, and they assert the storage contract rather than the
  * client's view of it.
  *
- * The schema must map to **`meeting_files`** with **snake_case** columns and a
- * **`meeting_file_status`** enum:
+ * The schema must map to **`meeting_files`** with **snake_case** columns, a
+ * **`meeting_file_status`** enum, and a **`meeting_file_transcription_status`** enum whose
+ * values are UPPER_CASE:
  *
  * ```prisma
  * model MeetingFile {
@@ -32,11 +33,17 @@ import { PrismaService } from '../../src/modules/prisma/prisma.service';
  *   deletedAt     DateTime?         @map("deleted_at")
  *   purgedAt      DateTime?         @map("purged_at")
  *
+ *   transcriptionStatus        MeetingFileTranscriptionStatus? @map("transcription_status")
+ *   transcriptionFailureReason String?   @map("transcription_failure_reason")
+ *   transcriptionAttempts      Int       @default(0) @map("transcription_attempts")
+ *   transcriptionLeasedUntil   DateTime? @map("transcription_leased_until")
+ *
  *   @@map("meeting_files")
  * }
  * ```
  *
- * No truncation helper, as with `meetings-table.ts`: `truncateUsers` cascades here too.
+ * No truncation helper, as with `meetings-table.ts`: `truncateUsers` cascades here too. The
+ * transcription columns are seeded by `meeting-file-transcription-table.ts`.
  */
 export interface MeetingFileRow {
   id: string;
@@ -57,6 +64,10 @@ export interface MeetingFileRow {
   processed_at: string | null;
   deleted_at: string | null;
   purged_at: string | null;
+  transcription_status: string | null;
+  transcription_failure_reason: string | null;
+  transcription_attempts: number;
+  transcription_leased_until: string | null;
 }
 
 /**

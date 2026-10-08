@@ -5,6 +5,7 @@ import helmet from 'helmet';
 
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { ConnectionDrainService } from './common/shutdown/connection-drain.service';
 
 /**
  * The response headers every answer carries. This API serves JSON and attachments and nothing
@@ -42,6 +43,11 @@ export function configureApp(app: INestApplication): void {
   const express: Express = app.getHttpAdapter().getInstance();
 
   express.set('trust proxy', app.get(ConfigService).getOrThrow<number>('TRUST_PROXY_HOPS'));
+
+  // First, so that every answer passes it — a preflight and a refusal included. Once shutdown
+  // has begun it is what makes each connection the last request it carries; the class says why
+  // a stopping process is otherwise kept alive by the pages that were open on it.
+  app.use(app.get(ConnectionDrainService).middleware);
 
   // Before CORS, so a preflight answer carries them too.
   app.use(SECURITY_HEADERS);
