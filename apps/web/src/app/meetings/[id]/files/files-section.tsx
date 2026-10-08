@@ -11,7 +11,7 @@ import { FileRow } from './file-row';
 import { FilesAnnouncement } from './files-announcement';
 import { UploadRow } from './upload-row';
 import { useDropTarget } from './use-drop-target';
-import { useMeetingFiles } from './use-meeting-files';
+import type { MeetingFiles } from './use-meeting-files';
 import { useUploadQueue } from './use-upload-queue';
 
 /** One array for every render without a list, so nothing downstream sees it change. */
@@ -21,24 +21,26 @@ interface FilesSectionProps {
   token: string;
   meeting: Meeting;
   user: User;
+  /** The list and its three edits, from the page: it holds the stream that keeps them current. */
+  files: MeetingFiles;
   onUnauthorized(): void;
 }
 
 /**
  * The files of a meeting: the list, an upload queue that feeds it, and a drop target.
  *
- * Four hooks hold what moves — `useMeetingFiles` the list and its stream, `useUploadQueue`
- * the rows waiting to be sent, `useDropTarget` the drag state, `useFilesAnnouncement` what a
- * screen reader is told as the list changes — and this component is what remains: which of
- * them is rendered.
+ * Four hooks hold what moves — `useMeetingFiles` the list and its stream, called by the page
+ * and handed in as `files`; `useUploadQueue` the rows waiting to be sent, `useDropTarget` the
+ * drag state, `useFilesAnnouncement` what a screen reader is told as the list changes — and
+ * this component is what remains: which of them is rendered.
  *
  * Pick and drop go through one `enqueue`, and a finished upload goes straight into the list
  * through `add`. The queue is rendered on `uploads.length` rather than on the list being
  * ready, because an upload the user just started must show its progress, its Cancel, or its
  * rejection even while the list behind it is still loading or failed to load.
  */
-export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSectionProps) {
-  const { list, refresh, add, remove } = useMeetingFiles(token, meeting.id, onUnauthorized);
+export function FilesSection({ token, meeting, user, files, onUnauthorized }: FilesSectionProps) {
+  const { list, refresh, add, remove } = files;
   const { uploads, enqueue, cancel, dismiss, retry } = useUploadQueue({
     token,
     meetingId: meeting.id,
@@ -50,8 +52,8 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
   const input = useRef<HTMLInputElement>(null);
 
   const listed = list.state === 'ready' ? list.files : NO_FILES;
-  const files = sortNewestFirst(listed);
-  const isEmpty = list.state === 'ready' && files.length === 0 && uploads.length === 0;
+  const rows = sortNewestFirst(listed);
+  const isEmpty = list.state === 'ready' && rows.length === 0 && uploads.length === 0;
   // The queue is shown whenever it has rows, even while the list is loading or failed to load:
   // an upload the user just started must show its progress, its Cancel, or its rejection.
   const showRows = uploads.length > 0 || (list.state === 'ready' && !isEmpty);
@@ -134,7 +136,7 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
               <UploadRow upload={upload} onCancel={cancel} onDismiss={dismiss} onRetry={retry} />
             </li>
           ))}
-          {files.map((file, index) => (
+          {rows.map((file, index) => (
             <li key={file.id} className="flex flex-col">
               {(index > 0 || uploads.length > 0) && <Separator className="my-1" />}
               <FileRow

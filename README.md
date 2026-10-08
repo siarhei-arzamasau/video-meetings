@@ -171,7 +171,12 @@ and otherwise the `name` as it was spoken; the API makes that match itself, afte
 answered, so no participant's name is sent. It is the one place a member of a meeting can
 read another member's display name, and never an email address.
 Every change is also sent as a `digest` event on the meeting's files stream
-(`GET /api/meetings/:id/files/events`). The meeting page does not show it yet.
+(`GET /api/meetings/:id/files/events`), which is how the meeting page shows it: a Digest
+section under the files — "Digest queued", "Generating digest…", then the summary, the
+action items with their owners, and the decisions — that appears, is marked out of date
+and replaced, and goes, for everyone who can see the meeting and with no reload. It carries
+a note that it is AI-generated and may contain mistakes. The page has no control for the
+request below yet.
 
 `POST /api/meetings/:id/digest/generation` asks for a digest that no recording asked for,
 and takes no body. The digest says when there is something to ask for, in `availableAction`:
@@ -219,7 +224,9 @@ pnpm --filter=@repo/web test:e2e        # Playwright; starts the API and the web
 ```
 
 The browser suite also starts a fake transcriber on 3102 and points its API at it, so neither
-suite needs Whisper running.
+suite needs Whisper running. Its API is booted with the meeting digest on and a scripted
+stand-in for Claude inside it (listening for the specs on 3103), so neither suite needs an
+Anthropic token or the network either.
 
 Both truncate the `users` table in whatever `DATABASE_URL` points at, and they share it, so run
 one at a time.

@@ -169,6 +169,10 @@ build it into the API; phases 6–7 put it on the page.
     exact text that would have left. The browser suite needs the same inside a running API, and
     the SDK has no HTTP seam to stand a server behind — so that suite boots the API from a test
     entry point.
+    **A scripted hold needs a key the spec holds** (phase 6): the entry point's Claude reads
+    what a digest holds from directives in the transcripts, but waits only while a spec is
+    holding the key a transcript names, on a control port of the entry point's own — a hold
+    written into a transcript alone would outlive a test that failed.
 
 ## Contract additions (`@repo/shared`)
 
@@ -545,29 +549,73 @@ without a reload.
 
 **Tasks:**
 
-- [ ] One stream, two consumers, as a pure move first: `useMeetingFiles` is lifted out of
+- [x] One stream, two consumers, as a pure move first: `useMeetingFiles` is lifted out of
       `FilesSection` so the page owns the connection; then `watchMeetingFiles` passes a
       `digest` event to an `onDigest`. Vitest green before and after, and for the new event.
-- [ ] `fetchMeetingDigest` in the API client; `useMeetingDigest` — fetched at mount and every
+- [x] `fetchMeetingDigest` in the API client; `useMeetingDigest` — fetched at mount and every
       time the stream opens, the higher version kept, polled while queued or generating when
       the stream has given up; `digestPresentation`, a pure function from a digest to what the
       section shows. Vitest for the version rule and a table for the presentation.
-- [ ] `DigestSection`, checked against `ui-ux-pro-max`: nothing at all without a status or
+- [x] `DigestSection`, checked against `ui-ux-pro-max`: nothing at all without a status or
       content; "Digest queued", "Generating digest…", "Digest failed" with its reason; Summary,
       Action items, and Decisions with "No action items were identified" and "No decisions
       were recorded"; an owner as a participant's name, a spoken name, or "Unassigned"; the
       out-of-date mark beside the replacement's status; the AI-generated note. Every string
       from the API is rendered as text, and a status change is announced as a file's is.
-- [ ] A Claude for the browser suite: `start:e2e-web` boots the API from a test entry point
+- [x] A Claude for the browser suite: `start:e2e-web` boots the API from a test entry point
       that binds a scripted `ClaudeAgentService` — it answers, holds, or fails according to
       directives in the transcript, which a spec already controls through the fake
       transcriber — with the setting on. No spec needs a token or the network.
-- [ ] Playwright spec `meeting-digest.spec.ts`: an uploaded recording's page shows queued,
+- [x] Playwright spec `meeting-digest.spec.ts`: an uploaded recording's page shows queued,
       generating, then the three parts, with no reload; the empty-list copy; the note; a
       second participant sees the same; a second recording marks the digest out of date and
       then replaces it; deleting a recording removes the digest at once and a new one follows;
       a failure shows its reason while the transcript still opens; markup in a digest appears
       as literal characters.
+
+_As built:_
+
+- **The page's one call is `useMeetingUpdates`**, in a `MeetingSections` component under the
+  header: `useMeetingDigest` holds the digest and no connection, and is handed to
+  `useMeetingFiles` as the stream's second consumer. `useMeetingFiles` keeps its signature —
+  the digest is a fourth, optional argument — so its two hook specs passed untouched through
+  the move; `files-section.retry.test.tsx` gained a five-line harness that calls the hook for
+  the section, and nothing else in it changed.
+- **Of two digests with the same version, a fetch wins and an event does not** (decision 9).
+  "The higher version kept" needed the tie decided: a rename and a departed
+  `availableAction` reach only a fetch, and an event of a version already held is the same
+  digest announced twice.
+- **The fallback poll has a trigger the task does not name.** "Polled while queued or
+  generating" gives a page without a stream nothing to run on before a digest has a status,
+  and what starts one is a recording being transcribed. So the digest is also asked for once
+  whenever the files list's set of transcribed recordings changes — which covers a delete
+  the same way — and once more an interval later, because the API answers a delete and
+  reports a transcript before it has decided what either does to the digest, and the first
+  answer can be the digest as it was. **A fetch that failed is retried with a stream too**:
+  the digest has no error state, and no event announces a digest that is simply there.
+- **The section is drawn under the files**, where its appearing and growing moves nothing the
+  reader is using; `ui-ux-pro-max` rates content jumping High. Its status region sits outside
+  the card, because the section is not drawn at all without a status or content and one of
+  the things announced is that the digest was removed.
+- **A digest that is `ready` with its content withheld shows nothing**, as a meeting with no
+  digest does: "nothing at all without a status or content" was read as "nothing to show",
+  and `ready` is said by showing the digest, not by a chip. Phase 7 gives that state its
+  control.
+- **A hold is not a directive alone, which is where decision 13's "directives in the
+  transcript" fell short.** What a digest holds, and that it fails, are directives; but a
+  generation held by its transcript alone outlives a test that failed half-way, and the API
+  generates one digest at a time, so every digest after it would wait out the time limit.
+  A transcript therefore names a key, and the generation waits only while the spec holds
+  that key on a loopback-only control port the entry point opens (3103) — the fake
+  transcriber's rule, for its reason. Phase 7's switch for the setting belongs on the same
+  port.
+- **The setting and a placeholder token are set by the entry point, not by `start:e2e-web`**,
+  so that the digest cannot be switched on in that script over the real `ClaudeAgentService`.
+- **Every spec of the browser suite that transcribes a recording now has a Digest section on
+  its page**; none of the existing ones needed a change.
+- **The Playwright spec was red first**: run against the finished hooks and the test entry
+  point with the section not yet on the page, where all six cases failed on the missing
+  region.
 
 **Done when:** the spec is green with the existing browser suite; Vitest is green; browser
 inspection in both themes, and one run against the real Whisper and the real model with the

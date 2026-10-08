@@ -12,6 +12,7 @@ import {
 import { watchMeetingFiles } from '@/lib/meeting-file-stream';
 
 import { FilesSection } from './files-section';
+import { useMeetingFiles } from './use-meeting-files';
 
 /*
  * The row, `useRetry`, the section and the list together, with only the API and the stream
@@ -126,10 +127,26 @@ const retryButtons = (): HTMLElement[] => screen.queryAllByRole('button', { name
 /** Exact, because "Processing failed" contains "Processing". */
 const chips = (label: string): HTMLElement[] => screen.queryAllByText(label, { exact: true });
 
-async function renderSection(): Promise<void> {
-  render(
-    <FilesSection token="a-signed-jwt" meeting={MEETING} user={USER} onUnauthorized={vi.fn()} />,
+/** One function for every render: the list's effects restart when it changes. */
+const onUnauthorized = vi.fn();
+
+/** The section over the list its page would hand it — the page's own part in this. */
+function Section() {
+  const files = useMeetingFiles('a-signed-jwt', MEETING.id, onUnauthorized);
+
+  return (
+    <FilesSection
+      token="a-signed-jwt"
+      meeting={MEETING}
+      user={USER}
+      files={files}
+      onUnauthorized={onUnauthorized}
+    />
   );
+}
+
+async function renderSection(): Promise<void> {
+  render(<Section />);
   await screen.findByText('standup.mp3');
 }
 

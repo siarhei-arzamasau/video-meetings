@@ -1,6 +1,6 @@
 'use client';
 
-import type { MeetingFile } from '@repo/shared';
+import type { MeetingDigest, MeetingFile } from '@repo/shared';
 import { useCallback } from 'react';
 
 import { useFallbackPoll } from './use-fallback-poll';
@@ -20,6 +20,25 @@ export interface MeetingFiles {
   add(file: MeetingFile): void;
   /** Takes a just-deleted file out of the list without waiting for a refetch. */
   remove(fileId: string): void;
+  /**
+   * Whether there is a stream to rely on. False from three drops inside a minute until the
+   * retry: the fallback polls' condition, the digest's as well as the list's own.
+   */
+  streamAvailable: boolean;
+}
+
+/**
+ * The stream's second consumer: the meeting's digest, which is sent on the files' connection
+ * under an event name of its own. It is refetched exactly when the list is — at every open,
+ * and when the stream is given up on — because a digest fetched before the server subscribed
+ * this connection is as untrustworthy as a list fetched then.
+ *
+ * **Both must keep their identity between renders**: they are dependencies of the effect
+ * that holds the stream open, and a new function would hang up and reconnect.
+ */
+export interface StreamDigestConsumer {
+  refresh(): void;
+  receive(digest: MeetingDigest): void;
 }
 
 /**
@@ -105,20 +124,34 @@ function useLocalEdits({
  * correct it. A row whose retry was answered calls `refresh` instead — a list requested after
  * the retry is one this hook already knows how to put in order against the stream.
  *
+ * **The stream is the meeting's, not only the files'.** It also carries the meeting's digest,
+ * so the page that follows one passes `digest`, and this hook — which is called by the page,
+ * not by the files section — is the one place the connection is held. A second stream for the
+ * digest would double every open page's long-lived connections.
+ *
  * A 401 from either is handed to `onUnauthorized` rather than shown: the gate owns that answer.
  */
 export function useMeetingFiles(
   token: string,
   meetingId: string,
   onUnauthorized: () => void,
+  digest?: StreamDigestConsumer,
 ): MeetingFiles {
   const snapshot = useFilesSnapshot(token, meetingId, onUnauthorized);
   const { list, refresh, applyChange } = snapshot;
+  const refreshDigest = digest?.refresh;
+  // What a stream asks for when it opens or is given up on. The list's own `refresh` stays
+  // the list's: a row's Retry and the list's poll have no reason to fetch the digest.
+  const refreshAll = useCallback((): void => {
+    refresh();
+    refreshDigest?.();
+  }, [refresh, refreshDigest]);
   const streamAvailable = useFilesStream({
     token,
     meetingId,
-    refresh,
+    refresh: refreshAll,
     onFile: applyChange,
+    onDigest: digest?.receive,
     onUnauthorized,
   });
 
@@ -126,5 +159,5 @@ export function useMeetingFiles(
 
   const { add, remove } = useLocalEdits(snapshot);
 
-  return { list, refresh, add, remove };
+  return { list, refresh, add, remove, streamAvailable };
 }

@@ -944,13 +944,15 @@ A meeting's summary, action items, and decisions, generated from the transcripts
 recordings, stored, and served at `GET /api/meetings/:id/digest`. The contract is
 [the PRD](../../docs/prd-meeting-digest-summary-action-items-decisions.md); every decision
 under it, and the phases, are in
-[its plan](../../docs/plan-meeting-digest-summary-action-items-decisions.md). **Phases 1 to 5
-of 7 are built**, which is all of the API: a recording that reaches Transcribed gives its
+[its plan](../../docs/plan-meeting-digest-summary-action-items-decisions.md). **Phases 1 to 6
+of 7 are built** — all of the API, and the digest on the meeting page: a recording that reaches Transcribed gives its
 meeting a digest, anyone who can see the meeting can read it, a deleted recording takes away
 what was built from it, every change is sent to the meeting's open streams, an action item's
 owner is reported as the member of the meeting the spoken name identifies, and the host or
 a transcribed recording's uploader can ask for a digest that no recording asked for —
-`POST /api/meetings/:id/digest/generation`. Not yet: anything on the meeting page (6–7).
+`POST /api/meetings/:id/digest/generation`. The meeting page shows the digest and follows
+it over the stream ([the web guide](../web/AGENTS.md#the-digest)). Not yet: Generate and
+Retry on that page (7) — until then the route has no caller but a spec.
 What a reader of the code would get wrong:
 
 **What leaves, and when**
@@ -1454,11 +1456,25 @@ Nine things about that setup are easy to get wrong:
   every spec and would meet a deployment's ten a minute part-way through a run. It also
   switches transcription **on** and names `127.0.0.1:3102`, where that suite starts a fake of
   its own (`apps/web/e2e/fake-transcriber.mjs`); here the setting stays off except under
-  `useTranscriptionSuite`. **And it sets `MEETING_DIGEST_ENABLED=false`**, for a sharper
-  reason than `setup-env.ts`'s: that API holds the real `ClaudeAgentService`, its worker
-  polls, and the browser specs transcribe recordings — so with a developer's `.env` left to
-  decide, every one of them would be a paid request to Anthropic. Do not switch it on there
-  until that suite has a fake Claude of its own inside the API.
+  `useTranscriptionSuite`.
+- **`start:e2e-web` does not run `src/main.ts`: it runs `test/e2e-web/main.ts` through
+  `ts-node`**, and that file is the browser suite's Claude. The Claude Agent SDK has no HTTP
+  seam to stand a fake behind, as Whisper has `TRANSCRIPTION_API_URL`, so the stand-in has
+  to be inside the process — and production code is given no way to ask for one. The entry
+  point is `main.ts` again with one provider overridden: the same `AppModule`, the same
+  `configureApp`, the same workers, and `ScriptedClaudeAgent` bound over `ClaudeAgentService`.
+  **The setting, the token, and the fake are switched together, in `test/e2e-web/environment.ts`,
+  and must stay together**: it sets `MEETING_DIGEST_ENABLED=true` and a placeholder
+  `ANTHROPIC_AUTH_TOKEN` (the boot check wants one, and the suite is run with the variable
+  exported empty) before `AppModule` is imported. Move the setting into the script and the
+  day someone points that script back at `nest start`, every recording the browser specs
+  transcribe is a paid request to Anthropic. What the scripted Claude does is decided by
+  directives in the transcripts it is sent — the table is in `digest-script.ts` — and a
+  generation is held only while a spec holds the key its transcript names, on a
+  loopback-only control port (3103) that is a listener of the entry point's own, not a route
+  of the application. Nothing under `test/e2e-web` is covered by `pnpm typecheck`; `ts-node`
+  type-checks it at every boot, so a changed `src` signature it uses stops the browser suite
+  from starting rather than failing a spec.
 - **`maxWorkers: 1` is load-bearing**, for the same reason: Jest parallelises across spec
   files, and in parallel they delete each other's fixtures and a seeded `register` starts
   returning 409. Remove it only alongside per-worker database isolation.

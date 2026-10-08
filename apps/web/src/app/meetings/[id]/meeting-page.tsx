@@ -13,7 +13,7 @@ import { Wordmark } from '@/components/wordmark';
 import { ApiError, getMeeting } from '@/lib/api-client';
 import { formatMeetingTime } from '@/lib/date-time';
 import { describeFailure, useSignedIn } from '@/lib/use-signed-in';
-import { FilesSection } from './files/files-section';
+import { MeetingSections } from './meeting-sections';
 
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -144,7 +144,7 @@ export function MeetingPage() {
       ) : session.state === 'ready' && meeting.state === 'ready' ? (
         <>
           <MeetingHeader meeting={meeting.meeting} user={session.user} />
-          <FilesSection
+          <MeetingSections
             token={session.token}
             meeting={meeting.meeting}
             user={session.user}

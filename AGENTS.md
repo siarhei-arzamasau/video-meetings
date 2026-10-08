@@ -58,7 +58,8 @@ All five of its phases are built: Whisper, the status in the API, the status and
 transcript link on the meeting page, and the retry of a failed transcription — the route, and
 Retry on the row for the uploader or the host.
 
-**The meeting digest is being built, and five of its seven phases are — all of the API.** A digest is a
+**The meeting digest is being built, and six of its seven phases are — all of the API, and
+the digest on the meeting page.** A digest is a
 meeting's summary, action items, and decisions, written by Claude — through the Claude Agent
 SDK — from the transcripts of its recordings:
 [`docs/prd-meeting-digest-summary-action-items-decisions.md`](docs/prd-meeting-digest-summary-action-items-decisions.md),
@@ -68,9 +69,10 @@ Built so far: the API generates a digest when a recording is transcribed, stores
 it at `GET /api/meetings/:id/digest`, withdraws and replaces it when a recording it was built
 from is deleted, sends every change as a `digest` event on the files stream, reports an
 action item's owner as the participant the spoken name identifies, and takes a request to
-generate or retry one from the host or a transcribed recording's uploader. Not yet: anything
-on the meeting page (6–7) — the web client ignores the new event until then. **It is the
-first feature to send
+generate or retry one from the host or a transcribed recording's uploader; and the meeting
+page shows the digest and follows it over that stream, for everyone who can see the
+meeting. Not yet: Generate and Retry on that page (7) — until then nothing in the web app
+sends that request. **It is the first feature to send
 meeting content to a third party**, which is why `MEETING_DIGEST_ENABLED` ships off; read the
 plan's decisions before changing `src/modules/meeting-digests`, and do not start a later
 phase from inside an earlier one.
@@ -221,11 +223,13 @@ Four facts that bite an agent more than a human:
   it, no service depends on it, the API boots and serves uploads without it, and **no test may
   need it**: the specs bind a fake transcriber or a stand-in endpoint on loopback, and both
   `test:e2e` suites are run with the service stopped. The same holds for Anthropic: **no
-  `test:e2e` spec may need a token or the network** — the digest specs bind a fake over
-  `ClaudeAgentService`, and both e2e environments set `MEETING_DIGEST_ENABLED=false` rather
-  than leave it to `apps/api/.env`. Exporting `ANTHROPIC_AUTH_TOKEN=` empty for a run proves
-  it, since the environment wins over the env files, and makes sure no spec can spend the
-  real one. Port 8000 belonging to something else
+  `test:e2e` spec may need a token or the network** — neither suite leaves the digest
+  setting to `apps/api/.env`. The API's suite sets `MEETING_DIGEST_ENABLED=false` and its
+  digest specs bind a fake over `ClaudeAgentService`; the browser suite's API is booted from
+  a test entry point that switches the setting on together with a scripted Claude bound
+  over the same service ([the API guide](apps/api/AGENTS.md#tests)). Exporting
+  `ANTHROPIC_AUTH_TOKEN=` empty for a run proves it, since the environment wins over the env
+  files, and makes sure no spec can spend the real one. Port 8000 belonging to something else
   is `WHISPER_PORT` in the root `.env`.
   What the service is pinned to, and the traps in running it, are in
   [the API guide](apps/api/AGENTS.md#meeting-files-srcmodulesmeeting-files) under

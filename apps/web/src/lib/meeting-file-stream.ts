@@ -1,10 +1,8 @@
-import type { MeetingFile } from '@repo/shared';
+import type { MeetingDigest, MeetingFile } from '@repo/shared';
 
 import { ApiError, openMeetingFileEvents } from './api-client';
+import { deliverStreamEvent } from './meeting-stream-events';
 import { readEventStream } from './sse';
-
-/** The `event:` name the API sends a changed file under; anything else is a heartbeat. */
-export const FILE_EVENT = 'file';
 
 /**
  * How long to wait before reopening, by consecutive failure. The last entry repeats, though
@@ -29,6 +27,12 @@ export interface WatchMeetingFilesOptions {
   onOpen(): void;
   /** A file changed. The whole `MeetingFile`, to be applied by `applyFileEvent`. */
   onFile(file: MeetingFile): void;
+  /**
+   * The meeting's digest changed. The whole `MeetingDigest`, which the caller keeps only if
+   * its `version` is higher than the one it holds. Absent for a caller that follows the
+   * files alone, which then reads past these events.
+   */
+  onDigest?(digest: MeetingDigest): void;
   /** The token is no longer good — the caller's clear-and-redirect, as for any other call. */
   onUnauthorized(): void;
   /**
@@ -42,6 +46,11 @@ export interface WatchMeetingFilesOptions {
 
 /**
  * Keeps one meeting's event stream open, reopening it when it drops, until `signal` aborts.
+ *
+ * **One stream carries two things**: the meeting's files, and its digest. A second stream
+ * for the digest would be a second long-lived connection per open page, against a browser's
+ * six to one origin. Each event name has its own consumer and its own reader, and an event
+ * that fits neither is passed over.
  *
  * **Every ending is a drop, including a clean one.** The API closes a stream after its TTL,
  * so "the server ended it" is the ordinary case and reopening is the whole point. That is
@@ -69,6 +78,7 @@ export async function watchMeetingFiles({
   signal,
   onOpen,
   onFile,
+  onDigest,
   onUnauthorized,
   onUnavailable,
   wait = sleep,
@@ -77,6 +87,7 @@ export async function watchMeetingFiles({
   let drops: number[] = [];
   /** Consecutive failures to open or read, reset by a stream that opened. Indexes the delay. */
   let failures = 0;
+  const consumers = { onFile, onDigest };
 
   await connect();
 
@@ -127,7 +138,7 @@ export async function watchMeetingFiles({
       // From here on every change is an event, so this is the moment a list is worth fetching.
       onOpen();
 
-      await readEventStream(response, receive, signal);
+      await readEventStream(response, (event) => deliverStreamEvent(event, consumers), signal);
 
       return 'ended';
     } catch (error) {
@@ -147,35 +158,6 @@ export async function watchMeetingFiles({
 
       return 'failed';
     }
-  }
-
-  function receive(event: { type: string; data: string }): void {
-    if (event.type !== FILE_EVENT) {
-      return;
-    }
-
-    const file = parseFile(event.data);
-
-    if (file !== null) {
-      onFile(file);
-    }
-  }
-}
-
-/**
- * A `data:` payload that is not a `MeetingFile` is dropped rather than thrown: one
- * unreadable event must not end a stream that is otherwise working, and the next refetch
- * sees whatever it described anyway.
- */
-function parseFile(data: string): MeetingFile | null {
-  try {
-    const parsed: unknown = JSON.parse(data);
-
-    return typeof parsed === 'object' && parsed !== null && 'id' in parsed
-      ? (parsed as MeetingFile)
-      : null;
-  } catch {
-    return null;
   }
 }
 
