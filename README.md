@@ -128,8 +128,10 @@ Port 8000 taken? Set `WHISPER_PORT` in the root `.env` and the same port in
 `TRANSCRIPTION_API_URL`. `docker compose --profile transcription stop whisper` stops the
 service and keeps the model. The API boots and serves uploads and downloads whether or not
 Whisper is running: a recording uploaded while it is stopped is still ready and downloadable,
-and only its transcription is marked failed. Restarting the API in the middle of a
-transcription fails nothing — the recording goes back to `queued` and is picked up again.
+and only its transcription is marked failed. Once Whisper is back, the uploader or the
+meeting's host queues it again with
+`POST /api/meetings/:id/files/:fileId/transcription/retry`. Restarting the API in the middle of
+a transcription fails nothing — the recording goes back to `queued` and is picked up again.
 Setting the flag back to `false` stops new transcriptions and keeps every status and
 transcript already stored.
 

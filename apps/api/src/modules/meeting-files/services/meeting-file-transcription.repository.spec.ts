@@ -65,8 +65,16 @@ describe('MeetingFileTranscriptionRepository', () => {
       });
     });
 
-    it('failed to queued: a row with no lease is matched on having none', async () => {
-      await repository.transition(FILE_ID, FAILED, QUEUED, {}, null);
+    it('failed to queued: matched on holding no lease, with the count and the reason the retry resets', async () => {
+      await expect(
+        repository.transition(
+          FILE_ID,
+          FAILED,
+          QUEUED,
+          { transcriptionAttempts: 0, transcriptionFailureReason: null },
+          null,
+        ),
+      ).resolves.toBe(true);
 
       expect(updateMany).toHaveBeenCalledWith({
         where: {
@@ -75,7 +83,12 @@ describe('MeetingFileTranscriptionRepository', () => {
           transcriptionStatus: FAILED,
           transcriptionLeasedUntil: null,
         },
-        data: { transcriptionStatus: QUEUED, transcriptionLeasedUntil: null },
+        data: {
+          transcriptionStatus: QUEUED,
+          transcriptionLeasedUntil: null,
+          transcriptionAttempts: 0,
+          transcriptionFailureReason: null,
+        },
       });
     });
 

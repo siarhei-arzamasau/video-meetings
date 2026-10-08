@@ -53,6 +53,10 @@ export function meetingFileTranscriptUrl(meetingId: string, fileId: string): str
   return `${meetingFileUrl(meetingId, fileId)}/transcript`;
 }
 
+export function meetingFileTranscriptionRetryUrl(meetingId: string, fileId: string): string {
+  return `${meetingFileUrl(meetingId, fileId)}/transcription/retry`;
+}
+
 export function meetingFileContentUrl(meetingId: string, fileId: string): string {
   return `${meetingFileUrl(meetingId, fileId)}/content`;
 }

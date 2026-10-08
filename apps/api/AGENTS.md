@@ -518,6 +518,16 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   is the 409. Who may retry is the uploader or the host, the delete rule, with the same 404 for
   everyone else. `attempts` going back to 0 is deliberate: a retry is a fresh chance, not a
   fourth attempt against the cap of three.
+- **The transcription retry is the one caller of `failed → queued`, and it is not the retry
+  above.** `POST :fileId/transcription/retry` never touches the file, which is `ready` before
+  and after: it is one conditional
+  `MeetingFileTranscriptionRepository.transition(id, FAILED, QUEUED, …, null)` that resets
+  `transcription_attempts` to 0 and clears the reason, after which the transcription worker
+  claims the row like any other queued one. Zero rows changed is the 409, whatever the row was
+  instead — queued, running, transcribed, a file with no transcription at all. The gate, its
+  order, and its 404s are the file retry's. **The handler does not ask whether transcription is
+  switched on:** with the setting off the row is queued all the same and waits for it to come
+  back, as every queued row does — the route's contract has no other answer to give.
 
 **Chunked upload (phase 2)**
 
@@ -574,7 +584,7 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   the in-process `EventBus` as `MeetingFileChangedEvent(meetingId, file)`: by the file worker on
   the `true` branch of each conditional transition and after `markPurged`, by the transcription
   worker after a claim and on the `true` branch of each of its writes, and by the upload, delete,
-  and retry handlers after theirs. A transition that lost its race changed nothing, so it
+  and two retry handlers after theirs. A transition that lost its race changed nothing, so it
   announces nothing. The chunked path needs no publisher because `CompleteUploadHandler` ends in
   `UploadMeetingFileCommand`. The event carries the whole `MeetingFile`, not a diff: the contract
   has no version field, so a subscriber replaces the row by id and a missed event is repaired by
@@ -625,13 +635,14 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   tests, as it does the stream's TTL. `TRANSCRIPTION_API_URL` is validated at boot when the
   setting is on — **its shape, never the server**. A Whisper that is not running fails a
   transcription; it must not stop the process that serves every upload and download.
-- **A failed transcription stores fixed copy the worker chose, and is not retried.** Three
-  sentences from `@repo/shared`: a generic one, one that names `TRANSCRIPTION_TIMEOUT_SECONDS`
-  when that limit is what aborted the request, and one for a fourth claim. Which applies is
-  decided from what ended the request — the worker owns the time limit, the shutdown, and the
-  lost-claim signals — and never from what the provider threw, so nothing Whisper says can
-  reach `transcriptionFailureReason`. The first error ends it: there is no automatic retry, and
-  until the retry route exists nothing takes `failed → queued`.
+- **A failed transcription stores fixed copy the worker chose, and nothing retries it unasked.**
+  Three sentences from `@repo/shared`: a generic one, one that names
+  `TRANSCRIPTION_TIMEOUT_SECONDS` when that limit is what aborted the request, and one for a
+  fourth claim. Which applies is decided from what ended the request — the worker owns the time
+  limit, the shutdown, and the lost-claim signals — and never from what the provider threw, so
+  nothing Whisper says can reach `transcriptionFailureReason`. The first error ends it: there is
+  no automatic retry, and the only way back to `queued` is the uploader or the host asking for
+  it — the transcription retry under _Delete, retry, and the purge marker_.
 - **The provider is a port with one adapter.** `TranscriptionProvider` is
   `transcribe(stream, contentType, signal)` and nothing else, bound under the string token
   `TRANSCRIPTION_PROVIDER` so a spec can substitute a fake without importing the module. The

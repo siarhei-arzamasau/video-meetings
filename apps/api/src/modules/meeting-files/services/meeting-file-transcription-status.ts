@@ -22,7 +22,7 @@ export type TranscriptionStatus = (typeof TranscriptionStatus)[keyof typeof Tran
  * - `QUEUED → TRANSCRIBING` is the claim, which also re-claims a `TRANSCRIBING` row whose lease
  *   has lapsed without changing its status.
  * - `TRANSCRIBING → QUEUED` is the release a graceful shutdown makes.
- * - `FAILED → QUEUED` is the retry. Nothing takes it yet: its one caller is the retry route.
+ * - `FAILED → QUEUED` is the retry, and `RetryMeetingFileTranscriptionHandler` its one caller.
  *
  * `TRANSCRIBED` is terminal.
  */

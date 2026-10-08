@@ -24,6 +24,7 @@ import type { Observable } from 'rxjs';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { DeleteMeetingFileCommand } from './commands/delete-meeting-file.command';
+import { RetryMeetingFileTranscriptionCommand } from './commands/retry-meeting-file-transcription.command';
 import { RetryMeetingFileCommand } from './commands/retry-meeting-file.command';
 import { UploadMeetingFileCommand } from './commands/upload-meeting-file.command';
 import { MeetingFileEventsService } from './services/meeting-file-events.service';
@@ -153,6 +154,23 @@ export class MeetingFilesController {
     const opened = await this.files.openTranscript(user.id, meetingId, fileId);
 
     return stream(response, opened, 'inline');
+  }
+
+  /**
+   * Sends a `failed` transcription back to the queue, by the uploader or the host. The file
+   * is `ready` before and after; the transcription worker claims the row on its next tick.
+   * 200 rather than 201, as for the file's own retry above.
+   */
+  @Post(':fileId/transcription/retry')
+  @HttpCode(200)
+  retryTranscription(
+    @CurrentUser() user: User,
+    @Param('id', UUID_V4) meetingId: string,
+    @Param('fileId', UUID_V4) fileId: string,
+  ): Promise<MeetingFile> {
+    return this.commandBus.execute<RetryMeetingFileTranscriptionCommand, MeetingFile>(
+      new RetryMeetingFileTranscriptionCommand(user.id, meetingId, fileId),
+    );
   }
 
   /** Soft delete by the uploader or the host; the worker purges the bytes later. */

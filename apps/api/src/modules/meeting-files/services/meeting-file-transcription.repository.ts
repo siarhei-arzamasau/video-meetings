@@ -11,7 +11,14 @@ import type { MeetingFileRecord } from './meeting-file.mapper';
 export interface TranscriptionPatch {
   transcriptKey?: string | null;
   transcriptionFailureReason?: string | null;
+  /** Only the retry sets this, back to 0; every other writer leaves the claim count alone. */
+  transcriptionAttempts?: number;
 }
+
+/** What `write` may set: a patch, or the one decrement — `release`'s — in place of a count. */
+type TranscriptionWrite = Omit<TranscriptionPatch, 'transcriptionAttempts'> & {
+  transcriptionAttempts?: number | { decrement: number };
+};
 
 /** A row the transcription worker now owns, with the status it had before the claim. */
 export interface ClaimedTranscription extends MeetingFileRecord {
@@ -120,7 +127,8 @@ export class MeetingFileTranscriptionRepository {
    * Moves a transcription along one edge, if the row is still where the caller believes it
    * is: the file `ready`, the transcription in `from`, and the lease the one given — `null`
    * for a row that holds none. Returns whether one row changed; `false` means the file was
-   * deleted or the claim reclaimed, and the caller discards what it produced.
+   * deleted or the claim reclaimed, and the caller discards what it produced — or, for the
+   * retry, that the transcription is not failed, which is its 409.
    *
    * The lease comes off on every edge, since none of them ends in `TRANSCRIBING`.
    */
@@ -158,7 +166,7 @@ export class MeetingFileTranscriptionRepository {
     id: string,
     from: TranscriptionStatus,
     to: TranscriptionStatus,
-    patch: TranscriptionPatch & { transcriptionAttempts?: { decrement: number } },
+    patch: TranscriptionWrite,
     lease: Date | null,
   ): Promise<boolean> {
     assertTranscriptionTransition(from, to);
