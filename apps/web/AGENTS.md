@@ -409,7 +409,14 @@ of this side would get wrong:
   poll is. But what _starts_ a digest is a recording being transcribed, and what withdraws
   one is such a recording being deleted; so it also asks whenever the list's set of
   transcribed recordings changes. Drop that and a page that cannot hold a stream watches its
-  recording reach "Open transcript" and never learns a digest was queued. **That change is
+  recording reach "Open transcript" and never learns a digest was queued. **That trigger
+  runs beside an open stream too, and there it is a safeguard rather than a duplicate.** The
+  digest's own event is sent by the API's reaction to the change, and a reaction that fails
+  is logged and sends nothing — while the file's `deleted` event has already reached the
+  page. Gated on the stream, a digest built from a deleted recording stayed on screen until
+  the stream next reconnected, minutes later; the API withholds it from the moment the
+  delete commits, so one fetch takes it off. It is also how a page learns Generate is on
+  offer for a recording whose request could not be queued. **That change is
   asked about twice — at once, and one interval later — and the second is not redundant.**
   The API answers a delete, and reports a transcript, before it has decided what either does
   to the digest, so the first answer can be the digest as it was: nothing queued, nothing to
@@ -424,7 +431,7 @@ of this side would get wrong:
   **A fetch the API refused is not retried at all**: a 403 or a 404 is its answer about this
   meeting, and `failedFetches` counts only what the next try might not get again — a request
   that never arrived, a server error, a 408 or a 429. The stream is no substitute
-  for that, which is why this half is not gated on it as the rest is: an event says a digest
+  for that, which is why this half is not gated on it as the poll is: an event says a digest
   _changed_, and a digest that is simply there never does — a page whose fetch was lost
   would show none until the stream next reconnected, minutes later.
 

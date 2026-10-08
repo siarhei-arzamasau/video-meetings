@@ -27,8 +27,8 @@ export function digestRetryDelayMs(failedFetches: number): number {
 
 /**
  * The digest's own reasons to be asked for again, at the files' interval. Beside an open
- * stream every change arrives as an event, and a poll would be a request every three seconds
- * for nothing — so two of the three run only without one.
+ * stream a change normally arrives as an event, and a poll would be a request every three
+ * seconds for nothing — so the one that is a poll runs only without one.
  *
  * - **A fetch that failed, with a stream or without.** The digest has no error state and no
  *   "Try again": a fetch that fails changes nothing on the page, so nothing but this would
@@ -41,12 +41,21 @@ export function digestRetryDelayMs(failedFetches: number): number {
  * - **A digest that is queued or being generated**, without a stream, until it is neither.
  *   `settled` is a dependency for the reason it is one of the files' poll: each fetch that
  *   comes back arms the next, and a failed one leaves `digest` the very object it was.
- * - **The list's transcribed recordings changing**, without a stream. A digest with no status
- *   gives the poll above nothing to run on, and what starts one is a recording being
+ * - **The list's transcribed recordings changing, with a stream or without.** A digest with
+ *   no status gives the poll above nothing to run on, and what starts one is a recording being
  *   transcribed; what withdraws one is such a recording being deleted. Both reach the page
- *   through its list — by the files' own poll, or by the page's own delete — so that is when
- *   the digest is asked for. A recording that is merely there when the page loads is not a
- *   change.
+ *   through its list — by the stream's file events, the files' own poll, or the page's own
+ *   delete — so that is when the digest is asked for. A recording that is merely there when
+ *   the page loads is not a change.
+ *
+ *   **Beside a stream it is not redundant, though the digest's own event usually says the
+ *   same.** That event is sent by the API's reaction to the change, and a reaction that fails
+ *   is logged and sends nothing — while the file's event has already told this page the
+ *   recording is gone. Without the fetch, the words of a deleted recording stayed on the page
+ *   until the stream next reconnected, minutes later; the API withholds them from the moment
+ *   the delete commits, so asking is all it takes. It is also the only way a page learns that
+ *   Generate is on offer for a recording whose request could not be queued. Two requests per
+ *   change, not a poll.
  *
  *   **It is asked for twice: at once, and an interval later.** The API answers a delete, and
  *   reports a recording transcribed, before it has decided what that does to the digest — so
@@ -82,7 +91,7 @@ export function useDigestFallbackPoll(
     const previous = seen.current;
     seen.current = transcribed;
 
-    if (streamAvailable || previous === null || transcribed === null || previous === transcribed) {
+    if (previous === null || transcribed === null || previous === transcribed) {
       return;
     }
 
@@ -92,5 +101,5 @@ export function useDigestFallbackPoll(
     return () => {
       clearTimeout(followUp);
     };
-  }, [streamAvailable, transcribed, refresh]);
+  }, [transcribed, refresh]);
 }
