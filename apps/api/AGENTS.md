@@ -686,9 +686,12 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   - **Pinned to `0.9.0-rc.3-cpu`, never `latest-cpu`.** That tag is still 0.8.3, which has no
     `PRELOAD_MODELS` and names its settings differently. Check `linux/arm64` on any bump.
   - **`TRANSCRIPTION_MODEL` must be the model the service holds** — `Systran/faster-whisper-small`,
-    the default on both sides (`WHISPER_MODEL` there). The server does not ignore the field: a
-    model it has not downloaded is a 404, and `whisper-1`, the default this replaced, is its
-    alias for `large-v3` and so fails every recording.
+    which is `WHISPER_MODEL` there. The server does not ignore the field: a model it has not
+    downloaded is a 404, and `whisper-1` is its alias for `large-v3` and so fails every
+    recording. **That is why the variable has no default**: one right for this service is
+    wrong for a hosted endpoint and the other way round, and either way the failure is every
+    recording, one at a time, long after boot. With transcription on and the model unset the
+    process refuses to start and says so; `.env.example` and Compose carry the local name.
   - **The entrypoint wrapper is what lets it start offline.** `PRELOAD_MODELS` asks Hugging Face
     which models exist _before_ it looks at its own cache, so set unconditionally the server
     exits at start-up without the network and Compose restarts it for ever. The wrapper sets it
@@ -705,7 +708,7 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
     request.** That is a stray line in this release, logged before the answer is built; the
     request it belongs to succeeded.
 - **The time limit is a measurement, and it lives beside the constant.**
-  `src/config/transcription.defaults.ts` holds the default model and
+  `src/config/transcription.defaults.ts` holds
   `DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS` with the numbers behind it: about six seconds of work
   per minute of audio, so twelve minutes covers a one-hour recording at twice that. The rate is
   the host's — re-measure rather than reason about it, through the API, from the transcription
@@ -794,8 +797,9 @@ instead of at the first request that needs it. Adding one means the class, `.env
 (`localhost:8000`) with the flag still `false`, so turning transcription on locally is one
 edit. `docker-compose.yml` hands the `api` service the same variables with the URL defaulting
 to the in-network name (`whisper:8000`), and takes the flag from the root `.env`. The default
-model and time limit are stated once for code, in `src/config/transcription.defaults.ts`, and
-restated in those two files because neither can import — change all three together.
+time limit is stated once for code, in `src/config/transcription.defaults.ts`, and restated
+in those two files because neither can import — change all three together. The model has no
+default in code at all: those two files are the only places the local one is named.
 
 **A rule the contract cannot express with a type is still the contract's job.** `JWT_SECRET`
 is rejected when it is one of the placeholders this repository has published, not only when it

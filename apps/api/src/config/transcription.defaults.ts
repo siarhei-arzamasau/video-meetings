@@ -1,16 +1,11 @@
 /**
- * The two transcription defaults that are read in more than one place: by the environment
- * contract, and as the fallback of the code that asks `ConfigService` for them. Stated once,
- * so the value a spec's bare config falls back to is the value a deployment boots with.
+ * The transcription default that is read in more than one place: by the environment contract,
+ * and as the fallback of the code that asks `ConfigService` for it. Stated once, so the value
+ * a spec's bare config falls back to is the value a deployment boots with.
  *
- * `apps/api/.env.example` and `docker-compose.yml` restate both, because neither can import.
+ * `apps/api/.env.example` and `docker-compose.yml` restate it, because neither can import.
+ * The model has no default at all: see `TRANSCRIPTION_MODEL` in `env.validation.ts`.
  */
-
-/**
- * Whisper `small`, under the name the local service knows it by: the Hugging Face repository
- * the `whisper` Compose service preloads. A hosted endpoint wants its own name here.
- */
-export const DEFAULT_TRANSCRIPTION_MODEL = 'Systran/faster-whisper-small';
 
 /**
  * Twelve minutes: a one-hour recording at twice the slowest rate measured, rounded up.

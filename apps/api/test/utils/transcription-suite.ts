@@ -105,6 +105,9 @@ export function configureTranscription(
 
   config.set('MEETING_FILES_TRANSCRIPTION_ENABLED', enabled);
   config.set('TRANSCRIPTION_API_URL', transcriber.url);
+  // Boot requires one whenever transcription is on, and the adapter refuses to guess; the
+  // stand-in endpoint does not care which.
+  config.set('TRANSCRIPTION_MODEL', 'Systran/faster-whisper-small');
   config.set('TRANSCRIPTION_TIMEOUT_SECONDS', timeLimitSeconds);
 }
 

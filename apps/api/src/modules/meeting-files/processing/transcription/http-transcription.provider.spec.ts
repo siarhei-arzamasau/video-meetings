@@ -74,19 +74,22 @@ describe('HttpTranscriptionProvider', () => {
     expect(server.received[1]?.body).toContain('filename="recording.mp3"');
   });
 
-  it('asks for Whisper small when no model is configured', async () => {
+  it('asks for no model of its own: with none configured it sends nothing at all', async () => {
     const server = await startServer((_received, response) => {
       response.writeHead(200, { 'content-type': 'text/plain' });
       response.end('ok');
     });
     stop = server.close;
-    const provider = new HttpTranscriptionProvider(config({ TRANSCRIPTION_API_URL: server.url }));
-
-    await provider.transcribe(audio(), 'audio/mpeg', AbortSignal.timeout(10_000));
-
-    expect(server.received[0]?.body).toContain(
-      'name="model"\r\n\r\nSystran/faster-whisper-small\r\n',
+    const provider = new HttpTranscriptionProvider(
+      config({ TRANSCRIPTION_API_URL: server.url, TRANSCRIPTION_MODEL: '' }),
     );
+
+    // Boot refuses this configuration; a guess here would be the default that fails every
+    // recording on whichever endpoint it was not meant for.
+    await expect(
+      provider.transcribe(audio(), 'audio/mpeg', AbortSignal.timeout(10_000)),
+    ).rejects.toThrow(new TranscriptionRequestError('TRANSCRIPTION_MODEL is not set'));
+    expect(server.received).toEqual([]);
   });
 
   it('logs the model it asked for, on an answer and on a refusal alike', async () => {

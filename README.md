@@ -96,9 +96,10 @@ docker compose --profile transcription ps whisper      # wait for "healthy"
 ```
 
 ```bash
-# apps/api/.env — the example already carries the URL, so only the flag changes
+# apps/api/.env — the example already carries the URL and the model, so only the flag changes
 MEETING_FILES_TRANSCRIPTION_ENABLED=true
 TRANSCRIPTION_API_URL=http://localhost:8000/v1/audio/transcriptions
+TRANSCRIPTION_MODEL=Systran/faster-whisper-small
 ```
 
 Restart the API afterwards. An uploaded audio or video file is then ready and downloadable as

@@ -53,9 +53,15 @@ export function startServer(
   });
 }
 
-export const config = (values: Record<string, string>): ConfigService =>
-  ({
-    get: <T>(key: string, fallback?: T): T | string | undefined => values[key] ?? fallback,
-  }) as unknown as ConfigService;
+/** The model every case asks for unless it is about asking for another, or for none. */
+export const MODEL = 'Systran/faster-whisper-small';
+
+export const config = (values: Record<string, string>): ConfigService => {
+  const configured: Record<string, string> = { TRANSCRIPTION_MODEL: MODEL, ...values };
+
+  return {
+    get: <T>(key: string, fallback?: T): T | string | undefined => configured[key] ?? fallback,
+  } as unknown as ConfigService;
+};
 
 export const audio = (): Readable => Readable.from([Buffer.from('ID3 fake audio bytes')]);

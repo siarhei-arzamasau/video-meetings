@@ -24,10 +24,7 @@ import {
   corsOriginsOf,
   parseBoolean,
 } from './env-values';
-import {
-  DEFAULT_TRANSCRIPTION_MODEL,
-  DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS,
-} from './transcription.defaults';
+import { DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS } from './transcription.defaults';
 
 /**
  * Environment contract for the API. Anything the app cannot start without belongs here,
@@ -197,13 +194,17 @@ export class EnvironmentVariables {
   TRANSCRIPTION_API_KEY?: string;
 
   /**
-   * The `model` field of the request. Whisper `small` by default, under the name the local
-   * service preloads it by — and that service does not ignore the field: a model it has not
-   * downloaded is a 404, so this and the service's `WHISPER_MODEL` have to name the same one.
+   * The `model` field of the request. Required when the flag is on and **never defaulted**: no
+   * one name is right everywhere — the local service answers 404 for a model it has not
+   * downloaded, a hosted endpoint for one it does not have — so a default fails every
+   * recording somewhere, one at a time and long after boot. `.env.example` and Compose name
+   * Whisper `small` as the local service knows it (its `WHISPER_MODEL`).
    */
-  @IsString()
-  @MinLength(1)
-  TRANSCRIPTION_MODEL: string = DEFAULT_TRANSCRIPTION_MODEL;
+  @ValidateIf((env: EnvironmentVariables) => env.MEETING_FILES_TRANSCRIPTION_ENABLED)
+  @MinLength(1, {
+    message: 'TRANSCRIPTION_MODEL must be set when MEETING_FILES_TRANSCRIPTION_ENABLED is on.',
+  })
+  TRANSCRIPTION_MODEL: string = '';
 
   /**
    * How long one transcription may take before it is aborted and ends Failed with a reason naming

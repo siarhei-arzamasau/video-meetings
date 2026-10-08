@@ -8,7 +8,6 @@ import { pipeline } from 'node:stream/promises';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import { DEFAULT_TRANSCRIPTION_MODEL } from '../../../../config/transcription.defaults';
 import { TranscriptionProvider, TranscriptionRequestError } from './transcription-provider';
 
 /**
@@ -62,13 +61,17 @@ export class HttpTranscriptionProvider implements TranscriptionProvider {
 
   async transcribe(stream: Readable, contentType: string, signal: AbortSignal): Promise<string> {
     const url = this.config.get<string>('TRANSCRIPTION_API_URL', '');
+    const model = this.config.get<string>('TRANSCRIPTION_MODEL', '');
+    const unset =
+      url === '' ? 'TRANSCRIPTION_API_URL' : model === '' ? 'TRANSCRIPTION_MODEL' : null;
 
-    if (url === '') {
-      throw new TranscriptionRequestError('TRANSCRIPTION_API_URL is not set');
+    // Boot refuses to start without either while transcription is on; this is for a process
+    // whose setting was changed under it, and it must not guess a model for anyone's endpoint.
+    if (unset !== null) {
+      throw new TranscriptionRequestError(`${unset} is not set`);
     }
 
     const key = this.config.get<string>('TRANSCRIPTION_API_KEY');
-    const model = this.config.get<string>('TRANSCRIPTION_MODEL', DEFAULT_TRANSCRIPTION_MODEL);
     const boundary = `----meeting-files-${randomUUID()}`;
     const filename = FILENAMES[contentType] ?? FALLBACK_FILENAME;
     const headers = {
