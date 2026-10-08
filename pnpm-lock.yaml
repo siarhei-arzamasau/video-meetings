@@ -172,6 +172,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: ^0.3.292
+        version: 0.3.292(@anthropic-ai/sdk@0.131.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.32.1(supports-color@8.1.1)(zod@4.6.5))(zod@4.6.5)
       '@heroui/react':
         specifier: 3.2.2
         version: 3.2.2(@react-spectrum/provider@3.11.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
