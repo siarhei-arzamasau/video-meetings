@@ -97,6 +97,12 @@ export function FileRow({
           {' · '}
           <time dateTime={file.createdAt}>{formatRelativeTime(file.createdAt)}</time>
         </span>
+        {transcription.kind === 'failed' && (
+          // Written out, not kept in the chip's tooltip: a tooltip opens on hover or keyboard
+          // focus, and a touch screen has neither. For the failure with no Retry, this
+          // sentence is also the only thing on the row that says what would help.
+          <span className="text-muted text-sm">{transcription.reason}</span>
+        )}
         {downloadError !== null && (
           <span className="text-danger text-sm" role="alert">
             {downloadError}

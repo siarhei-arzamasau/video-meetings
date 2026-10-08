@@ -1,6 +1,6 @@
 'use client';
 
-import { Chip, Link, Spinner, Tooltip } from '@heroui/react';
+import { Chip, Link, Spinner } from '@heroui/react';
 
 import { WarningIcon } from '@/components/icons';
 import type { TranscriptionPresentation } from '@/lib/meeting-files';
@@ -52,27 +52,12 @@ export function TranscriptionStatus({
         </Link>
       );
     case 'failed':
-      return <FailedChip reason={transcription.reason} />;
-  }
-}
-
-/** The row's own failure idiom: a warning chip whose tooltip carries the reason. */
-function FailedChip({ reason }: { reason: string }) {
-  return (
-    <Tooltip delay={0}>
-      <Tooltip.Trigger
-        tabIndex={0}
-        className="focus-visible:ring-focus rounded-full outline-none focus-visible:ring-2"
-      >
+      // The chip says that it failed; why is the row's to write, in words. See `FileRow`.
+      return (
         <Chip color="warning" variant="soft" size="sm">
           <WarningIcon />
           <Chip.Label>Transcription failed</Chip.Label>
         </Chip>
-      </Tooltip.Trigger>
-      <Tooltip.Content>
-        <Tooltip.Arrow />
-        {reason}
-      </Tooltip.Content>
-    </Tooltip>
-  );
+      );
+  }
 }

@@ -171,8 +171,13 @@ aliases in sync if either changes.
   instead of it.** `transcriptionPresentation` sits next to `statusPresentation` in
   `src/lib/meeting-files.ts` and `TranscriptionStatus` draws it in the same slot, in the row's
   own idiom: a chip for "Queued for transcription" and "Transcribing…", an "Open transcript"
-  link, and for "Transcription failed" the warning chip whose tooltip carries the reason — the
-  Retry that goes with it is the row's own, in the entry above, not a control of this element.
+  link, and a warning chip for "Transcription failed" — the Retry that goes with it is the
+  row's own, in the entry above, not a control of this element. **That chip has no tooltip:
+  the row writes the reason under the file's name.** A tooltip opens on hover or keyboard
+  focus and a touch screen has neither, and for the failure with no Retry the reason is the
+  only thing on the row that says what would help. The file's own "Processing failed" chip
+  still keeps its reason in a tooltip, with the same gap on touch; when it is closed, close
+  it the same way.
   A file with no `transcriptionStatus` draws nothing, and that one rule is all of "a PDF shows
   no status" and "a deployment with transcription off shows none". Nothing about Download reads
   it: a recording is `ready` before its transcription starts and stays `ready` if it fails.

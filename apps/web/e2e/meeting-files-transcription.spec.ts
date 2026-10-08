@@ -169,11 +169,8 @@ test.describe('transcription on the meeting page', () => {
     await expect(failedChip(failedRow)).toBeVisible();
     await expect(transcriptLink(rowFor(page, 'retro.mp3'))).toBeVisible();
 
-    // The reason, in the chip's tooltip. The pointer is nudged first: React Aria does not
-    // count an arrival it never saw travel as a hover (see `meeting-files-retry.spec.ts`).
-    await page.mouse.move(1, 1);
-    await failedChip(failedRow).hover();
-    await expect(page.getByText(TRANSCRIPTION_FAILED_MESSAGE)).toBeVisible();
+    // The reason, written on the row: nothing to hover, so a touch screen reads it too.
+    await expect(failedRow.getByText(TRANSCRIPTION_FAILED_MESSAGE)).toBeVisible();
     // The API's copy and nothing of the endpoint's: its error body stays in the server log.
     await expect(page.getByText(ENDPOINT_MARKER, { exact: false })).toHaveCount(0);
 

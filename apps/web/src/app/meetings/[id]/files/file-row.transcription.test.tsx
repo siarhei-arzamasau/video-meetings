@@ -1,7 +1,6 @@
 import type { MeetingFile } from '@repo/shared';
 import { meetingFileTranscriptionTimeLimitMessage } from '@repo/shared';
 import { cleanup, render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FileRow } from './file-row';
@@ -79,14 +78,12 @@ describe('the transcription element', () => {
     expect(screen.queryByText('Transcribing…')).toBeNull();
   });
 
-  it('gives the reason of a failure to whoever reaches the chip', async () => {
+  it('writes the reason of a failure on the row, with nothing to hover or focus first', () => {
     renderRow(OUT_OF_TIME);
 
-    await userEvent.setup().tab();
-
-    expect(
-      await screen.findByText(/^Transcription took longer than the 12-minute limit\./),
-    ).toBeDefined();
+    // A tooltip opens on hover or keyboard focus, and a touch screen has neither.
+    expect(screen.getByText(/^Transcription took longer than the 12-minute limit\./)).toBeDefined();
+    expect(screen.getByText('Transcription failed').closest('[tabindex]')).toBeNull();
   });
 
   it('offers no Retry beside that failure, even to someone who may retry the others', () => {
