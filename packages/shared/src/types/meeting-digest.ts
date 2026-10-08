@@ -14,8 +14,12 @@ export type MeetingDigestStatus = (typeof MEETING_DIGEST_STATUSES)[number];
 /**
  * Who an action item belongs to, when the transcripts named someone. A `participant` is the
  * meeting's host or one of its participants, under their current display name; a `name` is
- * what was spoken, linked to nobody. The API decides which — never the model — and until it
- * matches names to members every owner is a `name`.
+ * what was spoken, linked to nobody. The API decides which — never the model — and links a
+ * name only when it identifies exactly one member of the meeting.
+ *
+ * **A participant's `displayName` is the one thing here that can change under an unchanged
+ * `version`**: it is read when the digest is, and a rename writes nothing to the digest. A
+ * client that holds a digest should take a fetched one of the same version over it.
  */
 export type MeetingDigestOwner =
   | { kind: 'participant'; userId: User['id']; displayName: string }
@@ -36,7 +40,10 @@ export interface MeetingDigestContent {
 /** A meeting's digest, as `GET /api/meetings/:id/digest` reports it. */
 export interface MeetingDigest {
   meetingId: Meeting['id'];
-  /** Rises with every change below; a client keeps the higher. 0: the meeting never had one. */
+  /**
+   * Rises with every change below but a linked owner's new display name; a client keeps the
+   * higher. 0: the meeting never had one.
+   */
   version: number;
   /** Where the latest generation stands. Absent when none has been asked for. */
   status?: MeetingDigestStatus;

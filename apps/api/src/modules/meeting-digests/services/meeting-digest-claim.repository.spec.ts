@@ -24,6 +24,7 @@ const CONTENT = {
     decisions: [{ description: 'Ship on Friday.' }],
   },
   sourceFileIds: [FIRST_RECORDING_ID, SECOND_RECORDING_ID],
+  ownerLinks: new Map<string, string>(),
 };
 
 /**

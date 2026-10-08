@@ -165,6 +165,11 @@ digest is generated with no request from anyone and read with
 `generating`, then `ready` or `failed` with a `failureReason` — and, once one has been stored,
 the `content`. Deleting a recording takes away the digest built from it at once, and another
 is generated from the recordings that are left; with none left the meeting has no digest.
+An action item's `owner` is a `participant` — a user id and that person's current display
+name — when the name spoken identifies exactly one of the meeting's host and participants,
+and otherwise the `name` as it was spoken; the API makes that match itself, after Claude has
+answered, so no participant's name is sent. It is the one place a member of a meeting can
+read another member's display name, and never an email address.
 Every change is also sent as a `digest` event on the meeting's files stream
 (`GET /api/meetings/:id/files/events`). The meeting page does not show it yet.
 

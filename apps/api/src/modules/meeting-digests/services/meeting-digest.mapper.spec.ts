@@ -7,9 +7,21 @@ import {
   buildMeetingDigestRecord,
 } from './meeting-digest-record.fixture';
 import { DigestStatus } from './meeting-digest-status';
-import { toMeetingDigest } from './meeting-digest.mapper';
+import { toMeetingDigest as toMeetingDigestWithOwners } from './meeting-digest.mapper';
+import type { MeetingDigestRecord } from './meeting-digest.mapper';
 
 const { QUEUED, GENERATING, READY, FAILED } = DigestStatus;
+
+/**
+ * The mapper for a digest none of whose owners is linked to a member — every case here.
+ * What a link changes is `meeting-digest.mapper.owners.spec.ts`'s.
+ */
+const toMeetingDigest = (
+  meetingId: string,
+  record: MeetingDigestRecord | null,
+  transcribedFileIds: string[],
+): ReturnType<typeof toMeetingDigestWithOwners> =>
+  toMeetingDigestWithOwners(meetingId, record, transcribedFileIds, new Map());
 
 const CONTENT = {
   summary: 'The team reviewed the engine and agreed to ship on Friday.',
@@ -149,8 +161,8 @@ describe('toMeetingDigest', () => {
   it('orders the lists by position, whatever order the rows were loaded in', () => {
     const record = buildMeetingDigestRecord({
       actionItems: [
-        { id: 'b', position: 1, description: 'Second.', ownerName: null },
-        { id: 'a', position: 0, description: 'First.', ownerName: null },
+        { id: 'b', position: 1, description: 'Second.', ownerName: null, ownerId: null },
+        { id: 'a', position: 0, description: 'First.', ownerName: null, ownerId: null },
       ],
       decisions: [
         { id: 'd', position: 1, description: 'Later.' },

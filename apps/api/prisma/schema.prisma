@@ -304,8 +304,9 @@ model MeetingDigestActionItem {
   /// The owner as the transcripts named them, or null when they named nobody.
   ownerName   String? @map("owner_name")
   /// The host or participant that name was matched to, when it identifies exactly one. Null
-  /// for a name that matched nobody, or more than one — and for every row until that match
-  /// is made. Decided by the API from the meeting's members, never by the model.
+  /// for a name that matched nobody, or more than one — and for every name of a digest whose
+  /// members could not be read. Decided by the API from the meeting's members, never by the
+  /// model.
   ownerId     String? @map("owner_id") @db.Uuid
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)

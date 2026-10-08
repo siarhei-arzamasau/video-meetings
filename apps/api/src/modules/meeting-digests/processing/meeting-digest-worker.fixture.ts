@@ -7,6 +7,9 @@ import { ClaudeAgentError } from '../../claude-agent/claude-agent.error';
 import type { MeetingTranscripts } from '../../meeting-files/queries/find-meeting-transcripts.query';
 import { FindTranscribedRecordingsQuery } from '../../meeting-files/queries/find-transcribed-recordings.query';
 import type { TranscribedRecording } from '../../meeting-files/queries/find-transcribed-recordings.query';
+import { FindMeetingMemberIdsQuery } from '../../meetings/queries/find-meeting-member-ids.query';
+import { FindUsersByIdsQuery } from '../../user/queries/find-users-by-ids.query';
+import type { UserDisplayName } from '../../user/queries/find-users-by-ids.query';
 import { MeetingDigestAnnouncer } from '../services/meeting-digest-announcer';
 import { NO_DIGEST_STATUS } from '../services/meeting-digest-claim-writes';
 import { MeetingDigestClaimRepository } from '../services/meeting-digest-claim.repository';
@@ -14,6 +17,7 @@ import { MeetingDigestDeleteFollower } from '../services/meeting-digest-delete-f
 import type { ClaimedDigest } from '../services/meeting-digest-claim.repository';
 import { MeetingDigestGenerator } from '../services/meeting-digest-generator';
 import type { GeneratedMeetingDigest } from '../services/meeting-digest-generator';
+import type { DigestOwnerLinks } from '../services/meeting-digest-owner';
 import {
   DIGEST_ID,
   DIGEST_MEETING_ID,
@@ -22,6 +26,7 @@ import {
 } from '../services/meeting-digest-record.fixture';
 import { DigestStatus } from '../services/meeting-digest-status';
 import { PendingDigestRequests } from '../services/pending-digest-requests';
+import type { StorableDigest } from './meeting-digest-run';
 import { MEETING_DIGEST_WORKER, MeetingDigestWorker } from './meeting-digest-worker';
 
 export const LEASE = new Date(Date.now() + 60_000);
@@ -65,6 +70,28 @@ export const GENERATED: GeneratedMeetingDigest = {
   outputTokens: 300,
 };
 
+/** The participant `GENERATED` names as an owner, by her first name. */
+const GRACE: UserDisplayName = {
+  id: '22222222-2222-4222-8222-222222222222',
+  displayName: 'Grace Hopper',
+};
+
+/** The meeting's host and its one participant. */
+export const MEMBERS: UserDisplayName[] = [
+  { id: '11111111-1111-4111-8111-111111111111', displayName: 'Ada Lovelace' },
+  GRACE,
+];
+
+/** What matching `GENERATED`'s owners against `MEMBERS` finds: "Grace" is the participant. */
+export const OWNER_LINKS: DigestOwnerLinks = new Map([['Grace', GRACE.id]]);
+
+/** `GENERATED` as a run reports it for storing: one recording behind it, its owner linked. */
+export const STORABLE: StorableDigest = {
+  generated: GENERATED,
+  sourceFileIds: [FIRST_RECORDING_ID],
+  ownerLinks: OWNER_LINKS,
+};
+
 /** Words only the SDK says; nothing the worker stores may repeat them. */
 export const SDK_WORDS = 'API Error: 529 {"type":"overloaded_error"} request_id=req_7f3a';
 
@@ -96,12 +123,15 @@ export interface DigestWorkerDoubles {
   release: jest.Mock;
   clear: jest.Mock;
   /**
-   * The query bus. The worker dispatches two queries: the meeting's transcripts, which is
-   * what a spec scripts with `mockResolvedValue`, and its transcribed recordings once an
-   * answer is in hand, which `transcribed` answers whatever `execute` is scripted with.
+   * The query bus. The worker dispatches four queries: the meeting's transcripts, which is
+   * what a spec scripts with `mockResolvedValue`, and three once an answer is in hand, each
+   * answered by a mock of its own whatever `execute` is scripted with — the meeting's
+   * transcribed recordings, who is in the meeting, and what those members are called.
    */
   execute: jest.Mock;
   transcribed: jest.Mock;
+  memberIds: jest.Mock;
+  memberNames: jest.Mock;
   generate: jest.Mock;
   /** `MeetingDigestAnnouncer.announce`: called with the meeting after every write that landed. */
   announce: jest.Mock;
@@ -119,6 +149,8 @@ export function digestWorkerDoubles(): DigestWorkerDoubles {
     clear: jest.fn(),
     execute: jest.fn(),
     transcribed: jest.fn(),
+    memberIds: jest.fn(),
+    memberNames: jest.fn(),
     generate: jest.fn(),
     announce: jest.fn(),
     recheckStored: jest.fn(),
@@ -135,6 +167,8 @@ export function resetDigestWorkerDoubles(doubles: DigestWorkerDoubles): void {
   doubles.clear.mockReset().mockResolvedValue(NO_DIGEST_STATUS);
   doubles.execute.mockReset().mockResolvedValue(TRANSCRIPTS);
   doubles.transcribed.mockReset().mockResolvedValue(TRANSCRIBED);
+  doubles.memberIds.mockReset().mockResolvedValue(MEMBERS.map(({ id }) => id));
+  doubles.memberNames.mockReset().mockResolvedValue(MEMBERS);
   doubles.generate.mockReset().mockResolvedValue(GENERATED);
   doubles.announce.mockReset().mockResolvedValue(undefined);
   doubles.recheckStored.mockReset().mockResolvedValue(undefined);
@@ -157,10 +191,16 @@ export async function buildDigestWorker(
   doubles: DigestWorkerDoubles,
   values: Record<string, unknown> = {},
 ): Promise<BuiltDigestWorker> {
-  const { execute, transcribed, generate, announce, recheckStored, ...claims } = doubles;
-  // By class, so that scripting the transcripts never scripts the second query with them.
+  const { execute, transcribed, memberIds, memberNames, generate, announce, ...rest } = doubles;
+  const { recheckStored, ...claims } = rest;
+  // By class, so that scripting the transcripts never scripts another query with them.
+  const answeredApart: Array<[new (...args: never[]) => unknown, jest.Mock]> = [
+    [FindTranscribedRecordingsQuery, transcribed],
+    [FindMeetingMemberIdsQuery, memberIds],
+    [FindUsersByIdsQuery, memberNames],
+  ];
   const dispatch = (query: unknown): unknown =>
-    query instanceof FindTranscribedRecordingsQuery ? transcribed(query) : execute(query);
+    (answeredApart.find(([queryClass]) => query instanceof queryClass)?.[1] ?? execute)(query);
   const moduleRef = await Test.createTestingModule({
     providers: [
       MeetingDigestWorker,

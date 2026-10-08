@@ -1,3 +1,4 @@
+import { NO_OWNER_LINKS } from '../src/modules/meeting-digests/services/meeting-digest-owner';
 import type { PrismaService } from '../src/modules/prisma/prisma.service';
 import { useApiSuite } from './utils/api-suite';
 import { heldBy, useDigestClaimsSuite } from './utils/digest-claims-suite';
@@ -55,7 +56,11 @@ describe('reading a meeting digest while a generation replaces it', () => {
     const { meetingId, claim } = await claimed();
     const source = await recordingOf(meetingId);
     await expect(
-      claims().complete(heldBy(claim), { answer: EARLIER, sourceFileIds: [source] }),
+      claims().complete(heldBy(claim), {
+        answer: EARLIER,
+        sourceFileIds: [source],
+        ownerLinks: NO_OWNER_LINKS,
+      }),
     ).resolves.toBe(READY);
 
     // A second generation's write, by hand so it can be stopped half-way: the child table is

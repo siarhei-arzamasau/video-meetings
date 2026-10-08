@@ -1,5 +1,6 @@
 import { NO_DIGEST_STATUS } from '../src/modules/meeting-digests/services/meeting-digest-claim-writes';
 import type { ClaimedDigest } from '../src/modules/meeting-digests/services/meeting-digest-claim.repository';
+import { NO_OWNER_LINKS } from '../src/modules/meeting-digests/services/meeting-digest-owner';
 import { useApiSuite } from './utils/api-suite';
 import { CLAIM_LEASE_SECONDS, heldBy, useDigestClaimsSuite } from './utils/digest-claims-suite';
 import {
@@ -10,6 +11,9 @@ import {
   findMeetingDigestContentRows,
   setMeetingDigestState,
 } from './utils/meeting-digests-table';
+
+/** These writes are about the claim: no owner of theirs is matched to a member. */
+const NOBODY_LINKED = { ownerLinks: NO_OWNER_LINKS };
 
 const ANSWER = {
   summary: 'The launch moves to April.',
@@ -30,13 +34,18 @@ describe('the write that ends a meeting digest claim, against the database', () 
     const { meetingId, claim } = await claimed();
     const [first, second] = [await recordingOf(meetingId), await recordingOf(meetingId)];
     await expect(
-      claims().complete(heldBy(claim), { answer: ANSWER, sourceFileIds: [first] }),
+      claims().complete(heldBy(claim), {
+        ...NOBODY_LINKED,
+        answer: ANSWER,
+        sourceFileIds: [first],
+      }),
     ).resolves.toBe(READY);
 
     await digests().request(meetingId);
     const again = await claims().claimNext(CLAIM_LEASE_SECONDS);
     const shorter = { summary: 'Shorter.', actionItems: [], decisions: [] };
     await claims().complete(heldBy(again as ClaimedDigest), {
+      ...NOBODY_LINKED,
       answer: shorter,
       sourceFileIds: [first, second],
     });
@@ -55,7 +64,11 @@ describe('the write that ends a meeting digest claim, against the database', () 
     await digests().request(meetingId);
 
     await expect(
-      claims().complete(heldBy(claim), { answer: ANSWER, sourceFileIds: [source] }),
+      claims().complete(heldBy(claim), {
+        ...NOBODY_LINKED,
+        answer: ANSWER,
+        sourceFileIds: [source],
+      }),
     ).resolves.toBe(QUEUED);
 
     await expect(rowOf(meetingId)).resolves.toMatchObject({
@@ -146,7 +159,7 @@ describe('the write that ends a meeting digest claim, against the database', () 
     const stale = heldBy(claim);
 
     await expect(
-      claims().complete(stale, { answer: ANSWER, sourceFileIds: [] }),
+      claims().complete(stale, { ...NOBODY_LINKED, answer: ANSWER, sourceFileIds: [] }),
     ).resolves.toBeNull();
     await expect(claims().fail(stale, 'It failed.')).resolves.toBeNull();
     await expect(claims().release(stale.id, stale.lease)).resolves.toBe(false);

@@ -14,6 +14,7 @@ import { MeetingDigestGenerator } from '../services/meeting-digest-generator';
 import { PendingDigestRequests } from '../services/pending-digest-requests';
 import { costOf, failureReasonOf } from './meeting-digest-failure';
 import { DigestOutcomeRecorder } from './meeting-digest-outcome-recorder';
+import { ownerLinksOf } from './meeting-digest-owner-links';
 import { transcribedIdsOf, transcriptsOf } from './meeting-digest-recordings';
 import { DigestInterruption, runDigestGeneration } from './meeting-digest-run';
 import type { DigestRun, StorableDigest } from './meeting-digest-run';
@@ -170,6 +171,8 @@ export class MeetingDigestWorker implements OnApplicationBootstrap, OnModuleDest
       readTranscripts: (meetingId) => transcriptsOf(this.queryBus, meetingId),
       readTranscribedIds: (meetingId) => transcribedIdsOf(this.queryBus, meetingId),
       generate: (transcripts, signal) => this.generator.generate(transcripts, signal),
+      linkOwners: (meetingId, answer) =>
+        ownerLinksOf(this.queryBus, this.logger, meetingId, answer),
       leases: this.claims,
       logger: this.logger,
       leaseSeconds: this.leaseSeconds,
@@ -230,11 +233,11 @@ export class MeetingDigestWorker implements OnApplicationBootstrap, OnModuleDest
   private async store(
     claimed: ClaimedDigest,
     held: Date,
-    { generated, sourceFileIds }: StorableDigest,
+    digest: StorableDigest,
     startedAt: number,
   ): Promise<void> {
-    if (await this.recorder.complete(claimed, held, generated, sourceFileIds, startedAt)) {
-      await this.deletes.recheckStored(claimed.meetingId, sourceFileIds);
+    if (await this.recorder.complete(claimed, held, digest, startedAt)) {
+      await this.deletes.recheckStored(claimed.meetingId, digest.sourceFileIds);
     }
   }
 }

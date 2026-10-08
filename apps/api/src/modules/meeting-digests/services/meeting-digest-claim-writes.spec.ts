@@ -8,6 +8,7 @@ import {
 } from './meeting-digest-record.fixture';
 import { DigestStatus } from './meeting-digest-status';
 
+const GRACE_ID = '22222222-2222-4222-8222-222222222222';
 const LEASE = new Date('2026-10-08T10:00:30.000Z');
 const HELD: HeldDigest = { id: DIGEST_ID, lease: LEASE, requestedRevision: 4 };
 const { QUEUED, GENERATING } = DigestStatus;
@@ -42,10 +43,12 @@ describe('the writes that end a digest claim', () => {
           actionItems: [
             { description: 'Send the release notes.', ownerName: 'Grace' },
             { description: 'Book the review room.' },
+            { description: 'Call the supplier.', ownerName: 'Linus' },
           ],
           decisions: [{ description: 'Ship on Friday.' }],
         },
         sourceFileIds: [FIRST_RECORDING_ID, SECOND_RECORDING_ID],
+        ownerLinks: new Map([['Grace', GRACE_ID]]),
       });
 
       for (const table of Object.values(children)) {
@@ -57,7 +60,9 @@ describe('the writes that end a digest claim', () => {
             digestId: DIGEST_ID,
             position: 0,
             description: 'Send the release notes.',
+            // The name as spoken stays beside the member it was matched to.
             ownerName: 'Grace',
+            ownerId: GRACE_ID,
           },
           // Nobody was named: stored as no name, which is what "Unassigned" is read from.
           {
@@ -65,6 +70,15 @@ describe('the writes that end a digest claim', () => {
             position: 1,
             description: 'Book the review room.',
             ownerName: null,
+            ownerId: null,
+          },
+          // A name that was matched to nobody is a name and no more.
+          {
+            digestId: DIGEST_ID,
+            position: 2,
+            description: 'Call the supplier.',
+            ownerName: 'Linus',
+            ownerId: null,
           },
         ],
       });

@@ -57,8 +57,9 @@ Five worked examples, in the order worth reading them:
   right is invisible in the code.
 
 - **`meeting-digests`** — read after `meeting-files`, whose worker it copies. It is also the
-  one module that reaches three others and imports none of them: two queries, one event in
-  and one out, and the visibility read. It has a section of its own below.
+  one module that reaches three others — `meeting-files`, `meetings`, `user` — and imports
+  none of them: four queries, one event in and one out, and the visibility read. It has a
+  section of its own below.
 
 `health` still shows the minimum a module needs when it changes no state and reaches no
 database; a module with nothing to write needs no commands.
@@ -380,7 +381,7 @@ only for a field a file route actually decides with. `MeetingFilesModule` does n
 `MeetingsModule`, and `MeetingsController.findOne` still reads from `MeetingsService` — two
 reads sharing one `visibleTo` is the accepted price of the in-module read staying off the bus.
 
-### The third boundary — what meeting-digests asks of the other two
+### The third boundary — what meeting-digests asks of the others
 
 `meeting-files` answers two queries for whatever describes a meeting as a whole:
 `FindTranscribedRecordingsQuery(meetingId)` — which recordings are transcribed, id and
@@ -397,6 +398,21 @@ them, in upload order. Three things about them:
   its size on disk before it is read — UTF-8 never spends more than three bytes on what a
   string's `length` counts as one — so memory is bounded by the limit, not by a meeting of
   fifty one-gigabyte recordings.
+
+**For an action item's owner it asks two more, of the other two modules**:
+`FindMeetingMemberIdsQuery(meetingId)`, which `meetings` answers — the host and the
+participants, ids only, `null` for no such meeting — and `FindUsersByIdsQuery(userIds)`,
+which `user` answers — an id and a display name each, in one statement.
+
+- **Neither carries a user or checks visibility either.** The worker has no user to carry,
+  and the read has already decided. A route that dispatched `FindUsersByIdsQuery` with ids
+  its caller chose would have published every user's name.
+- **`FindUsersByIdsQuery` selects two columns instead of mapping a row down.** It is the one
+  read that hands a user's name to somebody else, so an email address is never loaded on
+  the way; `UserDisplayName` is declared beside it for the reason `UserCredentials` is
+  declared beside its queries.
+- **The member ids are a query of their own, not a third column on
+  `FindVisibleMeetingQuery`**, which stays the two columns every file route pays for.
 
 **And one event comes back.** `MeetingDigestChangedEvent(meetingId, digest)` is published by
 `meeting-digests` after every committed write, and the files stream forwards it to the
@@ -928,11 +944,12 @@ A meeting's summary, action items, and decisions, generated from the transcripts
 recordings, stored, and served at `GET /api/meetings/:id/digest`. The contract is
 [the PRD](../../docs/prd-meeting-digest-summary-action-items-decisions.md); every decision
 under it, and the phases, are in
-[its plan](../../docs/plan-meeting-digest-summary-action-items-decisions.md). **Phases 1 to 3
+[its plan](../../docs/plan-meeting-digest-summary-action-items-decisions.md). **Phases 1 to 4
 of 7 are built**: a recording that reaches Transcribed gives its meeting a digest, anyone who
-can see the meeting can read it, a deleted recording takes away what was built from it, and
-every change is sent to the meeting's open streams. Not yet: an owner linked to a participant
-(4), and a request to generate or retry (5). What a reader of the code would get wrong:
+can see the meeting can read it, a deleted recording takes away what was built from it,
+every change is sent to the meeting's open streams, and an action item's owner is reported as
+the member of the meeting the spoken name identifies. Not yet: a request to generate or
+retry (5). What a reader of the code would get wrong:
 
 **What leaves, and when**
 
@@ -940,7 +957,9 @@ every change is sent to the meeting's open streams. Not yet: an owner linked to 
   out, and is why `MEETING_DIGEST_ENABLED` ships off.** What is sent is what was said, under
   an ordinal: no file name, id, email address, display name, or storage path, and an e2e
   spec reads the captured prompt to hold it to that. Give the prompt a field only together
-  with a decision about that field leaving the deployment.
+  with a decision about that field leaving the deployment. **That includes the members'
+  names**, which would help the model spell an owner and are read only after it has
+  answered (_Owners_, below).
 - **The setting stops new work and nothing else**, as the transcription's does. Off, a newly
   transcribed recording asks for nothing, the worker claims nothing, and a `QUEUED` row
   waits; a stored digest is still served, and both rules about recordings still apply to it,
@@ -1007,8 +1026,44 @@ every change is sent to the meeting's open streams. Not yet: an owner linked to 
 - **`MeetingDigestsService.currentOf` is the read without the question of who is asking**,
   and `findOne` is the visibility check in front of it. An announcement has no user: it goes
   to streams whose guard has already decided. One method for both is what makes an event the
-  answer `GET` would give — phase 4's owner names and phase 5's `availableAction` reach the
-  stream by being added there, and nowhere else.
+  answer `GET` would give — an owner's current name reaches the stream by being read there,
+  and phase 5's `availableAction` will by being added there, and nowhere else.
+
+**Owners**
+
+- **Claude answers a name; which member it is, is decided here, after the answer.**
+  `matchOwner` (`services/meeting-digest-owner.ts`) links a spoken name to a member when
+  every word of it is a word of exactly one display name among the host and participants,
+  compared without case. A word is a run of letters and digits, which is what lets a name
+  nobody chose — `ada.lovelace`, derived from an address — take part. **Nothing in it is
+  approximate**: no prefix, no initial, no dropped accent, no other script. A wrong owner is
+  worse than none, so a first name two members share links to neither.
+- **The members are read once the answer is in hand** — inside `runDigestGeneration`, under
+  its heartbeat, and only for an answer that is going to be stored. That order is why no
+  name is in the prompt.
+- **Members that cannot be read link nobody; they do not fail the digest.** That is the
+  opposite of an answer whose recordings cannot be checked, on purpose: storing those
+  unchecked could serve a deleted recording's words, while an owner left as the name that
+  was spoken is what the PRD prefers whenever a match is in doubt — and failing would throw
+  away a generation that was paid for. `ownerLinksOf` logs the cause and never rejects; the
+  names stay unlinked until the meeting's next generation.
+- **An owner is two columns: `owner_name`, always, and `owner_id`, when it matched.** The id
+  is written from the match and from nothing in the answer, whose schema has no field for
+  one. The name stays for the day the link is gone (`onDelete: SetNull`), when the item is
+  still somebody's.
+- **The read asks what each linked member is called now** — one `FindUsersByIdsQuery` for
+  all of a digest's owners, none for a digest that links nobody — so a rename shows with no
+  generation and no write. **It does not move `version` either, and that is the one change
+  to what `GET` answers that does not**: nothing tells this module a user was renamed, so an
+  open page keeps the old name until its next fetch. Closing that takes an event from the
+  user module, not a column here.
+- **This is the only place a user's display name is shown to another user**: to the members
+  of a meeting, for the members its digest links, on `GET …/digest` and on the `digest`
+  event that is the same answer — an id and a display name, never an email address. What
+  bounds it is that the ids come from the digest's own rows, matched from the meeting's
+  members, and never from a request. **It leans on a meeting's participants being fixed at
+  creation**: the day one can be removed, their links have to go with them, or the read has
+  to ask who is still in the meeting.
 
 **Deleted recordings**
 

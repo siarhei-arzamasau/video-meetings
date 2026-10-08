@@ -3,7 +3,13 @@ import type { Logger } from '@nestjs/common';
 import { MeetingDigestError, MeetingDigestFailure } from '../meeting-digest.error';
 import { FIRST_RECORDING_ID, SECOND_RECORDING_ID } from '../services/meeting-digest-record.fixture';
 import { runDigestGeneration } from './meeting-digest-run';
-import { CLAIMED, GENERATED, LEASE, TRANSCRIPTS } from './meeting-digest-worker.fixture';
+import {
+  CLAIMED,
+  GENERATED,
+  LEASE,
+  OWNER_LINKS,
+  TRANSCRIPTS,
+} from './meeting-digest-worker.fixture';
 
 /**
  * The check a generation ends with: an answer is reported for storing only if every
@@ -14,6 +20,7 @@ describe('runDigestGeneration: the recordings an answer was built from', () => {
   const readTranscripts = jest.fn();
   const readTranscribedIds = jest.fn();
   const generate = jest.fn();
+  const linkOwners = jest.fn();
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() } as unknown as Logger;
 
   const run = ({ limitSeconds = 60 } = {}): ReturnType<typeof runDigestGeneration> =>
@@ -22,6 +29,7 @@ describe('runDigestGeneration: the recordings an answer was built from', () => {
       readTranscripts,
       readTranscribedIds,
       generate,
+      linkOwners,
       leases: { renewLease },
       logger,
       leaseSeconds: 30,
@@ -34,6 +42,7 @@ describe('runDigestGeneration: the recordings an answer was built from', () => {
     readTranscripts.mockReset().mockResolvedValue(TRANSCRIPTS);
     readTranscribedIds.mockReset().mockResolvedValue([FIRST_RECORDING_ID, SECOND_RECORDING_ID]);
     generate.mockReset().mockResolvedValue(GENERATED);
+    linkOwners.mockReset().mockResolvedValue(OWNER_LINKS);
   });
 
   it('asks which recordings are still transcribed only once it has an answer to check', async () => {
@@ -92,6 +101,31 @@ describe('runDigestGeneration: the recordings an answer was built from', () => {
     await expect(run()).resolves.toMatchObject({
       outcome: { generated: GENERATED, sourceFileIds: [FIRST_RECORDING_ID, SECOND_RECORDING_ID] },
     });
+  });
+
+  it('matches the owners of an answer to members only once it is known to be kept', async () => {
+    const order: string[] = [];
+    readTranscribedIds.mockImplementation(async () => {
+      order.push('checked');
+
+      return [FIRST_RECORDING_ID, SECOND_RECORDING_ID];
+    });
+    linkOwners.mockImplementation(async () => {
+      order.push('linked');
+
+      return OWNER_LINKS;
+    });
+
+    await expect(run()).resolves.toMatchObject({ outcome: { ownerLinks: OWNER_LINKS } });
+    expect(order).toEqual(['checked', 'linked']);
+
+    // An answer that is discarded has no owner to link, and neither has no answer at all.
+    linkOwners.mockClear();
+    readTranscribedIds.mockResolvedValue([FIRST_RECORDING_ID]);
+    await run();
+    readTranscripts.mockResolvedValue({ withinLimit: true, transcripts: [] });
+    await run();
+    expect(linkOwners).not.toHaveBeenCalled();
   });
 
   it('fails a generation whose recordings could not be checked, and keeps what the answer cost', async () => {

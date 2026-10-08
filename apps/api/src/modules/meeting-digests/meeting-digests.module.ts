@@ -23,8 +23,9 @@ import { PENDING_DIGEST_REQUESTS, PendingDigestRequests } from './services/pendi
  * It owns its four tables and imports `ClaudeAgentModule`, and **reaches every other module
  * over the buses only**: whether a meeting is visible is `FindVisibleMeetingQuery`, which
  * recordings are transcribed and what was said in them are two queries `meeting-files`
- * answers, and its trigger is that module's `MeetingFileChangedEvent`. It imports neither
- * `MeetingsModule` nor `MeetingFilesModule`, and reads neither's table.
+ * answers, who is in a meeting and what they are called are one query each of `meetings`
+ * and `user`, and its trigger is `meeting-files`' `MeetingFileChangedEvent`. It imports none
+ * of `MeetingsModule`, `MeetingFilesModule`, and `UserModule`, and reads none of their tables.
  *
  * What it says back is one event, `MeetingDigestChangedEvent`, after every committed write.
  * The files stream forwards it to the meeting's open pages; this module knows no stream.

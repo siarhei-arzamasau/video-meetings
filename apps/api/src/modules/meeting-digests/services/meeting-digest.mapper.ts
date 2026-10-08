@@ -11,7 +11,10 @@ export interface MeetingDigestActionItemRecord {
   id: string;
   position: number;
   description: string;
+  /** The owner as the transcripts named them, or `null` when they named nobody. */
   ownerName: string | null;
+  /** The member of the meeting that name was matched to, or `null` when it was to nobody. */
+  ownerId: string | null;
 }
 
 export interface MeetingDigestDecisionRecord {
@@ -63,6 +66,10 @@ const WIRE_STATUS: Record<DigestStatus, MeetingDigestStatus> = {
  * - **content is `outOfDate` when one of them is not among its sources** — a recording
  *   transcribed since, with the setting on or off.
  *
+ * `ownerNames` is what each linked owner is called *now*, by user id — read when the digest
+ * is, so a member who has changed their name is shown under the new one with nothing
+ * generated and nothing rewritten.
+ *
  * Everything the worker owns stays behind — the lease, the claim count, the revision — and
  * so does what a generation cost, which is in the log and in no row. Optional fields are
  * absent rather than null, so the JSON matches the shared interface exactly.
@@ -71,12 +78,13 @@ export function toMeetingDigest(
   meetingId: string,
   record: MeetingDigestRecord | null,
   transcribedFileIds: ReadonlyArray<string>,
+  ownerNames: ReadonlyMap<string, string>,
 ): MeetingDigest {
   if (record === null) {
     return { meetingId, version: 0 };
   }
 
-  const content = contentOf(record, new Set(transcribedFileIds));
+  const content = contentOf(record, new Set(transcribedFileIds), ownerNames);
   const failed = record.status === DigestStatus.FAILED;
 
   return {
@@ -92,6 +100,7 @@ export function toMeetingDigest(
 function contentOf(
   record: MeetingDigestRecord,
   transcribed: ReadonlySet<string>,
+  ownerNames: ReadonlyMap<string, string>,
 ): MeetingDigestContent | null {
   if (record.summary === null || record.generatedAt === null) {
     return null;
@@ -107,26 +116,43 @@ function contentOf(
 
   return {
     summary: record.summary,
-    actionItems: byPosition(record.actionItems).map(toActionItem),
+    actionItems: byPosition(record.actionItems).map((item) => toActionItem(item, ownerNames)),
     decisions: byPosition(record.decisions).map(({ id, description }) => ({ id, description })),
     generatedAt: record.generatedAt.toISOString(),
     outOfDate: [...transcribed].some((fileId) => !sources.has(fileId)),
   };
 }
 
-/**
- * An owner is a name as it was spoken, or absent — unassigned. Linking a name to a member of
- * the meeting comes later, and is the API's decision when it does.
- */
-function toActionItem({
-  id,
-  description,
-  ownerName,
-}: MeetingDigestActionItemRecord): MeetingDigestContent['actionItems'][number] {
-  const owner: MeetingDigestOwner | null =
-    ownerName === null ? null : { kind: 'name', name: ownerName };
+function toActionItem(
+  { id, description, ownerName, ownerId }: MeetingDigestActionItemRecord,
+  ownerNames: ReadonlyMap<string, string>,
+): MeetingDigestContent['actionItems'][number] {
+  const owner = ownerOf(ownerName, ownerId, ownerNames);
 
   return owner === null ? { id, description } : { id, description, owner };
+}
+
+/**
+ * One of the PRD's three: a participant, under the name they go by now; a name as it was
+ * spoken; or nobody — unassigned, which is the owner being absent.
+ *
+ * **A link whose member has no name to show falls back to the spoken name**, rather than to
+ * a participant with a blank one: the account was deleted between the two reads, and the
+ * item is still somebody's. The id of a member is the only thing about them that is served
+ * beside their display name — never an address.
+ */
+function ownerOf(
+  ownerName: string | null,
+  ownerId: string | null,
+  ownerNames: ReadonlyMap<string, string>,
+): MeetingDigestOwner | null {
+  const displayName = ownerId === null ? undefined : ownerNames.get(ownerId);
+
+  if (ownerId !== null && displayName !== undefined) {
+    return { kind: 'participant', userId: ownerId, displayName };
+  }
+
+  return ownerName === null ? null : { kind: 'name', name: ownerName };
 }
 
 function byPosition<T extends { position: number }>(rows: ReadonlyArray<T>): T[] {

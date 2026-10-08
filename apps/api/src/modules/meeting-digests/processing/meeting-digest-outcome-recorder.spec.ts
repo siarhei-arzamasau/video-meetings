@@ -4,11 +4,10 @@ import { ClaudeAgentFailure, ClaudeModel } from '../../claude-agent/claude-agent
 import { ClaudeAgentError } from '../../claude-agent/claude-agent.error';
 import { NO_DIGEST_STATUS } from '../services/meeting-digest-claim-writes';
 import type { MeetingDigestClaimRepository } from '../services/meeting-digest-claim.repository';
-import { FIRST_RECORDING_ID } from '../services/meeting-digest-record.fixture';
 import { DigestStatus } from '../services/meeting-digest-status';
 import { DigestOutcomeRecorder } from './meeting-digest-outcome-recorder';
 import { spendOf } from './meeting-digest-spend';
-import { CLAIMED, GENERATED, HELD, LEASE } from './meeting-digest-worker.fixture';
+import { CLAIMED, HELD, LEASE, STORABLE } from './meeting-digest-worker.fixture';
 
 const { QUEUED, READY, FAILED } = DigestStatus;
 const REASON = 'The digest could not be generated.';
@@ -50,17 +49,21 @@ describe('DigestOutcomeRecorder', () => {
   });
 
   describe('complete', () => {
-    it('stores the answer and its sources under the lease held and the request claimed', async () => {
-      await recorder.complete(CLAIMED, LEASE, GENERATED, [FIRST_RECORDING_ID], startedAt);
+    it('stores the answer, its sources, and its owners\u2019 links under the lease held and the request claimed', async () => {
+      await recorder.complete(CLAIMED, LEASE, STORABLE, startedAt);
 
+      const { generated, sourceFileIds, ownerLinks } = STORABLE;
+
+      expect(ownerLinks.size).toBe(1);
       expect(complete).toHaveBeenCalledWith(HELD, {
-        answer: GENERATED.answer,
-        sourceFileIds: [FIRST_RECORDING_ID],
+        answer: generated.answer,
+        sourceFileIds,
+        ownerLinks,
       });
     });
 
     it('logs the generation with its duration, the model that answered, and what it cost', async () => {
-      await recorder.complete(CLAIMED, LEASE, GENERATED, [FIRST_RECORDING_ID], startedAt);
+      await recorder.complete(CLAIMED, LEASE, STORABLE, startedAt);
 
       const lines = logged();
       expect(lines).toContain(`Digest of meeting ${CLAIMED.meetingId}`);
@@ -71,7 +74,7 @@ describe('DigestOutcomeRecorder', () => {
     });
 
     it('passes nothing of the cost, the model, or the tokens to what is stored', async () => {
-      await recorder.complete(CLAIMED, LEASE, GENERATED, [FIRST_RECORDING_ID], startedAt);
+      await recorder.complete(CLAIMED, LEASE, STORABLE, startedAt);
 
       const stored = JSON.stringify(complete.mock.calls);
       for (const unstored of ['costUsd', '0.0041', 'claude-sonnet', 'inputTokens', '3037']) {
@@ -83,7 +86,7 @@ describe('DigestOutcomeRecorder', () => {
       // Text the database will not hold, say. The transaction rolled back, so the claim stands.
       complete.mockRejectedValue(new Error('invalid byte sequence for encoding "UTF8": 0x00'));
 
-      await recorder.complete(CLAIMED, LEASE, GENERATED, [FIRST_RECORDING_ID], startedAt);
+      await recorder.complete(CLAIMED, LEASE, STORABLE, startedAt);
 
       expect(fail).toHaveBeenCalledWith(HELD, REASON);
       expect(error).toHaveBeenCalledWith(
@@ -96,7 +99,7 @@ describe('DigestOutcomeRecorder', () => {
     it('says the digest was queued again when another request was made meanwhile', async () => {
       complete.mockResolvedValue(QUEUED);
 
-      await recorder.complete(CLAIMED, LEASE, GENERATED, [FIRST_RECORDING_ID], startedAt);
+      await recorder.complete(CLAIMED, LEASE, STORABLE, startedAt);
 
       expect(logged()).toContain('GENERATING -> QUEUED');
     });
@@ -104,7 +107,7 @@ describe('DigestOutcomeRecorder', () => {
     it('still logs the cost of a digest whose claim was lost, and says it was discarded', async () => {
       complete.mockResolvedValue(null);
 
-      await recorder.complete(CLAIMED, LEASE, GENERATED, [FIRST_RECORDING_ID], startedAt);
+      await recorder.complete(CLAIMED, LEASE, STORABLE, startedAt);
 
       expect(logged()).toContain('$0.0041');
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('result discarded'));
@@ -194,7 +197,7 @@ describe('DigestOutcomeRecorder', () => {
 
   describe('a claim lost before there was anything to write', () => {
     it('writes nothing, and still logs what the discarded call cost', () => {
-      recorder.abandoned(CLAIMED, spendOf({ generated: GENERATED, sourceFileIds: [] }), startedAt);
+      recorder.abandoned(CLAIMED, spendOf(STORABLE), startedAt);
 
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('claude-sonnet-5-5'));
       expect(logged()).toContain('$0.0041');

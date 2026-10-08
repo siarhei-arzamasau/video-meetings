@@ -1,5 +1,6 @@
 import type { Prisma } from '../../../generated/prisma/client';
 import type { MeetingDigestAnswer } from './meeting-digest-answer';
+import type { DigestOwnerLinks } from './meeting-digest-owner';
 import { DigestStatus } from './meeting-digest-status';
 
 const { QUEUED, GENERATING, READY, FAILED } = DigestStatus;
@@ -12,10 +13,14 @@ export interface HeldDigest {
   requestedRevision: number;
 }
 
-/** What a generation stores: the answer, and the recordings whose transcripts it was built from. */
+/**
+ * What a generation stores: the answer, the recordings whose transcripts it was built from,
+ * and which member of the meeting each owner it names was matched to.
+ */
 export interface DigestContentWrite {
   answer: MeetingDigestAnswer;
   sourceFileIds: ReadonlyArray<string>;
+  ownerLinks: DigestOwnerLinks;
 }
 
 /**
@@ -97,11 +102,17 @@ function settledColumns(settlement: Settlement): Prisma.MeetingDigestUpdateManyM
  * held. Inside the caller's transaction, after the write that ended the claim: a digest is
  * never half the old content and half the new, and never new content under a claim that
  * was lost.
+ *
+ * **An owner is stored as two things: the name as it was spoken, always, and the member it
+ * was matched to, when it was.** The name is what the item falls back to when the link is
+ * gone — the account deleted — and the id is what lets the read show that member under
+ * whatever they are called by then. The id comes from `ownerLinks` and from nowhere else:
+ * nothing in an answer is ever written to `owner_id`.
  */
 export async function replaceContent(
   tx: Prisma.TransactionClient,
   digestId: string,
-  { answer, sourceFileIds }: DigestContentWrite,
+  { answer, sourceFileIds, ownerLinks }: DigestContentWrite,
 ): Promise<void> {
   await tx.meetingDigestActionItem.deleteMany({ where: { digestId } });
   await tx.meetingDigestDecision.deleteMany({ where: { digestId } });
@@ -112,6 +123,7 @@ export async function replaceContent(
       position,
       description,
       ownerName: ownerName ?? null,
+      ownerId: ownerName === undefined ? null : (ownerLinks.get(ownerName) ?? null),
     })),
   });
   await tx.meetingDigestDecision.createMany({

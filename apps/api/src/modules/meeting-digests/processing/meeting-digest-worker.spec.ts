@@ -15,6 +15,7 @@ import {
   CLAIMED,
   GENERATED,
   HELD,
+  OWNER_LINKS,
   SDK_WORDS,
   buildDigestWorker,
   digestWorkerDoubles,
@@ -79,6 +80,7 @@ describe('MeetingDigestWorker: one claim, start to finish', () => {
     expect(complete).toHaveBeenCalledWith(HELD, {
       answer: GENERATED.answer,
       sourceFileIds: [FIRST_RECORDING_ID, SECOND_RECORDING_ID],
+      ownerLinks: OWNER_LINKS,
     });
     expect(fail).not.toHaveBeenCalled();
   });

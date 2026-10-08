@@ -9,6 +9,7 @@ import type {
 } from '../services/meeting-digest-claim.repository';
 import type { GeneratedMeetingDigest } from '../services/meeting-digest-generator';
 import { DigestStatus } from '../services/meeting-digest-status';
+import type { StorableDigest } from './meeting-digest-run';
 import { usd } from './meeting-digest-spend';
 import type { GenerationSpend } from './meeting-digest-spend';
 
@@ -58,7 +59,8 @@ export class DigestOutcomeRecorder {
   }
 
   /**
-   * The answer and its sources, in one transaction with the write that ends the claim.
+   * The answer, its sources, and its owners' links, in one transaction with the write that
+   * ends the claim.
    *
    * An answer that cannot be stored at all — text PostgreSQL will not hold, a constraint
    * nobody foresaw — is a failed digest, and is recorded as one in the generic sentence. Left
@@ -71,8 +73,7 @@ export class DigestOutcomeRecorder {
   async complete(
     claimed: ClaimedDigest,
     lease: Date,
-    generated: GeneratedMeetingDigest,
-    sourceFileIds: ReadonlyArray<string>,
+    { generated, sourceFileIds, ownerLinks }: StorableDigest,
     startedAt: number,
   ): Promise<boolean> {
     const { answer, model, costUsd, inputTokens, outputTokens } = generated;
@@ -83,7 +84,7 @@ export class DigestOutcomeRecorder {
     );
 
     try {
-      const settledAs = await this.claims.complete(held, { answer, sourceFileIds });
+      const settledAs = await this.claims.complete(held, { answer, sourceFileIds, ownerLinks });
 
       await this.settled(claimed, settledAs, 'stored', startedAt);
 

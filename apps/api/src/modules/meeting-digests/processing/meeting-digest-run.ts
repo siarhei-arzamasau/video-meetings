@@ -5,8 +5,10 @@ import type { LeaseRenewer } from '../../../common/processing/lease-heartbeat';
 import type { MeetingTranscripts } from '../../meeting-files/queries/find-meeting-transcripts.query';
 import { MAX_DIGEST_TRANSCRIPT_CHARACTERS } from '../meeting-digest.constants';
 import { MeetingDigestError, MeetingDigestFailure } from '../meeting-digest.error';
+import type { MeetingDigestAnswer } from '../services/meeting-digest-answer';
 import type { ClaimedDigest } from '../services/meeting-digest-claim.repository';
 import type { GeneratedMeetingDigest } from '../services/meeting-digest-generator';
+import type { DigestOwnerLinks } from '../services/meeting-digest-owner';
 
 /** What hung up on a generation. The first of them to fire is the one that ended it. */
 export enum DigestInterruption {
@@ -15,10 +17,18 @@ export enum DigestInterruption {
   CLAIM_LOST = 'CLAIM_LOST',
 }
 
-/** An answer every one of whose recordings was still transcribed when it arrived. */
-export interface StorableDigest {
+/** An answer as it arrives: what it was built from, and nothing yet decided about keeping it. */
+interface AnswerInHand {
   generated: GeneratedMeetingDigest;
   sourceFileIds: ReadonlyArray<string>;
+}
+
+/**
+ * An answer every one of whose recordings was still transcribed when it arrived, with each
+ * owner it names matched against the meeting's members.
+ */
+export interface StorableDigest extends AnswerInHand {
+  ownerLinks: DigestOwnerLinks;
 }
 
 export type DigestRunOutcome =
@@ -48,6 +58,8 @@ export interface DigestRunOptions {
     transcripts: ReadonlyArray<string>,
     signal: AbortSignal,
   ) => Promise<GeneratedMeetingDigest>;
+  /** Which member each owner an answer names is, asked only for an answer that is kept. */
+  linkOwners: (meetingId: string, answer: MeetingDigestAnswer) => Promise<DigestOwnerLinks>;
   leases: LeaseRenewer;
   logger: Logger;
   leaseSeconds: number;
@@ -81,6 +93,10 @@ export interface DigestRunOptions {
  * being deleted, only that one has been. **So this look is not the last**: the caller takes
  * a second once the answer is stored, because a delete that lands between the two can be
  * followed before the write and find nothing of the answer to remove.
+ *
+ * **An answer's owners are matched to the meeting's members here too**, after its recordings
+ * were checked and under the same heartbeat: the members' names are read once the answer is
+ * in hand, which is how no name is ever part of what was sent.
  */
 export async function runDigestGeneration(options: DigestRunOptions): Promise<DigestRun> {
   const { claimed, leases, logger, leaseSeconds, shutdown } = options;
@@ -105,15 +121,17 @@ export async function runDigestGeneration(options: DigestRunOptions): Promise<Di
     const timeLimit = AbortSignal.timeout(options.limitSeconds * 1_000);
     const signal = AbortSignal.any([shutdown, claimLost.signal, timeLimit]);
 
+    let answered: AnswerInHand | { nothingToGenerate: true };
+
     try {
-      outcome = await generateFrom(transcripts, options.generate, signal);
+      answered = await generateFrom(transcripts, options.generate, signal);
     } finally {
       interruptedBy = interruptionOf(signal, timeLimit, shutdown);
     }
 
     // After the signal was read, not before: a limit that runs out during this check did
     // not end the generation, whose answer is already in hand.
-    outcome = await heldToItsRecordings(outcome, options);
+    outcome = 'generated' in answered ? await heldToItsRecordings(answered, options) : answered;
   } catch (error) {
     outcome = { error };
   }
@@ -125,7 +143,7 @@ async function generateFrom(
   transcripts: MeetingTranscripts,
   generate: DigestRunOptions['generate'],
   signal: AbortSignal,
-): Promise<DigestRunOutcome> {
+): Promise<AnswerInHand | { nothingToGenerate: true }> {
   if (!transcripts.withinLimit) {
     // The read stopped at the cap, so there is no text to hand the generator — whose own cap
     // would refuse the same transcripts, but only after holding all of them to count them.
@@ -149,25 +167,24 @@ async function generateFrom(
 
 /**
  * An answer, held to the recordings it was built from: reported for storing only if every
- * one of them is still transcribed now that it has arrived. Anything that is not an answer
- * passes through.
+ * one of them is still transcribed now that it has arrived — and then with its owners
+ * linked, which an answer that is about to be discarded has no use for.
  */
 async function heldToItsRecordings(
-  outcome: DigestRunOutcome,
-  { claimed, readTranscribedIds }: DigestRunOptions,
+  { generated, sourceFileIds }: AnswerInHand,
+  { claimed, readTranscribedIds, linkOwners }: DigestRunOptions,
 ): Promise<DigestRunOutcome> {
-  if (!('sourceFileIds' in outcome)) {
-    return outcome;
-  }
-
-  const { generated, sourceFileIds } = outcome;
   const transcribed = new Set(
     await transcribedNow(claimed.meetingId, readTranscribedIds, generated),
   );
 
-  return sourceFileIds.every((fileId) => transcribed.has(fileId))
-    ? outcome
-    : { generated, sourceDeleted: true };
+  if (!sourceFileIds.every((fileId) => transcribed.has(fileId))) {
+    return { generated, sourceDeleted: true };
+  }
+
+  const ownerLinks = await linkOwners(claimed.meetingId, generated.answer);
+
+  return { generated, sourceFileIds, ownerLinks };
 }
 
 /**

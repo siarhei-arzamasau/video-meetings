@@ -49,6 +49,13 @@ build it into the API; phases 6–7 put it on the page.
    display name among the host and participants, compared without case; anything else stays a
    name. So no display name is sent to Anthropic, no answer can point at a user, the rule is
    testable without a model, and a doubtful match stays unlinked — the PRD's preference.
+   **Two things phase 4 settled about the rule.** A word is a run of letters and digits, so a
+   display name that was derived from an email address and never changed (`ada.lovelace`)
+   is the words "ada" and "lovelace", and takes part like any other; beyond case nothing is
+   folded — a prefix, an initial, a dropped accent, another script are all no match. And
+   **members that cannot be read when the answer arrives link nobody, rather than fail the
+   digest**: the answer is paid for, and an owner left as the name that was spoken is this
+   decision's own answer to doubt.
 6. **One row per meeting holds the state: a status, a lease, a claim count, and a revision.**
    Every request for a generation bumps `requested_revision`. A claim remembers the revision it
    took; the write that ends it is `ready` (or `failed`) only if the revision is unchanged, and
@@ -110,6 +117,11 @@ build it into the API; phases 6–7 put it on the page.
    whether or not that recording had been transcribed, because the delete's event cannot be
    trusted to say — it carries the status the delete read, and a transcription can finish
    between that read and the delete.
+   **One change to what `GET` answers does not move it: a linked owner's new display name**
+   (phase 4). The name is read with the digest, not stored in it, and nothing tells this
+   module that a user was renamed; a page that is open keeps the old name until its next
+   fetch, and a page that keeps the higher of two versions must take a fetched digest over
+   an equal one it holds. Moving the version would take an event from the user module.
 10. **Generate and Retry are one request** — "generate now" — refused unless there is something
     to generate and nothing under way. The digest says which label applies (`availableAction`);
     who may press it is the page's to work out from the files it already holds, and the API's to
@@ -400,16 +412,36 @@ as that participant, under their current display name.
 
 **Tasks:**
 
-- [ ] `FindMeetingMemberIdsQuery` in `meetings` (host and participants) and
+- [x] `FindMeetingMemberIdsQuery` in `meetings` (host and participants) and
       `FindUsersByIdsQuery` in `user` (id and display name, one statement). Handler specs.
-- [ ] `matchOwner`, a pure function over a spoken name and the members' display names, with a
+- [x] `matchOwner`, a pure function over a spoken name and the members' display names, with a
       unit table: a full name, a first name, a first name two members share, a name nobody
       has, differing case, a name derived from an email address, an empty name.
-- [ ] The completion stores `owner_id` beside the spoken name; the read resolves current
+- [x] The completion stores `owner_id` beside the spoken name; the read resolves current
       display names in one query and emits `participant`, `name`, or no owner.
-- [ ] E2E, red first: the four owner outcomes; a renamed participant shows the new name with
+- [x] E2E, red first: the four owner outcomes; a renamed participant shows the new name with
       no call; an answer naming a user who is not in the meeting is stored as a name and
       returned with no link; the captured prompt contains no member's name.
+
+_As built:_
+
+- **The match is made inside `runDigestGeneration`**, once an answer's recordings have been
+  checked and under the same heartbeat, and its result — spoken name to member id — travels
+  with the answer to the one transaction that stores it. An answer that is discarded, or
+  that names nobody, asks about no member.
+- **No migration**: phase 2 created `owner_id` with its foreign key and index.
+- **The member ids are deduplicated by the query and again by the match**, which counts
+  members rather than rows: a member listed twice must not read as "two people share this
+  name".
+- **A linked member with no name to show is served as the spoken name** — an account deleted
+  between the read of the digest and the read of its owners' names; the foreign key's
+  `SET NULL` says the same thing a moment later.
+- **A rename moves no version** (decision 9), and the read trusts a stored link without
+  asking again who is in the meeting, which holds while participants are fixed at creation.
+- **The e2e spec was red first**: `meeting-digest-owners` was written and run against phase
+  3's code, where three of its four cases failed for an owner served as a name; the fourth,
+  the user outside the meeting, was already green there and is a guard on the match rather
+  than evidence of it.
 
 **Done when:** the spec is green with every earlier e2e spec; the CI commands pass; the API
 guide records that a meeting's member names are readable by its members, through this route

@@ -23,8 +23,20 @@ export function buildMeetingDigestRecord(
     summary: 'The team reviewed the engine and agreed to ship on Friday.',
     generatedAt: new Date('2026-10-08T09:00:00.000Z'),
     actionItems: [
-      { id: 'item-1', position: 0, description: 'Send the release notes.', ownerName: 'Grace' },
-      { id: 'item-2', position: 1, description: 'Book the review room.', ownerName: null },
+      {
+        id: 'item-1',
+        position: 0,
+        description: 'Send the release notes.',
+        ownerName: 'Grace',
+        ownerId: null,
+      },
+      {
+        id: 'item-2',
+        position: 1,
+        description: 'Book the review room.',
+        ownerName: null,
+        ownerId: null,
+      },
     ],
     decisions: [{ id: 'decision-1', position: 0, description: 'Ship on Friday.' }],
     sources: [{ meetingFileId: FIRST_RECORDING_ID }],

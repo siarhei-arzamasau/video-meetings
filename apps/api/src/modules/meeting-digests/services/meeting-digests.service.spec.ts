@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 
 import { FindTranscribedRecordingsQuery } from '../../meeting-files/queries/find-transcribed-recordings.query';
 import { FindVisibleMeetingQuery } from '../../meetings/queries/find-visible-meeting.query';
+import { FindUsersByIdsQuery } from '../../user/queries/find-users-by-ids.query';
 import {
   DIGEST_MEETING_ID,
   FIRST_RECORDING_ID,
@@ -15,6 +16,7 @@ import { MeetingDigestRepository } from './meeting-digest.repository';
 import { MeetingDigestsService } from './meeting-digests.service';
 
 const USER_ID = '11111111-1111-4111-8111-111111111111';
+const GRACE_ID = '22222222-2222-4222-8222-222222222222';
 const MEETING = { id: DIGEST_MEETING_ID, hostId: USER_ID };
 
 describe('MeetingDigestsService', () => {
@@ -22,6 +24,7 @@ describe('MeetingDigestsService', () => {
   /** What each query the service dispatches is answered with, by its class. */
   let visibleMeeting: typeof MEETING | null;
   let transcribed: Array<{ id: string; uploaderId: string }>;
+  let names: Array<{ id: string; displayName: string }>;
   const execute = jest.fn();
   let service: MeetingDigestsService;
 
@@ -30,12 +33,16 @@ describe('MeetingDigestsService', () => {
   beforeEach(async () => {
     visibleMeeting = MEETING;
     transcribed = [{ id: FIRST_RECORDING_ID, uploaderId: USER_ID }];
+    names = [{ id: GRACE_ID, displayName: 'Grace Hopper' }];
     execute.mockReset().mockImplementation(async (query: unknown) => {
       if (query instanceof FindVisibleMeetingQuery) {
         return visibleMeeting;
       }
       if (query instanceof FindTranscribedRecordingsQuery) {
         return transcribed;
+      }
+      if (query instanceof FindUsersByIdsQuery) {
+        return names;
       }
 
       throw new Error('An unexpected query was dispatched');
@@ -144,6 +151,55 @@ describe('MeetingDigestsService', () => {
       status: 'queued',
     });
     expect(dispatched()).toHaveLength(1);
+  });
+
+  describe('the owners of its action items', () => {
+    const linkedTo = (...ownerIds: Array<string | null>): void => {
+      findOf.mockResolvedValue(
+        buildMeetingDigestRecord({
+          actionItems: ownerIds.map((ownerId, position) => ({
+            id: `item-${String(position)}`,
+            position,
+            description: 'Send the release notes.',
+            ownerName: 'Grace',
+            ownerId,
+          })),
+        }),
+      );
+    };
+
+    it('reads what every linked owner is called now, in one query, and serves them as participants', async () => {
+      linkedTo(GRACE_ID, null, GRACE_ID);
+
+      const digest = await service.currentOf(DIGEST_MEETING_ID);
+
+      expect(dispatched()).toEqual([
+        new FindTranscribedRecordingsQuery(DIGEST_MEETING_ID),
+        new FindUsersByIdsQuery([GRACE_ID]),
+      ]);
+      expect(digest.content?.actionItems.map(({ owner }) => owner)).toEqual([
+        { kind: 'participant', userId: GRACE_ID, displayName: 'Grace Hopper' },
+        { kind: 'name', name: 'Grace' },
+        { kind: 'participant', userId: GRACE_ID, displayName: 'Grace Hopper' },
+      ]);
+    });
+
+    it('asks for no name when no owner is linked to a member', async () => {
+      linkedTo(null);
+
+      await service.currentOf(DIGEST_MEETING_ID);
+
+      expect(dispatched()).toEqual([new FindTranscribedRecordingsQuery(DIGEST_MEETING_ID)]);
+    });
+
+    it('serves the name as spoken for a linked owner whose account is gone', async () => {
+      linkedTo(GRACE_ID);
+      names = [];
+
+      const digest = await service.currentOf(DIGEST_MEETING_ID);
+
+      expect(digest.content?.actionItems[0]?.owner).toEqual({ kind: 'name', name: 'Grace' });
+    });
   });
 
   it('answers the digest as it stands without asking who is looking, for a caller that has decided', async () => {

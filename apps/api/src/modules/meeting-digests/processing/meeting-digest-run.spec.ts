@@ -8,6 +8,7 @@ import {
   CLAIMED,
   GENERATED,
   LEASE,
+  OWNER_LINKS,
   TRANSCRIPTS,
   untilHungUp,
 } from './meeting-digest-worker.fixture';
@@ -23,6 +24,7 @@ describe('runDigestGeneration', () => {
   const readTranscripts = jest.fn();
   const readTranscribedIds = jest.fn();
   const generate = jest.fn();
+  const linkOwners = jest.fn();
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() } as unknown as Logger;
   let shutdown: AbortController;
 
@@ -32,6 +34,7 @@ describe('runDigestGeneration', () => {
       readTranscripts,
       readTranscribedIds,
       generate,
+      linkOwners,
       leases: { renewLease },
       logger,
       leaseSeconds: 30,
@@ -46,15 +49,21 @@ describe('runDigestGeneration', () => {
     readTranscripts.mockReset().mockResolvedValue(TRANSCRIPTS);
     readTranscribedIds.mockReset().mockResolvedValue([FIRST_RECORDING_ID, SECOND_RECORDING_ID]);
     generate.mockReset().mockResolvedValue(GENERATED);
+    linkOwners.mockReset().mockResolvedValue(OWNER_LINKS);
   });
 
-  it('reports the digest with the recordings it was built from, under the lease still held', async () => {
+  it('reports the digest with its recordings and its owners\u2019 links, under the lease still held', async () => {
     await expect(run()).resolves.toEqual({
       held: LEASE,
-      outcome: { generated: GENERATED, sourceFileIds: [FIRST_RECORDING_ID, SECOND_RECORDING_ID] },
+      outcome: {
+        generated: GENERATED,
+        sourceFileIds: [FIRST_RECORDING_ID, SECOND_RECORDING_ID],
+        ownerLinks: OWNER_LINKS,
+      },
       interruptedBy: null,
     });
     expect(readTranscripts).toHaveBeenCalledWith(CLAIMED.meetingId);
+    expect(linkOwners).toHaveBeenCalledWith(CLAIMED.meetingId, GENERATED.answer);
   });
 
   it('reports that there is nothing to generate from, and sends nothing', async () => {

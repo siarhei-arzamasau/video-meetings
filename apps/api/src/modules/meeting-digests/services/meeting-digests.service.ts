@@ -6,11 +6,16 @@ import { FindTranscribedRecordingsQuery } from '../../meeting-files/queries/find
 import type { TranscribedRecording } from '../../meeting-files/queries/find-transcribed-recordings.query';
 import { FindVisibleMeetingQuery } from '../../meetings/queries/find-visible-meeting.query';
 import type { VisibleMeeting } from '../../meetings/queries/find-visible-meeting.query';
+import { FindUsersByIdsQuery } from '../../user/queries/find-users-by-ids.query';
+import type { UserDisplayName } from '../../user/queries/find-users-by-ids.query';
 import { toMeetingDigest } from './meeting-digest.mapper';
+import type { MeetingDigestRecord } from './meeting-digest.mapper';
 import { MeetingDigestRepository } from './meeting-digest.repository';
 
 /** The one 404 for a meeting the caller cannot see — the text every meeting route answers. */
 export const MEETING_NOT_FOUND = 'Meeting not found';
+
+const NO_OWNER_NAMES: ReadonlyMap<string, string> = new Map<string, string>();
 
 /**
  * The read side. A digest is visible to exactly who the meeting is — host and participants —
@@ -51,17 +56,44 @@ export class MeetingDigestsService {
    *
    * The recordings are asked for only when there is content for them to decide about — which
    * for a meeting with no digest, every meeting while the setting is off, is one query fewer.
+   * The owners' names likewise: one query for all of them, and none for a digest that links
+   * nobody.
+   *
+   * **This is the one place a user's display name is read for somebody else**, and what
+   * bounds it is that the ids come from the digest's own rows — members of this meeting,
+   * matched by the worker — and never from a request.
    */
   async currentOf(meetingId: string): Promise<MeetingDigest> {
     const record = await this.digests.findOf(meetingId);
-    const hasContent = record !== null && record.summary !== null;
-    const transcribed = hasContent ? await this.transcribedRecordingsOf(meetingId) : [];
+    const stored = record !== null && record.summary !== null ? record : null;
+    const transcribed = stored === null ? [] : await this.transcribedRecordingsOf(meetingId);
+    const ownerNames = stored === null ? NO_OWNER_NAMES : await this.ownerNamesOf(stored);
 
     return toMeetingDigest(
       meetingId,
       record,
       transcribed.map(({ id }) => id),
+      ownerNames,
     );
+  }
+
+  /** What each member an action item is linked to is called now, by user id. */
+  private async ownerNamesOf({
+    actionItems,
+  }: MeetingDigestRecord): Promise<ReadonlyMap<string, string>> {
+    const ownerIds = new Set(
+      actionItems.flatMap(({ ownerId }) => (ownerId === null ? [] : [ownerId])),
+    );
+
+    if (ownerIds.size === 0) {
+      return NO_OWNER_NAMES;
+    }
+
+    const owners = await this.queryBus.execute<FindUsersByIdsQuery, UserDisplayName[]>(
+      new FindUsersByIdsQuery([...ownerIds]),
+    );
+
+    return new Map(owners.map(({ id, displayName }) => [id, displayName]));
   }
 
   private transcribedRecordingsOf(meetingId: string): Promise<TranscribedRecording[]> {

@@ -3,10 +3,9 @@ import type { Logger } from '@nestjs/common';
 import { ClaudeModel } from '../../claude-agent/claude-agent.constants';
 import { NO_DIGEST_STATUS } from '../services/meeting-digest-claim-writes';
 import type { MeetingDigestClaimRepository } from '../services/meeting-digest-claim.repository';
-import { FIRST_RECORDING_ID } from '../services/meeting-digest-record.fixture';
 import { DigestStatus } from '../services/meeting-digest-status';
 import { DigestOutcomeRecorder } from './meeting-digest-outcome-recorder';
-import { CLAIMED, GENERATED, LEASE } from './meeting-digest-worker.fixture';
+import { CLAIMED, GENERATED, LEASE, STORABLE } from './meeting-digest-worker.fixture';
 
 const { QUEUED, READY, FAILED } = DigestStatus;
 const FAILURE = { reason: 'The digest could not be generated.', model: ClaudeModel.SONNET };
@@ -46,11 +45,7 @@ describe('DigestOutcomeRecorder: announcements, and a discarded answer', () => {
   const endings: Array<
     [string, 'complete' | 'fail' | 'release' | 'clear', () => Promise<unknown>]
   > = [
-    [
-      'an answer stored',
-      'complete',
-      () => recorder.complete(CLAIMED, LEASE, GENERATED, [FIRST_RECORDING_ID], startedAt),
-    ],
+    ['an answer stored', 'complete', () => recorder.complete(CLAIMED, LEASE, STORABLE, startedAt)],
     ['a failure recorded', 'fail', () => recorder.fail(CLAIMED, LEASE, FAILURE, startedAt)],
     ['a claim released', 'release', () => recorder.release(CLAIMED, LEASE, null, startedAt)],
     ['a status cleared', 'clear', () => recorder.clear(CLAIMED, LEASE, startedAt)],
@@ -119,7 +114,7 @@ describe('DigestOutcomeRecorder: announcements, and a discarded answer', () => {
     complete.mockResolvedValue(QUEUED);
     clear.mockResolvedValue(QUEUED);
 
-    await recorder.complete(CLAIMED, LEASE, GENERATED, [FIRST_RECORDING_ID], startedAt);
+    await recorder.complete(CLAIMED, LEASE, STORABLE, startedAt);
     await recorder.clear(CLAIMED, LEASE, startedAt);
 
     expect(announce).toHaveBeenCalledTimes(2);
@@ -128,7 +123,7 @@ describe('DigestOutcomeRecorder: announcements, and a discarded answer', () => {
   it('announces once for an answer that could not be stored: the failure recorded in its place', async () => {
     complete.mockRejectedValue(new Error('invalid byte sequence for encoding "UTF8": 0x00'));
 
-    await recorder.complete(CLAIMED, LEASE, GENERATED, [FIRST_RECORDING_ID], startedAt);
+    await recorder.complete(CLAIMED, LEASE, STORABLE, startedAt);
 
     expect(order).toEqual(['fail', 'announce']);
   });
@@ -140,17 +135,13 @@ describe('DigestOutcomeRecorder: announcements, and a discarded answer', () => {
   ])('answers whether the answer is stored: %s', async (_case, settledAs, stored) => {
     complete.mockResolvedValue(settledAs);
 
-    await expect(
-      recorder.complete(CLAIMED, LEASE, GENERATED, [FIRST_RECORDING_ID], startedAt),
-    ).resolves.toBe(stored);
+    await expect(recorder.complete(CLAIMED, LEASE, STORABLE, startedAt)).resolves.toBe(stored);
   });
 
   it('answers that nothing is stored when the answer could not be, and a failure was recorded', async () => {
     complete.mockRejectedValue(new Error('invalid byte sequence'));
 
-    await expect(
-      recorder.complete(CLAIMED, LEASE, GENERATED, [FIRST_RECORDING_ID], startedAt),
-    ).resolves.toBe(false);
+    await expect(recorder.complete(CLAIMED, LEASE, STORABLE, startedAt)).resolves.toBe(false);
   });
 
   it('announces nothing for a claim abandoned before there was anything to write', () => {
