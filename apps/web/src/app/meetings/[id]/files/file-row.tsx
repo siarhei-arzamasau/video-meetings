@@ -2,19 +2,15 @@
 
 import { Button, Chip, Spinner, Tooltip } from '@heroui/react';
 import type { MeetingFile } from '@repo/shared';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
-import {
-  CloseIcon,
-  DownloadIcon,
-  FileIcon,
-  RetryIcon,
-  TrashIcon,
-  WarningIcon,
-} from '@/components/icons';
-import { ApiError, downloadMeetingFile, fetchThumbnail, retryMeetingFile } from '@/lib/api-client';
+import { CloseIcon, DownloadIcon, RetryIcon, TrashIcon, WarningIcon } from '@/components/icons';
+import { ApiError, downloadMeetingFile, retryMeetingFile } from '@/lib/api-client';
 import { formatRelativeTime } from '@/lib/date-time';
-import { formatFileSize, statusPresentation } from '@/lib/meeting-files';
+import { formatFileSize, statusPresentation, transcriptionPresentation } from '@/lib/meeting-files';
+import { Thumbnail } from './thumbnail';
+import { TranscriptionStatus } from './transcription-status';
+import { useTranscript } from './use-transcript';
 
 interface FileRowProps {
   token: string;
@@ -41,6 +37,8 @@ export function FileRow({
   onUnauthorized,
 }: FileRowProps) {
   const status = statusPresentation(file);
+  const transcription = transcriptionPresentation(file);
+  const transcript = useTranscript(token, file, onUnauthorized);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
@@ -135,6 +133,11 @@ export function FileRow({
             {retryError}
           </span>
         )}
+        {transcript.error !== null && (
+          <span className="text-danger text-sm" role="alert">
+            {transcript.error}
+          </span>
+        )}
       </div>
 
       {status.kind === 'processing' && (
@@ -161,6 +164,14 @@ export function FileRow({
         </Tooltip>
       )}
 
+      {/* Beside the file's own status, never instead of it: a recording is ready, and can be
+          downloaded, the whole time its transcription is queued, running, or failed. */}
+      <TranscriptionStatus
+        transcription={transcription}
+        isOpening={transcript.isOpening}
+        onOpen={transcript.open}
+      />
+
       <div className="ml-auto flex items-center gap-1">
         {status.kind === 'failed' && canManage && (
           <Button
@@ -175,8 +186,15 @@ export function FileRow({
             Retry
           </Button>
         )}
-        {retryError !== null && (
-          <Button variant="tertiary" size="sm" onPress={() => setRetryError(null)}>
+        {(retryError !== null || transcript.error !== null) && (
+          <Button
+            variant="tertiary"
+            size="sm"
+            onPress={() => {
+              setRetryError(null);
+              transcript.dismiss();
+            }}
+          >
             <CloseIcon />
             Dismiss
           </Button>
@@ -201,60 +219,4 @@ export function FileRow({
       </div>
     </div>
   );
-}
-
-/**
- * The thumbnail once there is one, else a type icon. Fetched with the bearer header into an
- * object URL because an `<img src>` cannot carry the token; revoked when the row unmounts or
- * the thumbnail changes so the blob does not outlive the row.
- */
-function Thumbnail({ token, file }: { token: string; file: MeetingFile }) {
-  const { thumbnailPath, meetingId, id } = file;
-  const [url, setUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (thumbnailPath === undefined) {
-      setUrl(null);
-
-      return;
-    }
-
-    let objectUrl: string | null = null;
-    let active = true;
-
-    void fetchThumbnail(token, meetingId, id)
-      .then((blob) => {
-        if (!active) {
-          return;
-        }
-
-        objectUrl = URL.createObjectURL(blob);
-        setUrl(objectUrl);
-      })
-      .catch(() => {
-        // A missing thumbnail is a cosmetic loss: the icon stays.
-        if (active) {
-          setUrl(null);
-        }
-      });
-
-    return () => {
-      active = false;
-
-      if (objectUrl !== null) {
-        URL.revokeObjectURL(objectUrl);
-      }
-    };
-  }, [token, meetingId, id, thumbnailPath]);
-
-  if (url === null) {
-    return (
-      <span className="bg-default text-muted flex size-10 shrink-0 items-center justify-center rounded-lg">
-        <FileIcon />
-      </span>
-    );
-  }
-
-  // Decorative: the name beside it is the accessible text.
-  return <img src={url} alt="" className="size-10 shrink-0 rounded-lg object-cover" />;
 }

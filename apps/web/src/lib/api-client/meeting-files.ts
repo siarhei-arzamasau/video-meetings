@@ -111,6 +111,31 @@ export function fetchThumbnail(token: string, meetingId: string, fileId: string)
   });
 }
 
+/** The type a transcript is opened under, whatever the response said it was. */
+const TRANSCRIPT_CONTENT_TYPE = 'text/plain;charset=utf-8';
+
+/**
+ * A recording's transcript, for anyone who can see the meeting. A `Blob` for the reason the
+ * download is one: the route needs the bearer header, which a plain link cannot send, so the
+ * caller opens this from an object URL. A 404 means there is no transcript — the recording is
+ * not transcribed, or it has been deleted.
+ *
+ * **Retyped here, and never trusted from the response.** An object URL is a document on the
+ * app's own origin, so a body opened under `text/html` would run its script beside the token
+ * in `localStorage`. The text is another service's output; the type it is shown under is ours.
+ */
+export async function fetchTranscript(
+  token: string,
+  meetingId: string,
+  fileId: string,
+): Promise<Blob> {
+  const transcript = await apiFetchBlob(`/meetings/${meetingId}/files/${fileId}/transcript`, {
+    headers: authHeaders(token),
+  });
+
+  return transcript.slice(0, transcript.size, TRANSCRIPT_CONTENT_TYPE);
+}
+
 /**
  * One file as `multipart/form-data`, field `file`.
  *

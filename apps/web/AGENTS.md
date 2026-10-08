@@ -141,15 +141,39 @@ aliases in sync if either changes.
   `pnpm --filter=@repo/web clean` (it is `rm -rf .next`). Nothing in the app causes it or can
   prevent it; do not go looking there first.
 - **An authenticated image needs an object URL.** The token is in `localStorage`, so an
-  `<img src="/api/…/thumbnail">` would arrive with no credentials and a 401. `FileRow` fetches
-  the thumbnail with the bearer header, turns the blob into `URL.createObjectURL`, and revokes
-  it on unmount. Downloads work the same way. Both collapse into plain URLs once the token is
-  an `HttpOnly` cookie.
+  `<img src="/api/…/thumbnail">` would arrive with no credentials and a 401. `Thumbnail`
+  (`files/thumbnail.tsx`) fetches it with the bearer header, turns the blob into
+  `URL.createObjectURL`, and revokes it on unmount. Downloads and transcripts work the same
+  way. All three collapse into plain URLs once the token is an `HttpOnly` cookie.
 - **Retry on a failed row is gated exactly like Delete.** `FileRow` takes one `canManage` flag —
   uploader or host — because the API applies one rule to both and two flags could only disagree
   with it. The retry needs no local state machine: the API answers with the file as `uploaded`,
   and the list already polls while anything is. A 409 means someone else got there first, so the
   list is refetched rather than second-guessed; anything else shows inline with Dismiss.
+- **A recording's transcription is a second status on the row, beside the file's own and never
+  instead of it.** `transcriptionPresentation` sits next to `statusPresentation` in
+  `src/lib/meeting-files.ts` and `TranscriptionStatus` draws it in the same slot, in the row's
+  own idiom: a chip for "Queued for transcription" and "Transcribing…", an "Open transcript"
+  link, and for "Transcription failed" the warning chip whose tooltip carries the reason. A
+  file with no `transcriptionStatus` draws nothing, and that one rule is all of "a PDF shows no
+  status" and "a deployment with transcription off shows none". Nothing about Download reads
+  it: a recording is `ready` before its transcription starts and stays `ready` if it fails.
+- **"Open transcript" is a link with no `href`, and its tab is opened before the text is
+  fetched.** The transcript route needs the bearer header, so the text comes back through
+  `fetchTranscript` and is shown from an object URL. `useTranscript`'s `open` calls
+  `window.open` first, **synchronously inside the press**, and points that tab at the blob
+  when it arrives — a tab opened after an `await` is a popup, and browsers block those without
+  saying so. Call `open` from the press handler and nowhere else. Three things around it look
+  optional and are not:
+  - **`fetchTranscript` retypes the blob to `text/plain` whatever the response claimed.** An
+    object URL is a document on this origin, and the policy in `next.config.ts` allows inline
+    script, so a body opened as `text/html` would run beside the token in `localStorage`. The
+    text is another service's output; the type it is shown under is this app's.
+  - **The object URL is revoked when the row unmounts, not on the next tick** as the
+    download's is. A tab cannot be reloaded from a revoked URL, and a row that has gone is a
+    recording that was deleted.
+  - **`tab.opener` is set to `null`**, because `noopener` would return no window to point at
+    the text.
 - **A file over 100 MB is uploaded in chunks, and the row is the only part that looks
   different.** `use-upload-queue.ts` routes on `isChunkedUpload`; `FilesSection` only learns
   that such a row carries a session id (Cancel drops it server-side, Retry resumes).
@@ -176,8 +200,9 @@ aliases in sync if either changes.
 The meeting page follows its files over SSE: `useMeetingFiles` opens
 `GET /meetings/:id/files/events` at mount beside the first list fetch, and `applyFileEvent`
 replaces a known id **where it is**, re-sorts an unknown one in, and removes a `deleted` one,
-so the Processing chip goes the moment the worker finishes. Four rules, each of which was a
-bug once:
+so the Processing chip goes the moment the worker finishes. A transcription moving on is the
+same event — the whole file, with a new `transcriptionStatus` — so the row follows it with no
+code of its own. Four rules, each of which was a bug once:
 
 - **The list is refetched every time a stream opens, and events arriving during a fetch are
   replayed on top of the snapshot.** An event says what a row is now; a list says what every
@@ -192,6 +217,11 @@ bug once:
   drops in a minute the poll takes over **for a minute (`STREAM_RETRY_MS`), not for good** —
   an API restart is exactly three drops, and a page that never retried would sit on the poll
   until reloaded. A stream is the first thing a corporate proxy or captive portal breaks.
+  **The poll runs while `isAwaitingWorker`, which is wider than `isProcessing`**: a file still
+  being processed, or a recording whose transcription is queued or running. A recording is
+  `ready` minutes before its transcript is, so gated on `isProcessing` a page without a stream
+  would sit on "Transcribing…" until it was reloaded. `isProcessing` stays what the Processing
+  chip and the announcement below count.
 - **One polite `role="status"` region** (`FilesSection`, visually hidden) announces how many
   files are processing: one per section, never one per row, and empty on first render so
   nothing is read aloud for arriving.
@@ -360,7 +390,7 @@ keyed on the path would keep drawing the picture that was replaced.
 **`UserAvatar` revokes its object URL in a second effect, and that is load-bearing.** React runs
 that cleanup only after the DOM already holds the next URL, so the browser never has an `<img>`
 pointing at a freed blob. Revoking inside the fetch effect — the obvious single-effect version,
-and what `file-row.tsx`'s thumbnail does — releases the picture on screen the moment a
+and what the file row's `Thumbnail` does — releases the picture on screen the moment a
 replacement starts loading, and the user watches a broken image until it arrives. A unit test
 pins the ordering.
 
@@ -397,10 +427,10 @@ The browser suite below is still the stronger check, and the one a flow belongs 
 ### The browser suite
 
 `pnpm --filter=@repo/web test:e2e` runs Playwright (Chromium only) over `e2e/*.spec.ts`.
-`playwright.config.ts` starts both servers itself — the API through its `start:e2e-web` script
-on **3101** (worker on, fast poll, temp storage, and an auth rate limit no run can reach: every
-spec registers through the UI and several sign in again, well past a deployment's ten a minute)
-and this app on **3100** — with
+`playwright.config.ts` starts three servers itself — the API through its `start:e2e-web` script
+on **3101** (worker on, fast poll, temp storage, transcription on, and an auth rate limit no run
+can reach: every spec registers through the UI and several sign in again, well past a
+deployment's ten a minute), this app on **3100**, and a fake Whisper on **3102** — with
 `reuseExistingServer` off, one worker, and no retries. It needs `docker compose up -d postgres`,
 a migrated schema, and `pnpm exec playwright install chromium` once. `E2E_SERVER_TIMEOUT_MS`
 raises the two-minute wait per server; a wait that times out even at several minutes is the
@@ -421,6 +451,20 @@ and costs nothing when the page is quick, because they are ceilings and not slee
 to get a signal out of a loaded machine, never to quiet a red suite**: a wait that only passes
 at a high scale has found something. Add a new wait through `scaled()` rather than a literal,
 or it will be the one that cannot be stretched with the others.
+
+**The Whisper the suite talks to is `e2e/fake-transcriber.mjs`, and a reply belongs to a
+recording, not to "the next request".** It is an OpenAI-shaped endpoint in plain Node that a
+spec tells to hold a recording's answer open, fail it, or answer it with a sentence, through
+`transcriber` in `e2e/transcription.ts` — so the API's own adapter and worker are what run,
+and no spec needs a model. The API uploads every recording as `recording.mp3`, so the name
+cannot tell two apart: `recordingNamed` appends a marker to the fixture's bytes and the reply
+is registered under it. That is what stops a reply being spent on a recording another test
+left behind — the specs share one database and the worker takes the oldest. Two consequences
+worth knowing before writing a spec: **the API transcribes one recording at a time**, so a
+held one keeps every later one at "Queued" (the only way to see that state for longer than a
+250 ms poll, and the reason each test resets the fake at both ends); and a recording nothing
+was registered for is answered at once, which is why switching transcription on changed no
+existing spec.
 
 The house convention it sets: **a new page starts as a red Playwright spec**, written against
 the routes, copy, and roles the page will have, run and seen failing, then made green by the

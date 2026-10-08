@@ -54,9 +54,10 @@ a local Whisper `small`, and a transcription status of its own beside a file tha
 throughout. The decisions that PRD leaves open — the columns, the second worker and its
 claim, what a shutdown and a switched-off setting do, the failure copy — are settled in
 [`docs/plan-local-whisper-transcription-status.md`](docs/plan-local-whisper-transcription-status.md).
-Its phases 1 and 2 are built — Whisper, and the status in the API. Phases 3 to 5, the meeting
-page and the retry of a failed transcription, are not: until they are, nothing in `apps/web`
-shows a transcript and a failed transcription stays failed.
+Its phases 1 to 3 are built — Whisper, the status in the API, and the status and the
+transcript link on the meeting page. Phases 4 and 5, the retry of a failed transcription, are
+not: until they are, a failed transcription stays failed and its row offers nothing to do
+about it.
 
 ## Commands
 

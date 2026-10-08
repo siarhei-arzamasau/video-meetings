@@ -106,8 +106,10 @@ soon as its own checks pass, and is transcribed after that, on its own: `GET
 /api/meetings/:id/files` reports a `transcriptionStatus` for it — `queued`, `transcribing`,
 then `transcribed` or `failed` with a `transcriptionFailureReason` — and the text is served by
 `GET /api/meetings/:id/files/:fileId/transcript`. A PDF or an image has no such status. The
-web app does not show any of it yet. The API log names the model on every transcription
-(`Model Systran/faster-whisper-small transcribed audio/mpeg`).
+meeting page shows it on the recording's row, changing without a reload: "Queued for
+transcription", "Transcribing…", then an "Open transcript" link that opens the text in a new
+tab, or "Transcription failed" with the reason. The API log names the model on every
+transcription (`Model Systran/faster-whisper-small transcribed audio/mpeg`).
 
 What it costs:
 
@@ -159,6 +161,9 @@ pnpm --filter=@repo/api test:e2e        # Jest + Supertest against the real data
 pnpm exec playwright install chromium   # once
 pnpm --filter=@repo/web test:e2e        # Playwright; starts the API and the web app on 3101/3100
 ```
+
+The browser suite also starts a fake transcriber on 3102 and points its API at it, so neither
+suite needs Whisper running.
 
 Both truncate the `users` table in whatever `DATABASE_URL` points at, and they share it, so run
 one at a time.

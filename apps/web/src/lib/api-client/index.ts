@@ -18,6 +18,7 @@ export {
   deleteMeetingFile,
   downloadMeetingFile,
   fetchThumbnail,
+  fetchTranscript,
   listMeetingFiles,
   openMeetingFileEvents,
   retryMeetingFile,

@@ -817,7 +817,10 @@ Seven things about that setup are easy to get wrong:
 - **`start:e2e-web` must stay in step with it**: the same temp-dir idea, but the worker **on**
   with a fast poll, because the web app's browser suite watches the Processing chip disappear —
   and the same out-of-reach auth rate limit, because that suite registers through the UI in
-  every spec and would meet a deployment's ten a minute part-way through a run.
+  every spec and would meet a deployment's ten a minute part-way through a run. It also
+  switches transcription **on** and names `127.0.0.1:3102`, where that suite starts a fake of
+  its own (`apps/web/e2e/fake-transcriber.mjs`); here the setting stays off except under
+  `useTranscriptionSuite`.
 - **`maxWorkers: 1` is load-bearing**, for the same reason: Jest parallelises across spec
   files, and in parallel they delete each other's fixtures and a seeded `register` starts
   returning 409. Remove it only alongside per-worker database isolation.

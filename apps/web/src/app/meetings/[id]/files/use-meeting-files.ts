@@ -5,15 +5,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApiError, listMeetingFiles } from '@/lib/api-client';
 import { watchMeetingFiles } from '@/lib/meeting-file-stream';
-import { applyFileEvent, isProcessing } from '@/lib/meeting-files';
+import { applyFileEvent, isAwaitingWorker } from '@/lib/meeting-files';
 import { describeFailure } from '@/lib/use-signed-in';
 
 /**
- * How often the list refetches while the worker still owes a result — **the fallback, not
- * the default, and not to be removed.** The event stream is what normally moves a row from
- * Processing to Ready, but a stream is the first thing a corporate proxy, a captive portal,
- * or a misconfigured reverse proxy breaks, and the PRD's "no websocket in v1" spirit asks
- * for a page that still works when it cannot hold one open. See `useMeetingFiles`.
+ * How often the list refetches while a worker still owes a result — **the fallback, not
+ * the default, and not to be removed.** The event stream is what normally settles a row and
+ * moves its transcription on, but a stream is the first thing a corporate proxy, a captive
+ * portal, or a misconfigured reverse proxy breaks, and the PRD's "no websocket in v1" spirit
+ * asks for a page that still works when it cannot hold one open. See `useMeetingFiles`.
  */
 export const POLL_INTERVAL_MS = 3_000;
 
@@ -66,10 +66,10 @@ export interface MeetingFiles {
  * worker finishes rather than up to three seconds later.
  *
  * **The poll is the fallback.** `watchMeetingFiles` reopens a dropped stream with a backoff
- * and after three drops inside a minute gives up; the three second poll then runs while
- * anything is processing, and `STREAM_RETRY_MS` later the stream is tried again. An API
- * restart produces exactly those three drops, and a page must not stay on the poll until
- * it is reloaded because of one. A retry that opens refetches the list like any other open.
+ * and after three drops inside a minute gives up; the three second poll then runs while a
+ * file is processing or a recording is waiting on its transcript, and `STREAM_RETRY_MS` later
+ * the stream is tried again. An API restart produces exactly those three drops, and a page must
+ * not stay on the poll for good because of one. A retry that opens refetches the list too.
  *
  * A 401 from either is handed to `onUnauthorized` rather than shown: the gate owns that answer.
  */
@@ -201,9 +201,9 @@ export function useMeetingFiles(
 
   // The fallback, and only that: while a stream is open the list is already current, and a
   // poll beside it would be three requests a second across an open meeting page for nothing.
-  // `isProcessing` still gates it, so the fallback stops when the worker is done.
+  // `isAwaitingWorker` still gates it, so the fallback stops once both workers are done.
   useEffect(() => {
-    if (streamAvailable || list.state !== 'ready' || !isProcessing(list.files)) {
+    if (streamAvailable || list.state !== 'ready' || !isAwaitingWorker(list.files)) {
       return;
     }
 
