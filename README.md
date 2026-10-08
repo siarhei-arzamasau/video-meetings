@@ -173,14 +173,23 @@ read another member's display name, and never an email address.
 Every change is also sent as a `digest` event on the meeting's files stream
 (`GET /api/meetings/:id/files/events`). The meeting page does not show it yet.
 
+`POST /api/meetings/:id/digest/generation` asks for a digest that no recording asked for,
+and takes no body. The digest says when there is something to ask for, in `availableAction`:
+`generate` for transcribed recordings with no current digest — transcribed before the flag
+was on — and `retry` for a digest that failed. The meeting's host and the uploader of any of
+its transcribed recordings may send it, and anyone else gets a 404. For those two, a digest
+that is current, queued, or generating answers 409, and so does every digest while the flag
+is off.
+
 - **Every generation is a paid request**, typically under a cent and a few seconds; the API
   log has each one's duration, model, and cost, and no response carries them.
-- **A digest that fails is not retried**, and fails nothing else: the recordings stay ready
-  and their transcripts still open. `MEETING_DIGEST_TIMEOUT_SECONDS` (default 240) bounds one
+- **A digest that fails is not retried unless somebody asks**, and fails nothing else: the
+  recordings stay ready and their transcripts still open. `MEETING_DIGEST_TIMEOUT_SECONDS` (default 240) bounds one
   generation, and a meeting whose transcripts are together past about 1.7 million characters
   — some thirty hours of speech — fails as too long rather than being digested in part.
 - **Setting the flag back to `false`** sends nothing more and keeps every digest already
-  stored readable. Recordings transcribed while it was off get no digest when it comes back.
+  stored readable. Recordings transcribed while it was off get no digest when it comes back,
+  until the host or their uploader asks for one.
 - **`docker compose` does not pass these two variables to its `api` service**: the digest is
   set up for an API run with `pnpm dev`.
 

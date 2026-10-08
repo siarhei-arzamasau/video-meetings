@@ -944,12 +944,14 @@ A meeting's summary, action items, and decisions, generated from the transcripts
 recordings, stored, and served at `GET /api/meetings/:id/digest`. The contract is
 [the PRD](../../docs/prd-meeting-digest-summary-action-items-decisions.md); every decision
 under it, and the phases, are in
-[its plan](../../docs/plan-meeting-digest-summary-action-items-decisions.md). **Phases 1 to 4
-of 7 are built**: a recording that reaches Transcribed gives its meeting a digest, anyone who
-can see the meeting can read it, a deleted recording takes away what was built from it,
-every change is sent to the meeting's open streams, and an action item's owner is reported as
-the member of the meeting the spoken name identifies. Not yet: a request to generate or
-retry (5). What a reader of the code would get wrong:
+[its plan](../../docs/plan-meeting-digest-summary-action-items-decisions.md). **Phases 1 to 5
+of 7 are built**, which is all of the API: a recording that reaches Transcribed gives its
+meeting a digest, anyone who can see the meeting can read it, a deleted recording takes away
+what was built from it, every change is sent to the meeting's open streams, an action item's
+owner is reported as the member of the meeting the spoken name identifies, and the host or
+a transcribed recording's uploader can ask for a digest that no recording asked for —
+`POST /api/meetings/:id/digest/generation`. Not yet: anything on the meeting page (6–7).
+What a reader of the code would get wrong:
 
 **What leaves, and when**
 
@@ -963,9 +965,11 @@ retry (5). What a reader of the code would get wrong:
 - **The setting stops new work and nothing else**, as the transcription's does. Off, a newly
   transcribed recording asks for nothing, the worker claims nothing, and a `QUEUED` row
   waits; a stored digest is still served, and both rules about recordings still apply to it,
-  because the read applies them. The handler and the worker ask `ConfigService` when they
+  because the read applies them. The request route answers 409 and the read offers no
+  `availableAction`. The handlers, the worker, and the read ask `ConfigService` when they
   run, so the e2e suite flips it between tests. **Nothing is generated when it comes back**
-  for a recording transcribed while it was off: nothing revisits a transcribed recording.
+  for a recording transcribed while it was off: nothing revisits a transcribed recording,
+  and the way forward is somebody asking (_Generate and Retry_, below).
 - **With it on, a missing `ANTHROPIC_AUTH_TOKEN` stops the boot** — its presence, never
   whether Anthropic accepts it. A refused token fails a digest, not the process that serves
   every upload.
@@ -996,7 +1000,9 @@ retry (5). What a reader of the code would get wrong:
   **Two writes exist only to move it** — a recording transcribed with the setting off, and a
   deleted recording the digest was not built from. Neither changes a column; both change
   `outOfDate`, which the read derives. An answer that changed under an unchanged version is
-  one a page holding the old answer has no reason to take.
+  one a page holding the old answer has no reason to take. **Two changes do that all the
+  same**, each said where it is made: a linked owner's new name (_Owners_), and an
+  `availableAction` that left with a meeting's last recording (_Generate and Retry_).
 - **The raw statements set `id` and `updated_at` themselves.** `@default(uuid())` and
   `@updatedAt` are the Prisma client's, and the request and the claim do not go through it —
   hence `gen_random_uuid()`, `now()`, and a database default on `updated_at`.
@@ -1027,7 +1033,9 @@ retry (5). What a reader of the code would get wrong:
   and `findOne` is the visibility check in front of it. An announcement has no user: it goes
   to streams whose guard has already decided. One method for both is what makes an event the
   answer `GET` would give — an owner's current name reaches the stream by being read there,
-  and phase 5's `availableAction` will by being added there, and nowhere else.
+  and `availableAction` by being decided there, and nowhere else. `describe` is its second
+  half, for a caller that already holds the row: the request route answers with the row its
+  own write left.
 
 **Owners**
 
@@ -1053,8 +1061,8 @@ retry (5). What a reader of the code would get wrong:
   still somebody's.
 - **The read asks what each linked member is called now** — one `FindUsersByIdsQuery` for
   all of a digest's owners, none for a digest that links nobody — so a rename shows with no
-  generation and no write. **It does not move `version` either, and that is the one change
-  to what `GET` answers that does not**: nothing tells this module a user was renamed, so an
+  generation and no write. **It does not move `version` either** — one of the two changes
+  to what `GET` answers that do not: nothing tells this module a user was renamed, so an
   open page keeps the old name until its next fetch. Closing that takes an event from the
   user module, not a column here.
 - **This is the only place a user's display name is shown to another user**: to the members
@@ -1125,13 +1133,74 @@ retry (5). What a reader of the code would get wrong:
   status and leaves the content rows, as phase 2 built it; they are withheld, and removed by
   the next delete in the meeting. It is reached only when a delete's reaction never ran.
 
+**Generate and Retry**
+
+- **`POST :id/digest/generation` is the one caller of the edges into `QUEUED` that no
+  recording caused** — from no status, from `READY`, and from `FAILED`. Everything else
+  that queues a digest is a recording being transcribed or deleted. Generate and Retry are
+  this one request, `RequestMeetingDigestCommand`: what differs is the digest it finds, and
+  the digest says which it would be (`availableAction`).
+- **The gate, its order, and its 404s are the transcription retry's**: a meeting the caller
+  cannot see, then a caller who is neither the host nor the uploader of one of its
+  transcribed recordings — another participant included — each the 404 a guessed id gets.
+  The 409s come after, so only someone who could have asked ever learns what the digest or
+  the deployment refuses.
+- **One rule decides what the read offers and what the route accepts: `requestabilityOf`**
+  (`services/meeting-digest-action.ts`). No transcribed recording refuses everything; a
+  failed digest may always be retried; anything else may be generated unless it is queued,
+  generating, or built from exactly the recordings transcribed now. The mapper reports
+  `availableAction` where it allows and the write refuses where it does not, so change it
+  there and nowhere else. **Generate therefore covers more than "no digest"**: a digest that
+  is out of date with nothing queued, and one withheld by a delete nothing reacted to, are
+  both states nothing else will ever leave.
+- **This request can be refused, and a transcribed recording's cannot — on purpose.** A
+  recording that arrives while a generation is out is "one more after it". A person pressing
+  a button over a digest that is queued, generating, or current is asking for a second paid
+  request for the same recordings, and gets a 409.
+- **It is decided under the row's lock, and a meeting with no row is given an empty one
+  first so that there is a lock to take** (`requestGenerationByHand`). Without it two
+  requests for such a meeting both find nothing, and the second adds a revision to the row
+  the first queued — one more generation than was asked for, if a worker claims it between
+  them. The lock also orders the decision against a generation's `complete`, as a delete's
+  is ordered. What is then written is `requestGeneration`, like every other request: the
+  claim count back at 0, the reason cleared, the content left alone.
+- **The recordings it is decided against are read before that lock, and moving the read
+  under it is not the fix it looks like.** A recording deleted in between can let through a
+  request for a digest the delete has just made current — and leaves the row where the same
+  request committing just _before_ the same delete leaves it, `QUEUED` over current
+  content, because a delete takes no request back. Asking `meeting-files` from inside the
+  transaction would buy nothing but a second connection wanted by every transaction that
+  holds one, which empties the pool at as many requests at once as it has connections.
+- **The setting is asked about after the gate and before the write, and that is not the
+  transcription retry's answer.** That route queues with its setting off, to wait for it.
+  A digest queued while nothing is generated would be a paid request made the day somebody
+  switches the setting on, by nobody — so off is a 409, and `availableAction` is absent.
+- **No failure is refused a retry**, where the transcription's refuses the time limit: a
+  generation that was hung up on is a process the SDK has killed, not a Whisper still
+  running, and transcripts that are too long fail again unsent, at no cost.
+- **It answers the row as its own write left it** — read inside the transaction, before
+  the lock lets a worker at it — because answering `generating` would say the request did
+  something it did not. The claim's event carries a higher version.
+- **`availableAction` is the same for every reader**, and so for every stream: it says what
+  the digest allows, not whether this reader may ask. Who is shown the control is the
+  page's to work out from the files it holds.
+- **It is the second thing that can change under an unchanged `version`.** When the last
+  transcribed recording of a meeting with nothing stored is deleted, Generate is no longer
+  offered and nothing is written: a meeting with no digest row has no version to move, and
+  a delete never makes a row. The page is expected to offer the action only while its own
+  files list holds a transcribed recording, and to answer a 409 by fetching the digest
+  again. A setting that changed is a restart, which ends every stream and so has every page
+  fetch.
+
 **Announcements**
 
 - **`MeetingDigestAnnouncer` is the one publisher of `MeetingDigestChangedEvent`**, called
-  by whoever has just committed a write: the request handler, the delete follower, and the
-  worker's recorder on the branch where its conditional write landed. A write that lost its claim changed nothing and
-  announces nothing. A new write to the row owes a call to it — and, if it changes what `GET`
-  answers without changing a status, a version to announce it under.
+  by whoever has just committed a write: the two request handlers — a transcribed
+  recording's, and Generate and Retry's — the delete follower, and the worker's recorder on
+  the branch where its conditional write landed. A write that lost its claim changed nothing
+  and announces nothing, as a refused request does. A new write to the row owes a call to
+  it — and, if it changes what `GET` answers without changing a status, a version to
+  announce it under.
 - **It reads the digest again instead of being handed one**, so an event is a snapshot at
   least as new as the write it follows, and sometimes newer: two writes close together can be
   announced as the same digest twice. That is harmless to a client that keeps the higher
@@ -1427,8 +1496,9 @@ Nine things about that setup are easy to get wrong:
   been written — as `remove` deletes a file and returns once the digest has followed it,
   both by waiting on `PendingDigestRequests`. `watch` opens the meeting's files stream and
   hands over its `digest` events one at a time, each held to a version above the last — so
-  every spec that reads the stream is also a spec of the rule a page relies on. Every other
-  spec file runs with the digest off.
+  every spec that reads the stream is also a spec of the rule a page relies on. `ask` is
+  "generate now", returned unawaited because most of what a spec says about that route is
+  which status it answers. Every other spec file runs with the digest off.
 - **An environment the contract refuses does not throw when `AppModule` is imported.**
   `ConfigModule.forRoot` is `async`, so the refusal is a rejected promise inside the module's
   `imports` that nothing awaits until Nest compiles it — and an `expect(import(…))` passes

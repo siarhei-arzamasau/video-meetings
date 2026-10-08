@@ -122,12 +122,36 @@ build it into the API; phases 6–7 put it on the page.
    module that a user was renamed; a page that is open keeps the old name until its next
    fetch, and a page that keeps the higher of two versions must take a fetched digest over
    an equal one it holds. Moving the version would take an event from the user module.
+   **A second one does not move it either: `availableAction` leaving with a meeting's last
+   transcribed recording** (phase 5). A meeting whose recordings were transcribed with the
+   setting off has no digest row, so no version, and a delete never makes a row; the same
+   holds for a row with no status and nothing stored. Generate stops being offered there
+   with nothing written. Making a row for it would be a write on every recording's delete in
+   a meeting that has no digest, to carry a change the page can see for itself: it holds the
+   files, and the deleted one leaves its list by the same stream. So the page offers the
+   action only while its list holds a transcribed recording (phase 7), and a request that
+   meets a 409 fetches the digest again.
 10. **Generate and Retry are one request** — "generate now" — refused unless there is something
     to generate and nothing under way. The digest says which label applies (`availableAction`);
     who may press it is the page's to work out from the files it already holds, and the API's to
     enforce. **One reading of the PRD to confirm:** Generate is also offered for a digest that
     is out of date with nothing queued — a recording transcribed while the setting was off —
     which the PRD's "no digest" would leave with no way forward.
+    **Four things phase 5 settled about it.** One rule decides both halves — what the read
+    offers and what the route accepts — so they cannot disagree: no transcribed recording
+    refuses everything; a failed digest may be retried, whatever failed it and whatever is
+    stored under it; anything else may be generated unless it is queued, generating, or
+    built from exactly the recordings transcribed now. That makes Generate the way out of
+    one more state than the reading above: a digest withheld by a delete nothing reacted to.
+    **The request is decided under the row's lock, not by one conditional statement**: what
+    makes a digest current is which recordings are transcribed, which this module may only
+    ask for, so the caller reads them and the transaction locks the row, reads its sources,
+    and decides. A meeting with no row is given an empty one first, so that two requests at
+    once have something to lock and are one generation. **The setting is a 409, after the
+    404s** — unlike a transcription's retry, which queues with its setting off: a digest
+    queued while nothing is generated is a paid request made later, by nobody. **And
+    `availableAction` is the same for every reader**, since it rides an event every stream
+    is sent; a participant who may not ask is told so by the route.
 11. **The worker is the transcription worker's shape**: a polling loop of its own, where
     `MEETING_FILES_WORKER_ENABLED` is on; a `FOR UPDATE SKIP LOCKED` claim; the lease heartbeat;
     a fourth claim failed unrun; a graceful shutdown that hands the claim back uncounted; no
@@ -175,7 +199,10 @@ export interface MeetingDigest {
   failureReason?: string;
   /** Present only while every recording it was built from still exists. */
   content?: MeetingDigestContent;
-  /** Phase 5. What the host or a transcribed recording's uploader may ask for now. */
+  /**
+   * Phase 5. What the host or a transcribed recording's uploader may ask for now: the same
+   * for every reader, absent with the setting off. `MeetingDigestAction` in `@repo/shared`.
+   */
   availableAction?: 'generate' | 'retry';
 }
 ```
@@ -193,8 +220,9 @@ export interface MeetingDigest {
 Routes: phase 2 adds `GET /api/meetings/:id/digest` — `200 MeetingDigest` for anyone who can
 see the meeting, `404 Meeting not found` otherwise. Phase 3 adds `event: digest` to the files
 stream. Phase 5 adds `POST /api/meetings/:id/digest/generation` — host or the uploader of a
-transcribed recording, `200 MeetingDigest`; anyone else `404`; nothing to generate, one under
-way, or the setting off `409`.
+transcribed recording, `200 MeetingDigest`; anyone else `404`; nothing to generate — no
+transcribed recording, or a digest that already covers every one — one under way, or the
+setting off `409`.
 
 ## Implementation phases
 
@@ -455,19 +483,56 @@ a failed one.
 
 **Tasks:**
 
-- [ ] `availableAction` in the contract and the mapper: `retry` for a failed digest, `generate`
+- [x] `availableAction` in the contract and the mapper: `retry` for a failed digest, `generate`
       for transcribed recordings with no current digest and nothing under way, absent
       otherwise and always with the setting off. Mapper spec.
-- [ ] `RequestMeetingDigestCommand` and its handler: visible meeting (404), host or uploader
+- [x] `RequestMeetingDigestCommand` and its handler: visible meeting (404), host or uploader
       of a transcribed recording (404), then the conditional request that resets the claim
       count and clears the reason (409 on zero rows); publishes the event and returns the
       digest as written. Unit spec for the outcomes.
-- [ ] `POST /api/meetings/:id/digest/generation`, and e2e, red first: a recording transcribed
+- [x] `POST /api/meetings/:id/digest/generation`, and e2e, red first: a recording transcribed
       with the setting off starts nothing when it is switched on; the host's request, and the
       uploader's, end Ready after a drain; another participant and a stranger get 404; a
       current, queued, or generating digest gets 409, as does the setting off; a failed digest
       retried ends Ready with the claim count back at 0; an out-of-date digest with nothing
       queued accepts the request.
+
+_As built:_
+
+- **One rule, `requestabilityOf`, behind the mapper's `availableAction` and the handler's
+  409** (decision 10). The mapper takes the setting as an argument, and the read asks for the
+  recordings when the setting is on even for a meeting with no digest row — the one query
+  the feature costs a meeting that has none.
+- **The request is a transaction, not the one conditional statement the task names**: an
+  empty row if there is none, the row's lock, its sources, the decision, and then
+  `requestGeneration` — the write every other request is. A refusal is "zero rows" all the
+  same: it writes nothing and announces nothing. Three requests sent at once for a meeting
+  with no row are one `200` and two `409`s, and one generation.
+- **The recordings the request is decided against are read before the lock, and stay
+  there.** Review found the window: a recording deleted between the read and the lock lets
+  a request through for a digest that delete has just made current. It is left, because the
+  row ends where the same request committing just before the same delete ends it — `QUEUED`
+  over current content, since a delete takes no request back (phase 3) — and because
+  reading under the lock means asking `meeting-files` from inside the transaction, a second
+  pooled connection held behind the first.
+- **"Returns the digest as written" is the row read inside that transaction**, before its
+  lock is released, described by the code `GET` runs. The announcement is the announcer's
+  usual second read, so the event may already say `generating`; it carries the higher
+  version.
+- **The 404 is `Meeting not found` for another participant as for a stranger**, and comes
+  before every 409, the setting's included.
+- **A version does not move when Generate leaves with a meeting's last recording** (decision
+  9), which puts one requirement on phase 7: the control needs a transcribed recording in
+  the page's files list, for the host as well.
+- **Three earlier assertions gained the field**, each an exact equality on a failed or
+  withheld digest read with the setting on: `meeting-digest-failure`,
+  `meeting-digest-events`, and `meeting-digest-deletes`. Every other earlier spec is
+  untouched.
+- **The e2e specs were red first**: `meeting-digest-request` and
+  `meeting-digest-request-refusals` were run with the route declared and its handler not yet
+  in the module's `providers`, where eleven of their thirteen cases failed on a 500 — the
+  trap the API guide's "Adding a command" names. The two that passed there assert what was
+  already built: the read's `availableAction`, and the guard and the id pipe.
 
 **Done when:** the spec is green with every earlier e2e spec; the CI commands pass; the API
 guide names the route as the one caller of the edges into `queued` that no recording caused.
@@ -518,7 +583,8 @@ covers the section, the shared stream, and the version rule.
 
 - [ ] `requestMeetingDigest` in the API client, with Vitest.
 - [ ] The action in `DigestSection`: "Generate digest" or "Retry" as `availableAction` says,
-      shown only to the host and to the uploader of a transcribed recording in the files list;
+      shown only to the host and to the uploader of a transcribed recording in the files list,
+      and to neither while that list holds no transcribed recording (decision 9);
       a 409 refetches the digest, any other error shows inline with Dismiss, as a file retry's
       does. Vitest for who sees it.
 - [ ] Playwright spec, with the test entry point able to switch the setting: a recording

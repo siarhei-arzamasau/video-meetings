@@ -1,4 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { QueryBus } from '@nestjs/cqrs';
 import { Test } from '@nestjs/testing';
 
@@ -19,6 +20,11 @@ const USER_ID = '11111111-1111-4111-8111-111111111111';
 const GRACE_ID = '22222222-2222-4222-8222-222222222222';
 const MEETING = { id: DIGEST_MEETING_ID, hostId: USER_ID };
 
+/**
+ * The read with the digest switched off, as it is unless a deployment says otherwise. What
+ * the setting adds — `availableAction`, and the recordings read to decide it — is
+ * `meeting-digests.service.action.spec.ts`'s.
+ */
 describe('MeetingDigestsService', () => {
   const findOf = jest.fn();
   /** What each query the service dispatches is answered with, by its class. */
@@ -52,6 +58,7 @@ describe('MeetingDigestsService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         MeetingDigestsService,
+        { provide: ConfigService, useValue: { get: () => false } },
         { provide: QueryBus, useValue: { execute } },
         { provide: MeetingDigestRepository, useValue: { findOf } },
       ],

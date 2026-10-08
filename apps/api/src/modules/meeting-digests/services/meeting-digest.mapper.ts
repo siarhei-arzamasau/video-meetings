@@ -5,6 +5,7 @@ import type {
   MeetingDigestStatus,
 } from '@repo/shared';
 
+import { requestabilityOf } from './meeting-digest-action';
 import { DigestStatus } from './meeting-digest-status';
 
 export interface MeetingDigestActionItemRecord {
@@ -70,6 +71,11 @@ const WIRE_STATUS: Record<DigestStatus, MeetingDigestStatus> = {
  * is, so a member who has changed their name is shown under the new one with nothing
  * generated and nothing rewritten.
  *
+ * `generationEnabled` is the deployment's setting, and all it decides is `availableAction`:
+ * what "generate now" would do for the digest as it stands, by the rule the request route
+ * refuses by (`requestabilityOf`), and absent whenever the setting is off — nothing is generated
+ * then, so nothing is offered. It is the same for every reader; who may ask is the route's.
+ *
  * Everything the worker owns stays behind — the lease, the claim count, the revision — and
  * so does what a generation cost, which is in the log and in no row. Optional fields are
  * absent rather than null, so the JSON matches the shared interface exactly.
@@ -79,12 +85,18 @@ export function toMeetingDigest(
   record: MeetingDigestRecord | null,
   transcribedFileIds: ReadonlyArray<string>,
   ownerNames: ReadonlyMap<string, string>,
+  generationEnabled: boolean,
 ): MeetingDigest {
+  const transcribed = new Set(transcribedFileIds);
+  const request = requestabilityOf(record, transcribed);
+  const availableAction =
+    generationEnabled && request.allowed ? { availableAction: request.action } : {};
+
   if (record === null) {
-    return { meetingId, version: 0 };
+    return { meetingId, version: 0, ...availableAction };
   }
 
-  const content = contentOf(record, new Set(transcribedFileIds), ownerNames);
+  const content = contentOf(record, transcribed, ownerNames);
   const failed = record.status === DigestStatus.FAILED;
 
   return {
@@ -94,6 +106,7 @@ export function toMeetingDigest(
     // Only when failed: a reason left on a row that was queued again must not show.
     ...(failed && record.failureReason !== null ? { failureReason: record.failureReason } : {}),
     ...(content !== null ? { content } : {}),
+    ...availableAction,
   };
 }
 

@@ -1,12 +1,14 @@
 import type { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { MeetingDigest, MeetingFile } from '@repo/shared';
+import type request from 'supertest';
 
 import type { ApiSuite } from './api-suite';
 import type { FakeClaudeAgent } from './fake-claude-agent';
 import {
   MEETING_DIGEST_WORKER_TOKEN,
   PENDING_DIGEST_REQUESTS_TOKEN,
+  meetingDigestGenerationUrl,
   meetingDigestUrl,
   meetingFileEventsUrl,
   meetingFileUrl,
@@ -27,6 +29,13 @@ export const DIGEST_TOO_LONG_MESSAGE =
   'The recordings of this meeting are too long to turn into one digest.';
 export const digestTimeLimitMessage = (limit: string): string =>
   `Generating the digest took longer than the ${limit} limit.`;
+
+/** The request route's refusals, restated like the copy above. */
+export const DIGEST_SWITCHED_OFF_MESSAGE = 'Meeting digests are switched off';
+export const DIGEST_UNDER_WAY_MESSAGE = 'A digest is already queued or being generated';
+export const DIGEST_CURRENT_MESSAGE = 'The digest already covers every transcribed recording';
+export const DIGEST_NO_RECORDING_MESSAGE =
+  'The meeting has no transcribed recording to generate a digest from';
 
 /** The most transcript text one generation carries, restated: a relaxed cap must fail a spec. */
 export const MAX_DIGEST_TRANSCRIPT_CHARACTERS = 1_700_000;
@@ -81,6 +90,11 @@ export interface DigestSuite {
   configure(settings: DigestSettings): void;
   read(token: string, meetingId: string): Promise<MeetingDigest>;
   /**
+   * "Generate now" — Generate and Retry are this one request. The response is the caller's
+   * to hold to a status: most of what a spec says about this route is who is refused.
+   */
+  ask(token: string, meetingId: string): request.Test;
+  /**
    * Uploads a recording and takes it all the way to Transcribed with `transcript` as what was
    * said in it — and to its request for a digest having been written, if it made one.
    */
@@ -133,6 +147,8 @@ export function useDigestSuite(
 
       return response.body as MeetingDigest;
     },
+    ask: (token, meetingId) =>
+      suite.post(meetingDigestGenerationUrl(meetingId), {}).set('Authorization', `Bearer ${token}`),
     transcribe: async (token, meetingId, transcript) => {
       transcription.transcriber.reply = () => ({ kind: 'text', text: transcript });
 

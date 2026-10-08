@@ -13,15 +13,17 @@ import type { MeetingDigestRecord } from './meeting-digest.mapper';
 const { QUEUED, GENERATING, READY, FAILED } = DigestStatus;
 
 /**
- * The mapper for a digest none of whose owners is linked to a member — every case here.
- * What a link changes is `meeting-digest.mapper.owners.spec.ts`'s.
+ * The mapper for a digest none of whose owners is linked to a member, in a deployment with
+ * the digest switched off — every case here. What a link changes is
+ * `meeting-digest.mapper.owners.spec.ts`'s, and what the setting adds — `availableAction` —
+ * is `meeting-digest.mapper.action.spec.ts`'s.
  */
 const toMeetingDigest = (
   meetingId: string,
   record: MeetingDigestRecord | null,
   transcribedFileIds: string[],
 ): ReturnType<typeof toMeetingDigestWithOwners> =>
-  toMeetingDigestWithOwners(meetingId, record, transcribedFileIds, new Map());
+  toMeetingDigestWithOwners(meetingId, record, transcribedFileIds, new Map(), false);
 
 const CONTENT = {
   summary: 'The team reviewed the engine and agreed to ship on Friday.',

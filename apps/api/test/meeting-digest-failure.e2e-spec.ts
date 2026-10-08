@@ -194,6 +194,8 @@ describe('a meeting digest that fails', () => {
       version: 3,
       status: 'failed',
       failureReason: DIGEST_FAILED_MESSAGE,
+      // The way back: there is no automatic retry.
+      availableAction: 'retry',
     });
     await expect(findMeetingDigestContentRows(suite.prisma(), meeting.id)).resolves.toEqual({
       actionItems: [],

@@ -10,8 +10,11 @@
  * | Edge                                   | Taken by                                          |
  * | -------------------------------------- | ------------------------------------------------- |
  * | _(none)_, `READY`, `FAILED` → `QUEUED` | `MeetingDigestRepository.request`: a recording    |
- * |                                        | transcribed; and `followDelete`, for a digest     |
- * |                                        | that lost a recording while others are left       |
+ * |                                        | transcribed; `followDelete`, for a digest that    |
+ * |                                        | lost a recording while others are left; and       |
+ * |                                        | `requestByHand` — Generate and Retry, the one     |
+ * |                                        | caller no recording caused, and the one that can  |
+ * |                                        | be refused                                        |
  * | `QUEUED` → `GENERATING`                | the claim, which also re-claims a lapsed lease    |
  * | `GENERATING` → `READY`                 | `complete`, the request it was claimed for intact |
  * | `GENERATING` → `FAILED`                | `fail`, likewise                                  |
@@ -26,6 +29,8 @@
  *
  * `request` on a row that is `QUEUED` or `GENERATING` changes no status: it moves the
  * revision, which is what turns the generation under way into "one more after it".
+ * `requestByHand` never meets one: it refuses a row in either status, and a `READY` one
+ * whose content covers every transcribed recording (`requestabilityOf`).
  *
  * **`GENERATING` → _(none)_ by a delete does not hang up on the call at once.** Its worker
  * finds the claim gone at the next lease renewal, a third of the lease away at most. One

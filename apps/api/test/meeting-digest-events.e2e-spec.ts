@@ -105,6 +105,8 @@ describe('a meeting digest on the files stream', () => {
       version: failed.version,
       status: 'failed',
       failureReason: DIGEST_FAILED_MESSAGE,
+      // The event is the read: it offers what `GET` would.
+      availableAction: 'retry',
     });
 
     // And a generation that succeeds says what it holds, not what it took.

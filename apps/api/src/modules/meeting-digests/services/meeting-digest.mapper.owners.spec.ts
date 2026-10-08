@@ -29,7 +29,13 @@ function ownersOf(
   ownerNames: ReadonlyMap<string, string>,
 ): Array<MeetingDigestOwner | undefined> {
   const record = buildMeetingDigestRecord({ actionItems: items });
-  const digest = toMeetingDigest(DIGEST_MEETING_ID, record, [FIRST_RECORDING_ID], ownerNames);
+  const digest = toMeetingDigest(
+    DIGEST_MEETING_ID,
+    record,
+    [FIRST_RECORDING_ID],
+    ownerNames,
+    false,
+  );
 
   return digest.content?.actionItems.map(({ owner }) => owner) ?? [];
 }

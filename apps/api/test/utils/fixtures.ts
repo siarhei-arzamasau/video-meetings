@@ -69,6 +69,10 @@ export function meetingDigestUrl(meetingId: string): string {
   return `${MEETINGS_URL}/${meetingId}/digest`;
 }
 
+export function meetingDigestGenerationUrl(meetingId: string): string {
+  return `${meetingDigestUrl(meetingId)}/generation`;
+}
+
 export function meetingFileUploadsUrl(meetingId: string): string {
   return `${meetingFilesUrl(meetingId)}/uploads`;
 }

@@ -2,9 +2,19 @@ import { Injectable } from '@nestjs/common';
 
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { DigestRequestability } from './meeting-digest-action';
+import { requestGenerationByHand } from './meeting-digest-request';
 import { followDelete, requestGeneration } from './meeting-digest-writes';
 import type { DigestAfterDelete, RecordingsAfterDelete } from './meeting-digest-writes';
 import type { MeetingDigestRecord } from './meeting-digest.mapper';
+
+/**
+ * What became of a request made by hand: refused, or written — and then the row as that
+ * write left it, read before the transaction let anybody else at it.
+ */
+export type DigestHandRequest =
+  | Extract<DigestRequestability, { allowed: false }>
+  | (Extract<DigestRequestability, { allowed: true }> & { record: MeetingDigestRecord | null });
 
 /**
  * The digest row as everybody but the worker touches it: asked for, made to follow a deleted
@@ -21,6 +31,23 @@ export class MeetingDigestRepository {
   /** Asks for a generation — `requestGeneration`, which says what that does to each status. */
   async request(meetingId: string): Promise<void> {
     await requestGeneration(this.prisma, meetingId);
+  }
+
+  /**
+   * Asks for a generation because somebody asked, unless the digest as it stands refuses —
+   * `requestGenerationByHand`, in one transaction with the read of what it wrote. The row
+   * stays locked until that read is done, so what is answered is this request's `QUEUED`
+   * and not the `GENERATING` of the worker that claims it next.
+   */
+  requestByHand(
+    meetingId: string,
+    transcribedFileIds: ReadonlyArray<string>,
+  ): Promise<DigestHandRequest> {
+    return this.prisma.$transaction(async (tx) => {
+      const request = await requestGenerationByHand(tx, meetingId, transcribedFileIds);
+
+      return request.allowed ? { ...request, record: await readDigest(tx, meetingId) } : request;
+    });
   }
 
   /**
@@ -74,25 +101,34 @@ export class MeetingDigestRepository {
    * refuse from version 9.
    */
   findOf(meetingId: string): Promise<MeetingDigestRecord | null> {
-    return this.prisma.$transaction(
-      async (tx) => {
-        const digest = await tx.meetingDigest.findUnique({ where: { meetingId } });
-
-        if (digest === null) {
-          return null;
-        }
-
-        const ofDigest = { where: { digestId: digest.id } };
-        const actionItems = await tx.meetingDigestActionItem.findMany(ofDigest);
-        const decisions = await tx.meetingDigestDecision.findMany(ofDigest);
-        const sources = await tx.meetingDigestSource.findMany({
-          ...ofDigest,
-          select: { meetingFileId: true },
-        });
-
-        return { ...digest, actionItems, decisions, sources };
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
-    );
+    return this.prisma.$transaction((tx) => readDigest(tx, meetingId), {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+    });
   }
+}
+
+/**
+ * The row and its three tables, read through one transaction's client. What makes the four
+ * statements one digest is the caller's: a snapshot for `findOf`, the row's lock for a
+ * request that has just written it.
+ */
+async function readDigest(
+  tx: Prisma.TransactionClient,
+  meetingId: string,
+): Promise<MeetingDigestRecord | null> {
+  const digest = await tx.meetingDigest.findUnique({ where: { meetingId } });
+
+  if (digest === null) {
+    return null;
+  }
+
+  const ofDigest = { where: { digestId: digest.id } };
+  const actionItems = await tx.meetingDigestActionItem.findMany(ofDigest);
+  const decisions = await tx.meetingDigestDecision.findMany(ofDigest);
+  const sources = await tx.meetingDigestSource.findMany({
+    ...ofDigest,
+    select: { meetingFileId: true },
+  });
+
+  return { ...digest, actionItems, decisions, sources };
 }

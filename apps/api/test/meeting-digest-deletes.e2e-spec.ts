@@ -108,6 +108,8 @@ describe('a meeting digest when one of its recordings is deleted', () => {
       meetingId: meeting.id,
       version: before.version,
       status: 'ready',
+      // Nothing is queued for the recording that is left, so somebody may ask.
+      availableAction: 'generate',
     });
 
     // The next delete in the meeting — of a file the digest was never built from — asks

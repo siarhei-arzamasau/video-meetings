@@ -68,11 +68,13 @@ export {
 } from './types/meeting-file-upload';
 export type {
   MeetingDigest,
+  MeetingDigestAction,
   MeetingDigestContent,
   MeetingDigestOwner,
   MeetingDigestStatus,
 } from './types/meeting-digest';
 export {
+  MEETING_DIGEST_ACTIONS,
   MEETING_DIGEST_FAILED_MESSAGE,
   MEETING_DIGEST_REPEATED_FAILURE_MESSAGE,
   MEETING_DIGEST_STATUSES,

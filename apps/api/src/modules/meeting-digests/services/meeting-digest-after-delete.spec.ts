@@ -88,6 +88,15 @@ describe('digestAfterDelete', () => {
     expect(digestAfterDelete(digest(READY), [FIRST_RECORDING_ID], after())).toBe(CURRENT_AGAIN);
   });
 
+  // What a request made by hand relies on: asked a moment before the delete or let through
+  // a moment after it, the row ends `QUEUED` over content that is current either way.
+  it.each([
+    ['queued', QUEUED],
+    ['generating', GENERATING],
+  ])('takes no request back from a %s digest whose content is current again', (_case, status) => {
+    expect(digestAfterDelete(digest(status), [FIRST_RECORDING_ID], after())).toBe(CURRENT_AGAIN);
+  });
+
   it.each([
     ['the deleted file was not a transcribed recording', after({ recordingDeleted: false })],
     ['another recording is still not covered', after({ transcribedFileIds: BOTH })],
