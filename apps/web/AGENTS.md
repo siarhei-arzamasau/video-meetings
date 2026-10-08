@@ -409,7 +409,12 @@ of this side would get wrong:
 - **A fetch that fails shows nothing, and is asked for again whether or not there is a
   stream.** There is no error state for the digest: nobody asked for it, and the files
   section beside it already says when the API cannot be reached. What was held stays, and
-  the same hook retries every three seconds until a fetch lands. The stream is no substitute
+  the same hook retries until a fetch lands: after three seconds, then twice as long each
+  time, up to a minute (`digestRetryDelayMs`) — an API that is restarting is caught up with
+  at once, and one that stays down is not asked every three seconds by every open page.
+  **A fetch the API refused is not retried at all**: a 403 or a 404 is its answer about this
+  meeting, and `failedFetches` counts only what the next try might not get again — a request
+  that never arrived, a server error, a 408 or a 429. The stream is no substitute
   for that, which is why this half is not gated on it as the rest is: an event says a digest
   _changed_, and a digest that is simply there never does — a page whose fetch was lost
   would show none until the stream next reconnected, minutes later.

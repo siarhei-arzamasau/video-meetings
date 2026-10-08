@@ -14,8 +14,12 @@ export interface MeetingDigestFeed {
    * the very object it was, so this is the only thing that says one has returned.
    */
   settled: number;
-  /** The last fetch to come back failed: what is held may be older than what was asked for. */
-  lastFetchFailed: boolean;
+  /**
+   * How many fetches in a row have failed in a way worth asking again — what is held may then
+   * be older than what was asked for. 0 once one lands, and 0 after one the API refused: an
+   * answer that asking again would not change.
+   */
+  failedFetches: number;
   /** Fetch now. Stable between renders: the stream's effect depends on it. */
   refresh(): void;
   /** One `digest` event from the stream. Stable between renders, for the same reason. */
@@ -36,9 +40,30 @@ interface Fetch {
   meetingId: string;
   /** False once the effect that sent this fetch is cleaned up: its answer is then nobody's. */
   isActive(): boolean;
-  /** Once per fetch that comes back to a live effect: the digest, or `null` when it failed. */
-  onSettled(digest: MeetingDigest | null): void;
+  /** Once per fetch that comes back to a live effect: the digest, or how it failed. */
+  onSettled(outcome: MeetingDigest | FailedFetch): void;
   onUnauthorized(): void;
+}
+
+/** A fetch that brought no digest: one worth sending again, or one the API refused for good. */
+type FailedFetch = 'failed' | 'refused';
+
+/** The client errors that say "not now" rather than "no": a timeout, and a rate limit. */
+const PASSING_CLIENT_ERRORS: ReadonlySet<number> = new Set([408, 429]);
+
+/**
+ * Whether asking again could help. A request that never arrived and a server error may both
+ * pass; a 403 or a 404 is the API's answer about this meeting, and repeating the question
+ * every few seconds for as long as the page is open would not change it.
+ */
+function failureOf(error: unknown): FailedFetch {
+  const isRefusal =
+    error instanceof ApiError &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    !PASSING_CLIENT_ERRORS.has(error.status);
+
+  return isRefusal ? 'refused' : 'failed';
 }
 
 /** One fetch of the digest. A 401 is the gate's answer, and settles nothing here. */
@@ -66,8 +91,13 @@ async function load({
       return;
     }
 
-    onSettled(null);
+    onSettled(failureOf(error));
   }
+}
+
+/** The run of failures after this outcome: over when a digest lands or the API refuses. */
+function failedFetchesAfter(outcome: MeetingDigest | FailedFetch, failedFetches: number): number {
+  return outcome === 'failed' ? failedFetches + 1 : 0;
 }
 
 /**
@@ -77,9 +107,9 @@ async function load({
 function useDigestFetches(
   { token, meetingId, onUnauthorized }: Pick<Fetch, 'token' | 'meetingId' | 'onUnauthorized'>,
   onFetched: (digest: MeetingDigest) => void,
-): Pick<MeetingDigestFeed, 'settled' | 'lastFetchFailed' | 'refresh'> {
+): Pick<MeetingDigestFeed, 'settled' | 'failedFetches' | 'refresh'> {
   const [tick, setTick] = useState(0);
-  const [fetches, setFetches] = useState({ settled: 0, lastFetchFailed: false });
+  const [fetches, setFetches] = useState({ settled: 0, failedFetches: 0 });
 
   const refresh = useCallback((): void => setTick((count) => count + 1), []);
 
@@ -90,12 +120,15 @@ function useDigestFetches(
       token,
       meetingId,
       isActive: () => active,
-      onSettled: (fetched) => {
-        if (fetched !== null) {
-          onFetched(fetched);
+      onSettled: (outcome) => {
+        if (typeof outcome !== 'string') {
+          onFetched(outcome);
         }
 
-        setFetches(({ settled }) => ({ settled: settled + 1, lastFetchFailed: fetched === null }));
+        setFetches(({ settled, failedFetches }) => ({
+          settled: settled + 1,
+          failedFetches: failedFetchesAfter(outcome, failedFetches),
+        }));
       },
       onUnauthorized,
     });
@@ -124,9 +157,10 @@ function useDigestFetches(
  *
  * **A fetch that fails changes nothing on the page.** There is no error state: a digest is
  * not something the reader asked for, and the files section beside it already says when the
- * API cannot be reached. What was held stays, and `lastFetchFailed` is what has
+ * API cannot be reached. What was held stays, and `failedFetches` is what has
  * `useDigestFallbackPoll` ask again — beside an open stream too, since no event repeats a
- * digest that did not change. A 401 is handed to `onUnauthorized`: the gate owns that answer.
+ * digest that did not change — less often each time, and not at all once the API has refused.
+ * A 401 is handed to `onUnauthorized`: the gate owns that answer.
  */
 export function useMeetingDigest(
   token: string,

@@ -12,6 +12,19 @@ function transcribedKeyOf(list: FilesList): string | null {
   return list.state === 'ready' ? transcribedRecordingIds(list.files).join(',') : null;
 }
 
+/** The longest a fetch that keeps failing waits before it is sent again. */
+export const MAX_DIGEST_RETRY_MS = 60_000;
+
+/**
+ * How long after its `failedFetches`-th failure in a row a fetch is sent again: the files'
+ * interval, doubled each time, up to a minute. An API that is restarting is caught up with in
+ * seconds; one that stays down, or an endpoint that answers 500 to everything, is not asked
+ * every three seconds by every open page for as long as it lasts.
+ */
+export function digestRetryDelayMs(failedFetches: number): number {
+  return Math.min(POLL_INTERVAL_MS * 2 ** (failedFetches - 1), MAX_DIGEST_RETRY_MS);
+}
+
 /**
  * The digest's own reasons to be asked for again, at the files' interval. Beside an open
  * stream every change arrives as an event, and a poll would be a request every three seconds
@@ -22,7 +35,9 @@ function transcribedKeyOf(list: FilesList): string | null {
  *   ever ask again. A stream does not make up for it — an event says that a digest changed,
  *   and one that is simply there never does, so a page whose only fetch was lost would show
  *   no digest until the stream next reconnected, minutes later. It stops with the first
- *   fetch that lands.
+ *   fetch that lands, **waits longer after each one that does not** (`digestRetryDelayMs`),
+ *   and never starts for a fetch the API refused — `failedFetches` does not count a 403 or a
+ *   404, which the next try would get again.
  * - **A digest that is queued or being generated**, without a stream, until it is neither.
  *   `settled` is a dependency for the reason it is one of the files' poll: each fetch that
  *   comes back arms the next, and a failed one leaves `digest` the very object it was.
@@ -42,22 +57,23 @@ function transcribedKeyOf(list: FilesList): string | null {
  */
 export function useDigestFallbackPoll(
   streamAvailable: boolean,
-  { digest, settled, lastFetchFailed, refresh }: MeetingDigestFeed,
+  { digest, settled, failedFetches, refresh }: MeetingDigestFeed,
   list: FilesList,
 ): void {
   useEffect(() => {
-    const isOwedAnotherFetch = lastFetchFailed || (!streamAvailable && isDigestUnderWay(digest));
+    const isRetrying = failedFetches > 0;
 
-    if (!isOwedAnotherFetch) {
+    if (!isRetrying && (streamAvailable || !isDigestUnderWay(digest))) {
       return;
     }
 
-    const timer = setTimeout(refresh, POLL_INTERVAL_MS);
+    const delayMs = isRetrying ? digestRetryDelayMs(failedFetches) : POLL_INTERVAL_MS;
+    const timer = setTimeout(refresh, delayMs);
 
     return () => {
       clearTimeout(timer);
     };
-  }, [streamAvailable, digest, settled, lastFetchFailed, refresh]);
+  }, [streamAvailable, digest, settled, failedFetches, refresh]);
 
   const transcribed = transcribedKeyOf(list);
   const seen = useRef<string | null>(null);

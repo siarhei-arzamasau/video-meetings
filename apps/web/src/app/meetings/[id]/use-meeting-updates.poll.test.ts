@@ -126,6 +126,8 @@ describe("the digest's fallback poll", () => {
 
     vi.mocked(fetchMeetingDigest).mockResolvedValue(digest({ version: 2, status: 'ready' }));
 
+    // The second failure in a row waits two intervals, not one.
+    expect(await digestRequestsDuringOneInterval()).toBe(0);
     expect(await digestRequestsDuringOneInterval()).toBe(1);
     expect(page.current.digest?.status).toBe('ready');
     expect(await digestRequestsDuringOneInterval()).toBe(0);
@@ -216,6 +218,8 @@ describe('a digest fetch that failed beside an open stream', () => {
 
     vi.mocked(fetchMeetingDigest).mockResolvedValue(digest({ version: 3, status: 'ready' }));
 
+    // Two failures in a row by now, so the next try is two intervals away.
+    expect(await digestRequestsDuringOneInterval()).toBe(0);
     expect(await digestRequestsDuringOneInterval()).toBe(1);
     expect(page.current.digest).toEqual(digest({ version: 3, status: 'ready' }));
     // And that is the end of it: the stream says the rest.
