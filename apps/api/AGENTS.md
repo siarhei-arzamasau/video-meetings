@@ -608,6 +608,14 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   streams in **`beforeApplicationShutdown`**, not `onApplicationShutdown`: Nest closes the HTTP
   server between those hooks and `server.close()` waits for connections in flight, so a stream
   ended in the later hook is ended after the close it is blocking — SIGTERM would hang.
+- **A stream opened after shutdown began ends at once, and it does get opened.** The page
+  reopens its stream a second after it ends, and a kept-alive socket still carries that request
+  to the process that is closing. The shutdown signal is therefore a `ReplaySubject`: with a
+  plain `Subject` the late stream missed the one emission and ran to the TTL — five minutes of
+  a closing process kept alive, and of a page shown nothing while the process that replaced it
+  did the work, because the bus subscription had already gone. The socket itself is closed
+  behind that answer by `ConnectionDrainService` (see _Bootstrap behaviour_); this half is
+  what ends the response it is waiting for.
 
 **Transcription**
 

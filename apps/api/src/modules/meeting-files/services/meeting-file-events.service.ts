@@ -3,7 +3,7 @@ import type { MessageEvent } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventBus } from '@nestjs/cqrs';
 import type { MeetingFile } from '@repo/shared';
-import { Observable, Subject, interval, merge, timer } from 'rxjs';
+import { Observable, ReplaySubject, Subject, interval, merge, timer } from 'rxjs';
 import type { Subscription } from 'rxjs';
 import { filter, map, startWith, takeUntil } from 'rxjs/operators';
 
@@ -46,8 +46,15 @@ export const HEARTBEAT_INTERVAL_MS = 15_000;
 export class MeetingFileEventsService implements OnModuleInit, BeforeApplicationShutdown {
   private readonly logger = new Logger(MeetingFileEventsService.name);
   private readonly meetings = new Map<string, Subject<MessageEvent>>();
-  /** Emits once on shutdown; every open stream takes until it. */
-  private readonly closed = new Subject<void>();
+  /**
+   * Emits once on shutdown; every open stream takes until it. **Replayed, so a stream opened
+   * afterwards ends at once.** A client reopens its stream a second after it ended, and a
+   * kept-alive socket still carries that request to the process that is closing. With a plain
+   * `Subject` that stream missed the one emission and ran to the TTL: it kept the closing
+   * server alive for five minutes and showed its page nothing, because the bus subscription
+   * had already gone — while the process that replaced this one did the work.
+   */
+  private readonly closed = new ReplaySubject<void>(1);
   private subscription: Subscription | undefined;
 
   constructor(

@@ -206,6 +206,17 @@ describe('MeetingFileEventsService', () => {
     expect(filesOf(watcher)).toHaveLength(0);
   });
 
+  it('ends a stream opened after shutdown began at once, instead of holding it until the TTL', () => {
+    service.beforeApplicationShutdown();
+
+    // A client reopens its stream a second after it ended, and a kept-alive socket can still
+    // carry that request to the process that is closing.
+    const late = watch(MEETING_A);
+
+    expect(late.completed).toBe(true);
+    expect(subjects()).toEqual([]);
+  });
+
   /** The meeting ids the service is holding a subject for. */
   const subjects = (): string[] => [
     ...(service as unknown as { meetings: Map<string, unknown> }).meetings.keys(),
