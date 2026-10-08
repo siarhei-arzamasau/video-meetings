@@ -57,6 +57,7 @@ export {
   MEETING_FILE_TRANSCRIPTION_REPEATED_FAILURE_MESSAGE,
   MEETING_FILE_TRANSCRIPTION_STATUSES,
   MEETING_FILE_TYPE_MESSAGE,
+  isMeetingFileTranscriptionTimeLimitReason,
   meetingFileTranscriptionTimeLimitMessage,
 } from './types/meeting-file';
 export type { MeetingFileUpload } from './types/meeting-file-upload';

@@ -155,7 +155,10 @@ aliases in sync if either changes.
   the file, back through the pipeline, or only a ready recording's transcription, back to the
   queue. **Never both** — a file that failed its checks was never queued for transcription, so
   the API writes no row that is both, and the file is asked about first so the page could not
-  draw two buttons of one name even if one arrived. `useRetry` is the one set of outcomes the
+  draw two buttons of one name even if one arrived. **A transcription that outran the time
+  limit gets no Retry at all**: the API refuses it, its reason says a retry would end the same
+  way, and `retryTargetOf` asks `@repo/shared` whether the reason is that one rather than
+  reading the sentence itself. `useRetry` is the one set of outcomes the
   two share, and it needs no local state machine. **The API's answer is never put on the row:
   a 200 refetches the list, exactly as a 409 does.** The answer is the file as the retry left
   it — `uploaded`, or `ready` with its transcription `queued` — and written over the row it

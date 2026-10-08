@@ -1,4 +1,5 @@
 import type { MeetingFile } from '@repo/shared';
+import { meetingFileTranscriptionTimeLimitMessage } from '@repo/shared';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -28,6 +29,13 @@ const TRANSCRIBED: MeetingFile = {
   ...RECORDING,
   transcriptionStatus: 'transcribed',
   transcriptPath: '/meetings/m1/files/f1/transcript',
+};
+
+/** Failed on the time limit: the one failure a retry would only repeat. */
+const OUT_OF_TIME: MeetingFile = {
+  ...RECORDING,
+  transcriptionStatus: 'failed',
+  transcriptionFailureReason: meetingFileTranscriptionTimeLimitMessage(720),
 };
 
 const onUnauthorized = vi.fn();
@@ -101,17 +109,19 @@ describe('the transcription element', () => {
   });
 
   it('gives the reason of a failure to whoever reaches the chip', async () => {
-    renderRow({
-      ...RECORDING,
-      transcriptionStatus: 'failed',
-      transcriptionFailureReason: 'Transcription took longer than the 12-minute limit.',
-    });
+    renderRow(OUT_OF_TIME);
 
     await userEvent.setup().tab();
 
     expect(
-      await screen.findByText('Transcription took longer than the 12-minute limit.'),
+      await screen.findByText(/^Transcription took longer than the 12-minute limit\./),
     ).toBeDefined();
+  });
+
+  it('offers no Retry beside that failure, even to someone who may retry the others', () => {
+    renderRow(OUT_OF_TIME);
+
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
 });
 

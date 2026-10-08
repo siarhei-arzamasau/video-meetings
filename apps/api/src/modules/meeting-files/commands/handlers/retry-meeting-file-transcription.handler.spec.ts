@@ -1,6 +1,7 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { EventBus, QueryBus } from '@nestjs/cqrs';
 import { Test } from '@nestjs/testing';
+import { meetingFileTranscriptionTimeLimitMessage } from '@repo/shared';
 
 import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
 import { buildMeetingFileRecord } from '../../services/meeting-file-record.fixture';
@@ -109,6 +110,22 @@ describe('RetryMeetingFileTranscriptionHandler', () => {
 
   it('answers 404 File not found to another participant, writing nothing', async () => {
     await expect(retryAs(OTHER_ID)).rejects.toThrow(new NotFoundException('File not found'));
+
+    expect(transition).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+  });
+
+  it('answers 409 for a transcription that outran the time limit, and writes nothing', async () => {
+    // The same recording under the same limit ends the same way, with Whisper still
+    // finishing the run that was hung up on.
+    findOneOf.mockResolvedValue({
+      ...RECORD,
+      transcriptionFailureReason: meetingFileTranscriptionTimeLimitMessage(720),
+    });
+
+    await expect(retryAs(UPLOADER_ID)).rejects.toThrow(
+      new ConflictException('A transcription that outran the time limit cannot be retried'),
+    );
 
     expect(transition).not.toHaveBeenCalled();
     expect(publish).not.toHaveBeenCalled();

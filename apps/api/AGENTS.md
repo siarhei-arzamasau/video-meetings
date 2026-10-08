@@ -533,6 +533,12 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   order, and its 404s are the file retry's. **The handler does not ask whether transcription is
   switched on:** with the setting off the row is queued all the same and waits for it to come
   back, as every queued row does — the route's contract has no other answer to give.
+  **One failure it refuses, with its own 409: the time limit** (product's call, 2026-10-08,
+  narrowing the PRD's "Retry where allowed"). The same recording under the same limit ends the
+  same way, and hanging up does not stop Whisper, so each retry would start a second
+  transcription beside the one still running. The row stores copy, not a cause, so the
+  handler recognises it by `isMeetingFileTranscriptionTimeLimitReason` in `@repo/shared` —
+  the file that also builds that sentence, and the only one that may spell how it opens.
 
 **Chunked upload (phase 2)**
 

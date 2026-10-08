@@ -1,6 +1,7 @@
 import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { CommandHandler, EventBus, ICommandHandler, QueryBus } from '@nestjs/cqrs';
 import type { MeetingFile } from '@repo/shared';
+import { isMeetingFileTranscriptionTimeLimitReason } from '@repo/shared';
 
 import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
 import { TranscriptionStatus } from '../../services/meeting-file-transcription-status';
@@ -12,6 +13,8 @@ import { FILE_NOT_FOUND, requireVisibleMeeting } from '../../services/visible-me
 import { RetryMeetingFileTranscriptionCommand } from '../retry-meeting-file-transcription.command';
 
 export const TRANSCRIPTION_NOT_FAILED_MESSAGE = 'Only a failed transcription can be retried';
+export const TRANSCRIPTION_TIME_LIMIT_MESSAGE =
+  'A transcription that outran the time limit cannot be retried';
 
 const { FAILED, QUEUED } = TranscriptionStatus;
 
@@ -52,6 +55,11 @@ export class RetryMeetingFileTranscriptionHandler implements ICommandHandler<
     fileId,
   }: RetryMeetingFileTranscriptionCommand): Promise<MeetingFile> {
     const file = await this.requireManageableFile(userId, meetingId, fileId);
+
+    if (isOutOfTime(file)) {
+      throw new ConflictException(TRANSCRIPTION_TIME_LIMIT_MESSAGE);
+    }
+
     const startedAt = Date.now();
     const patch = { transcriptionAttempts: 0, transcriptionFailureReason: null };
 
@@ -103,4 +111,16 @@ export class RetryMeetingFileTranscriptionHandler implements ICommandHandler<
 
     return file;
   }
+}
+
+/**
+ * A transcription that failed because it outran the time limit: the one failure this route
+ * refuses. Retried, the same recording meets the same limit, while Whisper is still finishing
+ * the run that was hung up on. Product's call, 2026-10-08; the row offers no Retry for it.
+ */
+function isOutOfTime(file: MeetingFileRecord): boolean {
+  return (
+    file.transcriptionStatus === FAILED &&
+    isMeetingFileTranscriptionTimeLimitReason(file.transcriptionFailureReason)
+  );
 }

@@ -11,6 +11,7 @@ import {
   meetingFileContentUrl,
   meetingFileEventsUrl,
   meetingFileTranscriptUrl,
+  meetingFileTranscriptionRetryUrl,
 } from './utils/fixtures';
 import type { TranscriberReply } from './utils/fake-transcriber';
 import { FAILED, TRANSCRIBED } from './utils/meeting-file-transcription-table';
@@ -173,6 +174,13 @@ describe('a transcription that fails', () => {
 
     await expectFailedButReady(host, file, transcriptionTimeLimitMessage('1-second'));
     expect(transcriber.hangUps).toBe(1);
+
+    // The one failure a retry cannot help, so it is refused and the row stays as it was.
+    await suite
+      .post(meetingFileTranscriptionRetryUrl(meetingId, file.id), {})
+      .set('Authorization', `Bearer ${host.token}`)
+      .expect(409);
+    await expectFailedButReady(host, file, transcriptionTimeLimitMessage('1-second'));
   });
 
   it('fails one of two recordings and leaves the other untouched', async () => {

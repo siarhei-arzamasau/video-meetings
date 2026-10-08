@@ -37,7 +37,8 @@ export const TRANSCRIPTION_FAILED_MESSAGE = 'The recording could not be transcri
 export const TRANSCRIPTION_REPEATED_FAILURE_MESSAGE =
   'Transcription failed after repeated attempts.';
 export const transcriptionTimeLimitMessage = (limit: string): string =>
-  `Transcription took longer than the ${limit} limit.`;
+  `Transcription took longer than the ${limit} limit. ` +
+  'A retry would end the same way; whoever runs this deployment can raise the limit.';
 
 /** The model a deployment asks for when nothing says otherwise: Whisper `small`. */
 export const DEFAULT_MODEL = 'Systran/faster-whisper-small';

@@ -82,9 +82,15 @@ export const MEETING_FILE_TRANSCRIPTION_REPEATED_FAILURE_MESSAGE =
 
 const SECONDS_PER_MINUTE = 60;
 
+/** How the time limit's reason opens, whatever the limit was: what recognises it below. */
+const TIME_LIMIT_REASON_OPENING = 'Transcription took longer than the ';
+const TIME_LIMIT_REASON_ADVICE =
+  'A retry would end the same way; whoever runs this deployment can raise the limit.';
+
 /**
  * The reason for a transcription that outran the deployment's time limit, naming that limit:
- * `the 12-minute limit` for a whole number of minutes, `the 90-second limit` otherwise.
+ * `the 12-minute limit` for a whole number of minutes, `the 90-second limit` otherwise. It
+ * also says why the row offers no Retry — see `isMeetingFileTranscriptionTimeLimitReason`.
  */
 export function meetingFileTranscriptionTimeLimitMessage(limitSeconds: number): string {
   const limit =
@@ -92,7 +98,23 @@ export function meetingFileTranscriptionTimeLimitMessage(limitSeconds: number): 
       ? `${String(limitSeconds / SECONDS_PER_MINUTE)}-minute`
       : `${String(limitSeconds)}-second`;
 
-  return `Transcription took longer than the ${limit} limit.`;
+  return `${TIME_LIMIT_REASON_OPENING}${limit} limit. ${TIME_LIMIT_REASON_ADVICE}`;
+}
+
+/**
+ * Whether a stored failure reason is the time limit's — **the one failed transcription that is
+ * not retried.** The same recording under the same limit ends the same way, and worse than
+ * that: hanging up on Whisper does not stop it, so every retry starts a second transcription
+ * beside the one still running and slows them both. The API refuses the retry and the row
+ * offers none.
+ *
+ * Recognised by how the sentence opens, which is why the sentence and this live in one file:
+ * the row stores copy, not a cause, and nothing else may spell that opening.
+ */
+export function isMeetingFileTranscriptionTimeLimitReason(
+  reason: string | null | undefined,
+): boolean {
+  return reason?.startsWith(TIME_LIMIT_REASON_OPENING) ?? false;
 }
 
 /**

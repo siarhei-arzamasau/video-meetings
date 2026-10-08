@@ -186,7 +186,7 @@ describe('MeetingFileTranscriptionWorker: one claim, start to finish', () => {
       FILE_ID,
       TRANSCRIBING,
       FAILED,
-      { transcriptionFailureReason: 'Transcription took longer than the 1-second limit.' },
+      { transcriptionFailureReason: meetingFileTranscriptionTimeLimitMessage(1) },
       LEASE,
     );
     // And in minutes when the limit is a whole number of them, as the default is.

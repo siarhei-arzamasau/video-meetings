@@ -124,7 +124,8 @@ What it costs:
   laptop. `TRANSCRIPTION_TIMEOUT_SECONDS` (default 720) bounds one transcription: that is a
   one-hour recording at twice the measured rate, so raise it on a slower machine or for
   longer recordings. A transcription that outruns it is marked failed with a reason that
-  names the limit; the file stays ready.
+  names the limit; the file stays ready. It is the one failure with no Retry: the same
+  recording would meet the same limit, so raise the limit and upload it again.
 
 Port 8000 taken? Set `WHISPER_PORT` in the root `.env` and the same port in
 `TRANSCRIPTION_API_URL`. `docker compose --profile transcription stop whisper` stops the

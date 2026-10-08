@@ -1,10 +1,14 @@
 import type { MeetingFile } from '@repo/shared';
-import { MEETING_FILE_STATUSES, MEETING_FILE_TRANSCRIPTION_STATUSES } from '@repo/shared';
+import {
+  MEETING_FILE_STATUSES,
+  MEETING_FILE_TRANSCRIPTION_STATUSES,
+  meetingFileTranscriptionTimeLimitMessage,
+} from '@repo/shared';
 import { describe, expect, it } from 'vitest';
 
 import { retryTargetOf } from './meeting-file-retry';
 
-type Row = Pick<MeetingFile, 'status' | 'transcriptionStatus'>;
+type Row = Pick<MeetingFile, 'status' | 'transcriptionStatus' | 'transcriptionFailureReason'>;
 
 describe('retryTargetOf', () => {
   it.each<[string, Row, ReturnType<typeof retryTargetOf>]>([
@@ -15,6 +19,24 @@ describe('retryTargetOf', () => {
     [
       'a ready recording whose transcription failed',
       { status: 'ready', transcriptionStatus: 'failed' },
+      'transcription',
+    ],
+    [
+      'a recording that outran the time limit, which a retry would only do again',
+      {
+        status: 'ready',
+        transcriptionStatus: 'failed',
+        transcriptionFailureReason: meetingFileTranscriptionTimeLimitMessage(720),
+      },
+      null,
+    ],
+    [
+      'a recording whose transcription failed for any other stated reason',
+      {
+        status: 'ready',
+        transcriptionStatus: 'failed',
+        transcriptionFailureReason: 'The recording could not be transcribed.',
+      },
       'transcription',
     ],
     ['a queued recording', { status: 'ready', transcriptionStatus: 'queued' }, null],
