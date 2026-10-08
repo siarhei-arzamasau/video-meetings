@@ -1,3 +1,5 @@
+import type { Readable } from 'node:stream';
+
 import type { Logger } from '@nestjs/common';
 
 import type { MeetingFileRecord } from '../../services/meeting-file.mapper';
@@ -62,15 +64,21 @@ export async function runTranscription({
     leaseSeconds,
     onLost: () => claimLost.abort(),
   });
-  // The provider never sees a path: the object is opened by key and streamed, so a gigabyte
-  // of video costs a chunk of memory.
-  const stream = storage.openRead(claimed.storageKey);
-  // For a stream nobody is reading — the provider returned early, or the purge removed the
-  // object mid-request — whose `error` event would otherwise be unhandled and end the process.
-  stream.on('error', () => undefined);
+  let stream: Readable | undefined;
   let outcome: TranscriptionRun['outcome'];
 
+  // Everything from here to `heartbeat.stop()` is inside the `try`, the opening of the object
+  // included: a throw that escaped would leave the heartbeat renewing a claim nobody is
+  // working on, and a row that says transcribing for as long as the process lives.
   try {
+    // The provider never sees a path: the object is opened by key and streamed, so a
+    // gigabyte of video costs a chunk of memory.
+    stream = storage.openRead(claimed.storageKey);
+    // For a stream nobody is reading — the provider returned early, or the purge removed the
+    // object mid-request — whose `error` event would otherwise be unhandled and end the
+    // process.
+    stream.on('error', () => undefined);
+
     const signal = AbortSignal.any([shutdown, claimLost.signal, timeLimit]);
 
     outcome = { text: await provider.transcribe(stream, claimed.contentType, signal) };
@@ -78,7 +86,7 @@ export async function runTranscription({
     outcome = { error };
   } finally {
     // Opened here, so closed here: a provider that never touched it must not leak a descriptor.
-    stream.destroy();
+    stream?.destroy();
   }
 
   return { held: await heartbeat.stop(), outcome, timedOut: timeLimit.aborted };

@@ -113,6 +113,24 @@ describe('runTranscription', () => {
     });
   });
 
+  it('reports an object that cannot be opened as an outcome too, and stops renewing', async () => {
+    const unopenable = new Error('Not a storage key');
+    openRead.mockImplementation(() => {
+      throw unopenable;
+    });
+
+    await expect(run(3)).resolves.toEqual({
+      held: LEASE,
+      outcome: { error: unopenable },
+      timedOut: false,
+    });
+    expect(transcribe).not.toHaveBeenCalled();
+
+    // A heartbeat left running would renew a claim nobody is working on, for ever.
+    await settle(1_200);
+    expect(renewLease).not.toHaveBeenCalled();
+  });
+
   it('does not renew for a request that answers well inside the lease', async () => {
     await run();
 
