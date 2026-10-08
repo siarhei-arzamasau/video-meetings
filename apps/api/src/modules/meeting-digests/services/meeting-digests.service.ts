@@ -27,14 +27,7 @@ export class MeetingDigestsService {
     private readonly digests: MeetingDigestRepository,
   ) {}
 
-  /**
-   * The digest row first, the recordings second, and that order is deliberate: a recording
-   * deleted between the two reads is already missing from the second, so its words are
-   * withheld. The other way round, a delete in that gap would be served.
-   *
-   * The recordings are asked for only when there is content for them to decide about — which
-   * for a meeting with no digest, every meeting while the setting is off, is one query fewer.
-   */
+  /** The digest as one user is answered: the meeting has to be theirs to see. */
   async findOne(userId: string, meetingId: string): Promise<MeetingDigest> {
     const meeting = await this.queryBus.execute<FindVisibleMeetingQuery, VisibleMeeting | null>(
       new FindVisibleMeetingQuery(userId, meetingId),
@@ -44,6 +37,22 @@ export class MeetingDigestsService {
       throw new NotFoundException(MEETING_NOT_FOUND);
     }
 
+    return this.currentOf(meetingId);
+  }
+
+  /**
+   * The digest as it stands, **for a caller that has already decided who is shown it**: the
+   * route above, and the announcement of a change, which goes to streams the meeting's
+   * members hold. One method for both is what makes an event the answer `GET` would give.
+   *
+   * The digest row first, the recordings second, and that order is deliberate: a recording
+   * deleted between the two reads is already missing from the second, so its words are
+   * withheld. The other way round, a delete in that gap would be served.
+   *
+   * The recordings are asked for only when there is content for them to decide about — which
+   * for a meeting with no digest, every meeting while the setting is off, is one query fewer.
+   */
+  async currentOf(meetingId: string): Promise<MeetingDigest> {
     const record = await this.digests.findOf(meetingId);
     const hasContent = record !== null && record.summary !== null;
     const transcribed = hasContent ? await this.transcribedRecordingsOf(meetingId) : [];

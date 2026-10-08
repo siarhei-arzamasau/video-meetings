@@ -15,8 +15,16 @@ export enum DigestInterruption {
   CLAIM_LOST = 'CLAIM_LOST',
 }
 
+/** An answer every one of whose recordings was still transcribed when it arrived. */
+export interface StorableDigest {
+  generated: GeneratedMeetingDigest;
+  sourceFileIds: ReadonlyArray<string>;
+}
+
 export type DigestRunOutcome =
-  | { generated: GeneratedMeetingDigest; sourceFileIds: ReadonlyArray<string> }
+  | StorableDigest
+  /** An answer one of whose recordings was deleted while it was written: not to be stored. */
+  | { generated: GeneratedMeetingDigest; sourceDeleted: true }
   /** The meeting has no transcribed recording left: there is nothing to send. */
   | { nothingToGenerate: true }
   | { error: unknown };
@@ -34,6 +42,8 @@ export interface DigestRunOptions {
   claimed: ClaimedDigest;
   /** The meeting's transcripts in upload order, or the fact that they are past the cap. */
   readTranscripts: (meetingId: string) => Promise<MeetingTranscripts>;
+  /** The ids of the meeting's transcribed recordings, asked for once an answer is in hand. */
+  readTranscribedIds: (meetingId: string) => Promise<ReadonlyArray<string>>;
   generate: (
     transcripts: ReadonlyArray<string>,
     signal: AbortSignal,
@@ -62,6 +72,15 @@ export interface DigestRunOptions {
  *
  * The time limit bounds the request to Claude and starts with it; reading the transcripts
  * off the local disk is not what the limit is a measurement of.
+ *
+ * **An answer is reported for storing only if every recording it was built from is still
+ * transcribed**, asked once it is in hand and while the lease is still being renewed. A
+ * generation takes seconds, and a recording deleted in them must not come back as a digest;
+ * that answer is reported as `sourceDeleted`, and the caller hands the claim back. A delete
+ * that commits after this looked is the read's to withhold; nothing here can see a file
+ * being deleted, only that one has been. **So this look is not the last**: the caller takes
+ * a second once the answer is stored, because a delete that lands between the two can be
+ * followed before the write and find nothing of the answer to remove.
  */
 export async function runDigestGeneration(options: DigestRunOptions): Promise<DigestRun> {
   const { claimed, leases, logger, leaseSeconds, shutdown } = options;
@@ -91,6 +110,10 @@ export async function runDigestGeneration(options: DigestRunOptions): Promise<Di
     } finally {
       interruptedBy = interruptionOf(signal, timeLimit, shutdown);
     }
+
+    // After the signal was read, not before: a limit that runs out during this check did
+    // not end the generation, whose answer is already in hand.
+    outcome = await heldToItsRecordings(outcome, options);
   } catch (error) {
     outcome = { error };
   }
@@ -122,6 +145,50 @@ async function generateFrom(
   );
 
   return { generated, sourceFileIds: transcripts.transcripts.map(({ fileId }) => fileId) };
+}
+
+/**
+ * An answer, held to the recordings it was built from: reported for storing only if every
+ * one of them is still transcribed now that it has arrived. Anything that is not an answer
+ * passes through.
+ */
+async function heldToItsRecordings(
+  outcome: DigestRunOutcome,
+  { claimed, readTranscribedIds }: DigestRunOptions,
+): Promise<DigestRunOutcome> {
+  if (!('sourceFileIds' in outcome)) {
+    return outcome;
+  }
+
+  const { generated, sourceFileIds } = outcome;
+  const transcribed = new Set(
+    await transcribedNow(claimed.meetingId, readTranscribedIds, generated),
+  );
+
+  return sourceFileIds.every((fileId) => transcribed.has(fileId))
+    ? outcome
+    : { generated, sourceDeleted: true };
+}
+
+/**
+ * The meeting's transcribed recordings as they are once the answer has arrived. A read that
+ * fails is a failed generation and not a reason to store unchecked — and the error carries
+ * what the answer cost, which is otherwise in nothing the caller is handed.
+ */
+async function transcribedNow(
+  meetingId: string,
+  readTranscribedIds: DigestRunOptions['readTranscribedIds'],
+  { costUsd }: GeneratedMeetingDigest,
+): Promise<ReadonlyArray<string>> {
+  try {
+    return await readTranscribedIds(meetingId);
+  } catch (cause) {
+    throw new MeetingDigestError(
+      MeetingDigestFailure.SOURCES_UNCHECKED,
+      'The recordings the answer was built from could not be checked; nothing of it is kept',
+      { cause, costUsd },
+    );
+  }
 }
 
 function interruptionOf(

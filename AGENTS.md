@@ -58,19 +58,20 @@ All five of its phases are built: Whisper, the status in the API, the status and
 transcript link on the meeting page, and the retry of a failed transcription — the route, and
 Retry on the row for the uploader or the host.
 
-**The meeting digest is being built, and two of its seven phases are.** A digest is a
+**The meeting digest is being built, and three of its seven phases are.** A digest is a
 meeting's summary, action items, and decisions, written by Claude — through the Claude Agent
 SDK — from the transcripts of its recordings:
 [`docs/prd-meeting-digest-summary-action-items-decisions.md`](docs/prd-meeting-digest-summary-action-items-decisions.md),
 with every decision that PRD leaves open, the contract, and the phases in
 [`docs/plan-meeting-digest-summary-action-items-decisions.md`](docs/plan-meeting-digest-summary-action-items-decisions.md).
-Built so far: the API generates a digest when a recording is transcribed, stores it, and
-serves it at `GET /api/meetings/:id/digest`. Not yet: the digest on the files stream and its
-reaction to a deleted recording (phase 3), owners linked to participants (4), Generate and
-Retry (5), and anything on the meeting page (6–7). **It is the first feature to send meeting
-content to a third party**, which is why `MEETING_DIGEST_ENABLED` ships off; read the plan's
-decisions before changing `src/modules/meeting-digests`, and do not start a later phase from
-inside an earlier one.
+Built so far: the API generates a digest when a recording is transcribed, stores it, serves
+it at `GET /api/meetings/:id/digest`, withdraws and replaces it when a recording it was built
+from is deleted, and sends every change as a `digest` event on the files stream. Not yet:
+owners linked to participants (4), Generate and Retry (5), and anything on the meeting page
+(6–7) — the web client ignores the new event until then. **It is the first feature to send
+meeting content to a third party**, which is why `MEETING_DIGEST_ENABLED` ships off; read the
+plan's decisions before changing `src/modules/meeting-digests`, and do not start a later
+phase from inside an earlier one.
 
 ## Commands
 

@@ -92,7 +92,8 @@ describe('the meeting digest setting', () => {
 
     await expect(digests.read(host.token, meetingId)).resolves.toEqual(stored);
 
-    // A recording transcribed now asks for nothing — and the read still marks the digest.
+    // A recording transcribed now asks for nothing — and the read still marks the digest,
+    // under a version of its own: what a page is shown changed, though no generation did.
     await digests.transcribe(host.token, meetingId, SECOND);
     await expect(findMeetingDigestRow(suite.prisma(), meetingId)).resolves.toMatchObject({
       status: READY,
@@ -100,6 +101,7 @@ describe('the meeting digest setting', () => {
     });
     await expect(digests.read(host.token, meetingId)).resolves.toEqual({
       ...stored,
+      version: stored.version + 1,
       content: { ...stored.content, outOfDate: true },
     });
     expect(claude.calls).toHaveLength(1);

@@ -5,20 +5,19 @@ import { MEETING_DIGEST_REPEATED_FAILURE_MESSAGE } from '@repo/shared';
 
 import { PollingLoop } from '../../../common/processing/polling-loop';
 import { DEFAULT_MEETING_DIGEST_TIMEOUT_SECONDS } from '../../../config/meeting-digest.defaults';
-import { FindMeetingTranscriptsQuery } from '../../meeting-files/queries/find-meeting-transcripts.query';
-import type { MeetingTranscripts } from '../../meeting-files/queries/find-meeting-transcripts.query';
-import {
-  MAX_DIGEST_TRANSCRIPT_CHARACTERS,
-  MEETING_DIGEST_MODEL,
-} from '../meeting-digest.constants';
+import { MEETING_DIGEST_MODEL } from '../meeting-digest.constants';
+import { MeetingDigestAnnouncer } from '../services/meeting-digest-announcer';
 import { MeetingDigestClaimRepository } from '../services/meeting-digest-claim.repository';
+import { MeetingDigestDeleteFollower } from '../services/meeting-digest-delete-follower';
 import type { ClaimedDigest } from '../services/meeting-digest-claim.repository';
 import { MeetingDigestGenerator } from '../services/meeting-digest-generator';
 import { PendingDigestRequests } from '../services/pending-digest-requests';
 import { costOf, failureReasonOf } from './meeting-digest-failure';
-import { DigestOutcomeRecorder, spendOf } from './meeting-digest-outcome-recorder';
+import { DigestOutcomeRecorder } from './meeting-digest-outcome-recorder';
+import { transcribedIdsOf, transcriptsOf } from './meeting-digest-recordings';
 import { DigestInterruption, runDigestGeneration } from './meeting-digest-run';
-import type { DigestRun } from './meeting-digest-run';
+import type { DigestRun, StorableDigest } from './meeting-digest-run';
+import { spendOf } from './meeting-digest-spend';
 
 /** The string token the worker is also registered under, so an e2e spec can reach `drain()`. */
 export const MEETING_DIGEST_WORKER = 'MEETING_DIGEST_WORKER';
@@ -60,13 +59,17 @@ export class MeetingDigestWorker implements OnApplicationBootstrap, OnModuleDest
     private readonly queryBus: QueryBus,
     private readonly generator: MeetingDigestGenerator,
     private readonly pending: PendingDigestRequests,
+    private readonly deletes: MeetingDigestDeleteFollower,
+    announcer: MeetingDigestAnnouncer,
   ) {
     // The files worker's lease and poll: one pace for every worker a process runs, and no
     // second pair of variables that would only ever be set to the same values.
     this.leaseSeconds = config.get<number>('MEETING_FILES_LEASE_SECONDS', 60);
     this.pollMs = config.get<number>('MEETING_FILES_POLL_MS', 1000);
     this.loop = new PollingLoop(() => this.tick(), this.pollMs, this.logger);
-    this.recorder = new DigestOutcomeRecorder(claims, this.logger);
+    this.recorder = new DigestOutcomeRecorder(claims, this.logger, (meetingId) =>
+      announcer.announce(meetingId),
+    );
   }
 
   /** Polls only where the file worker does, and only while there is something to poll for. */
@@ -142,7 +145,7 @@ export class MeetingDigestWorker implements OnApplicationBootstrap, OnModuleDest
   private async handle(claimed: ClaimedDigest): Promise<void> {
     const startedAt = Date.now();
 
-    this.recorder.claimed(claimed);
+    await this.recorder.claimed(claimed);
 
     if (claimed.attempts > MAX_DIGEST_CLAIMS) {
       this.logger.error(
@@ -164,7 +167,8 @@ export class MeetingDigestWorker implements OnApplicationBootstrap, OnModuleDest
     );
     const run = await runDigestGeneration({
       claimed,
-      readTranscripts: (meetingId) => this.transcriptsOf(meetingId),
+      readTranscripts: (meetingId) => transcriptsOf(this.queryBus, meetingId),
+      readTranscribedIds: (meetingId) => transcribedIdsOf(this.queryBus, meetingId),
       generate: (transcripts, signal) => this.generator.generate(transcripts, signal),
       leases: this.claims,
       logger: this.logger,
@@ -176,16 +180,11 @@ export class MeetingDigestWorker implements OnApplicationBootstrap, OnModuleDest
     await this.record(claimed, run, limitSeconds, startedAt);
   }
 
-  private transcriptsOf(meetingId: string): Promise<MeetingTranscripts> {
-    return this.queryBus.execute<FindMeetingTranscriptsQuery, MeetingTranscripts>(
-      new FindMeetingTranscriptsQuery(meetingId, MAX_DIGEST_TRANSCRIPT_CHARACTERS),
-    );
-  }
-
   /**
    * Writes what happened. What ended the generation decides what the row is told: a lost
-   * claim nothing at all, an answer the digest, no recording left no status, shutdown a
-   * release, and anything else a failure in the sentence `failureReasonOf` picks.
+   * claim nothing at all, an answer the digest — unless a recording it was built from has
+   * gone, which hands the claim back — no recording left no status, shutdown a release, and
+   * anything else a failure in the sentence `failureReasonOf` picks.
    */
   private async record(
     claimed: ClaimedDigest,
@@ -195,10 +194,10 @@ export class MeetingDigestWorker implements OnApplicationBootstrap, OnModuleDest
   ): Promise<void> {
     if (held === null) {
       this.recorder.abandoned(claimed, spendOf(outcome), startedAt);
+    } else if ('sourceDeleted' in outcome) {
+      await this.recorder.discard(claimed, held, outcome.generated, startedAt);
     } else if ('generated' in outcome) {
-      const { generated, sourceFileIds } = outcome;
-
-      await this.recorder.complete(claimed, held, generated, sourceFileIds, startedAt);
+      await this.store(claimed, held, outcome, startedAt);
     } else if ('nothingToGenerate' in outcome) {
       await this.recorder.clear(claimed, held, startedAt);
     } else if (interruptedBy === DigestInterruption.SHUTDOWN) {
@@ -218,6 +217,24 @@ export class MeetingDigestWorker implements OnApplicationBootstrap, OnModuleDest
         { reason, model: MEETING_DIGEST_MODEL, costUsd: costOf(error) },
         startedAt,
       );
+    }
+  }
+
+  /**
+   * Stores an answer, and then looks at its recordings once more. The look
+   * `runDigestGeneration` took was before the write, and a delete that committed between
+   * the two may already have been followed — by a reaction that found nothing of this
+   * answer to remove. `MeetingDigestDeleteFollower.recheckStored` says why the second look
+   * leaves no such order.
+   */
+  private async store(
+    claimed: ClaimedDigest,
+    held: Date,
+    { generated, sourceFileIds }: StorableDigest,
+    startedAt: number,
+  ): Promise<void> {
+    if (await this.recorder.complete(claimed, held, generated, sourceFileIds, startedAt)) {
+      await this.deletes.recheckStored(claimed.meetingId, sourceFileIds);
     }
   }
 }

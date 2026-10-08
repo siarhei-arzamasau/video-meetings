@@ -4,6 +4,7 @@ import { EventsHandler, IEventHandler } from '@nestjs/cqrs';
 import type { MeetingFile } from '@repo/shared';
 
 import { MeetingFileChangedEvent } from '../../meeting-files/events/meeting-file-changed.event';
+import { MeetingDigestAnnouncer } from '../services/meeting-digest-announcer';
 import { MeetingDigestRepository } from '../services/meeting-digest.repository';
 import { PendingDigestRequests } from '../services/pending-digest-requests';
 
@@ -30,6 +31,12 @@ function isNewlyTranscribed(file: MeetingFile): boolean {
  *
  * The setting is asked for per event, not once in a constructor: off, a newly transcribed
  * recording asks for nothing, and nothing is generated for it when the setting comes back.
+ *
+ * **Off, it still tells a stored digest's readers about the recording.** Nothing is written
+ * about the digest's status, but one that exists no longer covers every recording, so what
+ * `GET` answers changed — `outOfDate` — and the version moves with it so that an open page
+ * takes the announcement over what it holds. A meeting with no stored digest has nothing
+ * that changed, and nothing is written or announced for it.
  */
 @EventsHandler(MeetingFileChangedEvent)
 export class RequestDigestWhenTranscribedHandler implements IEventHandler<MeetingFileChangedEvent> {
@@ -39,6 +46,7 @@ export class RequestDigestWhenTranscribedHandler implements IEventHandler<Meetin
     private readonly config: ConfigService,
     private readonly digests: MeetingDigestRepository,
     private readonly pending: PendingDigestRequests,
+    private readonly announcer: MeetingDigestAnnouncer,
   ) {}
 
   /**
@@ -47,23 +55,43 @@ export class RequestDigestWhenTranscribedHandler implements IEventHandler<Meetin
    * `PendingDigestRequests.settled()` waits for.
    */
   handle({ meetingId, file }: MeetingFileChangedEvent): void {
-    if (!isNewlyTranscribed(file) || !this.config.get<boolean>('MEETING_DIGEST_ENABLED', false)) {
+    if (!isNewlyTranscribed(file)) {
       return;
     }
 
-    this.pending.track(this.request(meetingId, file.id));
+    const enabled = this.config.get<boolean>('MEETING_DIGEST_ENABLED', false);
+
+    this.pending.track(this.follow(meetingId, file.id, enabled));
   }
 
-  /** Never rejects: nobody awaits it but shutdown, which only needs it to have finished. */
-  private async request(meetingId: string, fileId: string): Promise<void> {
+  /**
+   * Never rejects: nobody awaits it but shutdown, which only needs it to have finished. The
+   * announcement follows the write, and only a write: a recording that changed nothing a
+   * client is shown is announced to nobody.
+   */
+  private async follow(meetingId: string, fileId: string, enabled: boolean): Promise<void> {
     try {
-      await this.digests.request(meetingId);
-      this.logger.log(`Digest of meeting ${meetingId}: requested, file ${fileId} was transcribed`);
+      if (enabled) {
+        await this.digests.request(meetingId);
+        this.logger.log(
+          `Digest of meeting ${meetingId}: requested, file ${fileId} was transcribed`,
+        );
+      } else if (await this.digests.noteUncoveredRecording(meetingId)) {
+        this.logger.log(
+          `Digest of meeting ${meetingId}: out of date, file ${fileId} was transcribed with the digest off`,
+        );
+      } else {
+        return;
+      }
     } catch (error) {
       this.logger.error(
         `Digest of meeting ${meetingId}: the request after file ${fileId} was transcribed failed; nothing is queued`,
         error instanceof Error ? error.stack : String(error),
       );
+
+      return;
     }
+
+    await this.announcer.announce(meetingId);
   }
 }

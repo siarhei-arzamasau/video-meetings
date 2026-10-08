@@ -3,9 +3,9 @@ import type { MeetingDigest } from '@repo/shared';
 import { useApiSuite } from './utils/api-suite';
 import { useDigestSuite } from './utils/digest-suite';
 import { FakeClaudeAgent } from './utils/fake-claude-agent';
-import { EMAIL, meetingFileTranscriptionRetryUrl, meetingFileUrl } from './utils/fixtures';
+import { EMAIL, meetingFileTranscriptionRetryUrl } from './utils/fixtures';
 import { FAILED as TRANSCRIPTION_FAILED } from './utils/meeting-file-transcription-table';
-import { findMeetingDigestContentRows, findMeetingDigestRow } from './utils/meeting-digests-table';
+import { findMeetingDigestContentRows } from './utils/meeting-digests-table';
 import { findMeetingFileRow } from './utils/meeting-files-table';
 import { createMeeting, registerUser } from './utils/meeting-files-suite';
 import { UNDECODABLE_REPLY, fixture, useTranscriptionSuite } from './utils/transcription-suite';
@@ -19,8 +19,9 @@ const decisionsOf = (digest: MeetingDigest): string[] =>
   digest.content?.decisions.map(({ description }) => description) ?? [];
 
 /**
- * A digest follows the meeting's recordings: one generation at a time however they arrive,
- * out of date while one of them is not in it, and withheld once one it was built from is gone.
+ * A digest follows the meeting's recordings as they arrive: one generation at a time however
+ * many land together, and out of date while one of them is not in it. What a deleted
+ * recording does to it is `meeting-digest-deletes.e2e-spec.ts`'s.
  */
 describe('a meeting digest and the recordings it is built from', () => {
   const claude = new FakeClaudeAgent();
@@ -82,52 +83,6 @@ describe('a meeting digest and the recordings it is built from', () => {
     const replaced = await digests.read(host.token, meeting.id);
     expect(decisionsOf(replaced)).toEqual([FIRST, SECOND]);
     expect(replaced.content?.outOfDate).toBe(false);
-  });
-
-  it('stops returning a digest the moment a recording it was built from is deleted', async () => {
-    const host = await registerUser(suite, EMAIL);
-    const meeting = await createMeeting(suite, host);
-    await digests.transcribe(host.token, meeting.id, FIRST);
-    const second = await digests.transcribe(host.token, meeting.id, SECOND);
-    await digests.worker().drain();
-    expect(decisionsOf(await digests.read(host.token, meeting.id))).toEqual([FIRST, SECOND]);
-
-    await suite
-      .delete(meetingFileUrl(meeting.id, second.id))
-      .set('Authorization', `Bearer ${host.token}`)
-      .expect(204);
-
-    // Nothing has reacted to the delete: the read itself withholds what was said in it.
-    const after = await digests.read(host.token, meeting.id);
-    expect(after).not.toHaveProperty('content');
-    expect(JSON.stringify(after)).not.toContain(SECOND);
-  });
-
-  it('generates nothing, and fails nothing, when the only recording is deleted before its digest is claimed', async () => {
-    const host = await registerUser(suite, EMAIL);
-    const meeting = await createMeeting(suite, host);
-    const only = await digests.transcribe(host.token, meeting.id, FIRST);
-    await suite
-      .delete(meetingFileUrl(meeting.id, only.id))
-      .set('Authorization', `Bearer ${host.token}`)
-      .expect(204);
-
-    // The claim finds no transcript to send: nothing leaves, and the meeting has no digest.
-    await expect(digests.worker().drain()).resolves.toBe(1);
-
-    expect(claude.calls).toEqual([]);
-    await expect(findMeetingDigestRow(suite.prisma(), meeting.id)).resolves.toMatchObject({
-      status: null,
-      failure_reason: null,
-      attempts: 0,
-      leased_until: null,
-    });
-    // Requested, claimed, cleared: three writes a client was shown, and no status left.
-    await expect(digests.read(host.token, meeting.id)).resolves.toEqual({
-      meetingId: meeting.id,
-      version: 3,
-    });
-    await expect(digests.worker().drain()).resolves.toBe(0);
   });
 
   it('leaves out a recording whose transcription failed, and takes it in once its retry succeeds', async () => {

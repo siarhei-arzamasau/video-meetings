@@ -70,12 +70,46 @@ build it into the API; phases 6–7 put it on the page.
    is not among them. They therefore hold with the setting off and in whatever order events
    arrive. Reacting to a delete — removing the stored content, queueing a replacement — is
    tidying on top, and an answer that arrives after one of its sources was deleted is discarded.
+   **Four things phase 3 settled about that tidying.** It asks whether every source is still
+   transcribed rather than whether the deleted file was one, so a delete whose reaction never
+   ran is caught up with by the next. A digest that lost a recording with the setting off has
+   its status cleared, not left `ready` over nothing: nothing will be generated, and the way
+   back is Generate. **The worker looks at an answer's recordings twice: when the answer
+   arrives, and again once it is stored.** The first look alone — as this decision first had
+   it, "removed by its own reaction" — left one order uncovered, found in phase 3's review: a
+   delete that commits just after the look can be followed _before_ the answer lands, find
+   none of its sources, and change nothing; the answer is then stored with a deleted
+   recording in it and nothing queued. With the second look one of the two always sees the
+   other — a delete committed before it is found missing, and one committed after it has its
+   reaction lock the row after the answer was stored — and no transaction crosses two
+   modules' tables. **And clearing a row that is `generating` is accepted with what it
+   costs.** The call it interrupts is not hung up on at once: its worker finds the claim gone
+   at the next lease renewal, a third of the lease away. One replica runs one loop, so
+   nothing else starts meanwhile. With two, a recording transcribed in those seconds queues
+   a row the other replica may claim while the first call is still open — two calls for one
+   meeting for up to a third of the lease, the first paid for and discarded, and nothing
+   wrong stored, since every write is conditional on the lease. Leaving the cleared claim's
+   lease on the row would close that, by making every digest asked for after such a delete
+   wait out a whole lease, on one replica too; a lapsed lease already allows the same
+   overlap, and this is that case reached sooner.
 9. **The contract carries a `version`, and the digest rides the files stream.** Every write to
    the row bumps it, and a client keeps the higher of two — which orders an event against a
    fetch, and a claim against the write that queued it, without the hand-over machinery the
    files contract needs for lacking one. The digest is a second event name on
    `GET …/files/events`: a second stream would double every meeting page's long-lived
    connections against a browser's six per origin.
+   **An event is the digest read again after the write, not the write's own row** (phase 3):
+   what `GET` answers includes which recordings are transcribed now, which no writer holds.
+   So an event may describe a later write than the one that caused it, and two writes close
+   together may be announced as one digest twice — both nothing to a client that keeps the
+   higher version. **The version therefore rises with every change to what `GET` answers,
+   not only with a write to a column**: a recording transcribed with the setting off, and a
+   deleted recording the digest was not built from, each change only `outOfDate`, and each
+   moves the version. **It may also rise for nothing, and that is the side to err on**: the
+   delete of any recording that leaves a digest covering every transcribed one moves it,
+   whether or not that recording had been transcribed, because the delete's event cannot be
+   trusted to say — it carries the status the delete read, and a transcription can finish
+   between that read and the delete.
 10. **Generate and Retry are one request** — "generate now" — refused unless there is something
     to generate and nothing under way. The digest says which label applies (`availableAction`);
     who may press it is the page's to work out from the files it already holds, and the API's to
@@ -142,7 +176,7 @@ export interface MeetingDigest {
 | `generating` → `failed`                | Provider error, bad shape, time limit, too long, a fourth claim; revision unchanged     |
 | `generating` → `queued`                | Revision changed meanwhile; an answer discarded for a deleted source; shutdown release  |
 | `generating` → _(none)_                | The claim found no transcribed recording to generate from; revision unchanged (phase 2) |
-| any → _(none)_                         | The meeting's last transcribed recording deleted (phase 3)                              |
+| any → _(none)_                         | The meeting's last transcribed recording deleted; a deleted source, setting off (3)     |
 
 Routes: phase 2 adds `GET /api/meetings/:id/digest` — `200 MeetingDigest` for anyone who can
 see the meeting, `404 Meeting not found` otherwise. Phase 3 adds `event: digest` to the files
@@ -291,20 +325,69 @@ to a digest reaches open streams.
 
 **Tasks:**
 
-- [ ] Deletes: the event handler, on a deleted recording, removes content built from it and
+- [x] Deletes: the event handler, on a deleted recording, removes content built from it and
       either queues a replacement (setting on, recordings left) or clears the status; the
       worker discards an answer one of whose sources has gone, uncounted. Unit specs for both.
-- [ ] `MeetingDigestChangedEvent`, published once per committed write and never before it,
+- [x] `MeetingDigestChangedEvent`, published once per committed write and never before it,
       carrying the digest as `GET` would answer it. A recording transcribed with the setting
       off bumps the version of a stored digest too, since `outOfDate` just changed.
-- [ ] `MeetingFileEventsService` forwards that event to the meeting's streams as
+- [x] `MeetingFileEventsService` forwards that event to the meeting's streams as
       `event: digest`. Spec beside the existing stream specs.
-- [ ] E2E, red first. Deleting one of two: `GET` stops returning content at once, and the
+- [x] E2E, red first. Deleting one of two: `GET` stops returning content at once, and the
       replacement was generated from the remaining transcript only. Deleting the only one: no
       digest, no call. A delete during a generation: its answer is never stored. A second
       recording: the first digest is returned `outOfDate` until replaced. Setting off: a delete
       still withdraws, a new recording still marks. Stream: every edge arrives as `digest` with
       a version higher than the last.
+
+_As built:_
+
+- **A delete is one decision and one transaction**: `digestAfterDelete`, a pure function
+  over the row, its sources, and the recordings transcribed now, and `followDelete`, which
+  locks the row, asks it, and writes. The lock orders it against a generation's `complete`,
+  which would otherwise land between the read of the old sources and their removal.
+- **With no transcribed recording left the status is cleared whatever it was, `generating`
+  included.** The generation under way finds its claim gone at its next lease renewal, or
+  when it tries to write. The clear gives way to a request made since the handler read the
+  revision, which it reads before the recordings.
+- **Every `deleted` event is followed, not only a recording's**: the event carries the file
+  as its delete read it, and which recordings a digest was built from is this module's to
+  know. The purge repeats `deleted` and nothing tells the two apart; the only thing it
+  repeats here is the version of a digest that was not built from the recording.
+- **A deleted recording the digest was not built from moves the version too**, when it was
+  the only one the digest did not cover: `outOfDate` changed, as it does for a recording
+  transcribed with the setting off. The tasks name only the second. **Any recording counts,
+  transcribed or not** (review): the event says "transcribing" for a recording whose
+  transcription finished between the delete's read and its write, and gating on
+  "transcribed" left that flip of `outOfDate` under an unchanged version, with no event.
+  What the event cannot have wrong is whether the file had a transcription status at all.
+- **The worker takes a second look after it stores** (review; decision 8 says why), and
+  `MeetingDigestDeleteFollower` is where following a delete now lives: the revision, the
+  recordings, the write, and the announcement, in that order, for the event handler and for
+  the worker's second look alike. `DigestOutcomeRecorder.complete` answers whether the
+  answer was stored, which is what the worker owes the look for.
+- **`MeetingDigestAnnouncer` is the one publisher, and it reads the digest again** through
+  `MeetingDigestsService.currentOf` — the route's own read, without the visibility check —
+  rather than building the event from a write. Decision 9 says what that makes of ordering.
+  The worker waits for the announcement of its claim before it calls Claude, so that
+  "generating" is what the read finds.
+- **A check that cannot be made fails the digest** (`SOURCES_UNCHECKED`, the generic
+  sentence) rather than store an answer whose recordings are unknown.
+- **A claim that finds no transcribed recording still leaves the content rows**, as phase 2
+  built it: withheld by the read, and removed by the next delete in the meeting. Only the
+  delete's own reaction removes eagerly.
+- **The e2e specs were red first**: `meeting-digest-deletes` and `meeting-digest-events`
+  were written and run against phase 2's code — 12 of 15 failing, for a status that was not
+  cleared, content that was stored, and events that never came — before any of it was built.
+  The cases of a delete under a generation were then split into
+  `meeting-digest-delete-races`, which also holds the stream's edges back to the queue. Two
+  phase 2 cases moved with them: the read withholding at once, and the claim that clears,
+  now reached by seeding the state of a reaction that never ran. **Two cases were added in
+  review, each seen failing against the code without its fix or rule**: a recording deleted
+  over raw SQL, so that no reaction exists and the read alone is what withholds — the
+  delete route's reaction usually wins the race to the next `GET`, which made the moved case
+  pass with the read's rule removed — and a delete placed, with its reaction, between the
+  worker's look and its write, by wrapping `MeetingDigestClaimRepository.complete`.
 
 **Done when:** the specs are green with every earlier e2e spec; the CI commands pass; the API
 guide's stream section says the digest is a second event and why it carries a version.

@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import type { MeetingFile } from '@repo/shared';
 
 import { MeetingFileChangedEvent } from '../../meeting-files/events/meeting-file-changed.event';
+import { MeetingDigestAnnouncer } from '../services/meeting-digest-announcer';
 import { MeetingDigestRepository } from '../services/meeting-digest.repository';
 import { PendingDigestRequests } from '../services/pending-digest-requests';
 import { RequestDigestWhenTranscribedHandler } from './request-digest-when-transcribed.handler';
@@ -26,22 +27,28 @@ const TRANSCRIBED = file({ transcriptionStatus: 'transcribed', transcriptPath: '
 
 describe('RequestDigestWhenTranscribedHandler', () => {
   const request = jest.fn();
+  const noteUncoveredRecording = jest.fn();
+  const announce = jest.fn();
   let enabled: boolean;
   let pending: PendingDigestRequests;
   let handler: RequestDigestWhenTranscribedHandler;
 
-  const announce = (announced: MeetingFile): void =>
+  /** Hands the handler a file event, as the bus does: synchronously, and without waiting. */
+  const publish = (announced: MeetingFile): void =>
     handler.handle(new MeetingFileChangedEvent(MEETING_ID, announced));
 
   beforeEach(async () => {
     enabled = true;
     request.mockReset().mockResolvedValue(undefined);
+    noteUncoveredRecording.mockReset().mockResolvedValue(false);
+    announce.mockReset().mockResolvedValue(undefined);
 
     const moduleRef = await Test.createTestingModule({
       providers: [
         RequestDigestWhenTranscribedHandler,
         PendingDigestRequests,
-        { provide: MeetingDigestRepository, useValue: { request } },
+        { provide: MeetingDigestRepository, useValue: { request, noteUncoveredRecording } },
+        { provide: MeetingDigestAnnouncer, useValue: { announce } },
         {
           provide: ConfigService,
           useValue: {
@@ -57,7 +64,7 @@ describe('RequestDigestWhenTranscribedHandler', () => {
   });
 
   it("asks for the meeting's digest when one of its recordings has just been transcribed", async () => {
-    announce(TRANSCRIBED);
+    publish(TRANSCRIBED);
     await pending.settled();
 
     expect(request).toHaveBeenCalledTimes(1);
@@ -73,21 +80,64 @@ describe('RequestDigestWhenTranscribedHandler', () => {
     // A delete announces the row as it was, transcription status and all.
     ['a transcribed recording that was deleted', { ...TRANSCRIBED, status: 'deleted' as const }],
   ])('asks for nothing for %s', async (_case, announced) => {
-    announce(announced);
+    publish(announced);
     await pending.settled();
 
     expect(request).not.toHaveBeenCalled();
+    expect(noteUncoveredRecording).not.toHaveBeenCalled();
+    expect(announce).not.toHaveBeenCalled();
+  });
+
+  it('announces the digest once the request has been written, and not before', async () => {
+    const order: string[] = [];
+    request.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      order.push('written');
+    });
+    announce.mockImplementation(async () => {
+      order.push('announced');
+    });
+
+    publish(TRANSCRIBED);
+    await pending.settled();
+
+    expect(order).toEqual(['written', 'announced']);
+    expect(announce).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenCalledWith(MEETING_ID);
+  });
+
+  it('switched off, moves the version of a stored digest the recording is not in, and announces it', async () => {
+    enabled = false;
+    noteUncoveredRecording.mockResolvedValue(true);
+
+    publish(TRANSCRIBED);
+    await pending.settled();
+
+    expect(request).not.toHaveBeenCalled();
+    expect(noteUncoveredRecording).toHaveBeenCalledWith(MEETING_ID);
+    expect(announce).toHaveBeenCalledTimes(1);
+    expect(announce).toHaveBeenCalledWith(MEETING_ID);
+  });
+
+  it('switched off, announces nothing for a meeting with no stored digest: nothing changed', async () => {
+    enabled = false;
+
+    publish(TRANSCRIBED);
+    await pending.settled();
+
+    expect(noteUncoveredRecording).toHaveBeenCalledWith(MEETING_ID);
+    expect(announce).not.toHaveBeenCalled();
   });
 
   it('asks for nothing while the digest is switched off, and asks again once it is on', async () => {
     enabled = false;
-    announce(TRANSCRIBED);
+    publish(TRANSCRIBED);
     await pending.settled();
     expect(request).not.toHaveBeenCalled();
 
     // Read per event, not once at construction.
     enabled = true;
-    announce(TRANSCRIBED);
+    publish(TRANSCRIBED);
     await pending.settled();
     expect(request).toHaveBeenCalledTimes(1);
   });
@@ -100,7 +150,7 @@ describe('RequestDigestWhenTranscribedHandler', () => {
     });
 
     // Not awaited: the bus does not wait for a handler either.
-    announce(TRANSCRIBED);
+    publish(TRANSCRIBED);
     expect(written).toBe(false);
 
     await pending.settled();
@@ -111,9 +161,11 @@ describe('RequestDigestWhenTranscribedHandler', () => {
     const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     request.mockRejectedValue(new Error('connection terminated'));
 
-    expect(() => announce(TRANSCRIBED)).not.toThrow();
+    expect(() => publish(TRANSCRIBED)).not.toThrow();
     await expect(pending.settled()).resolves.toBeUndefined();
 
+    // Nothing was written, so there is nothing to announce.
+    expect(announce).not.toHaveBeenCalled();
     expect(logged).toHaveBeenCalledWith(
       expect.stringContaining(`Digest of meeting ${MEETING_ID}`),
       expect.stringContaining('connection terminated'),

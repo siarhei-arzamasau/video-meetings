@@ -145,4 +145,12 @@ describe('MeetingDigestsService', () => {
     });
     expect(dispatched()).toHaveLength(1);
   });
+
+  it('answers the digest as it stands without asking who is looking, for a caller that has decided', async () => {
+    const current = await service.currentOf(DIGEST_MEETING_ID);
+
+    // The same answer the route gives, and no visibility query: an announcement has no user.
+    expect(current).toEqual(await service.findOne(USER_ID, DIGEST_MEETING_ID));
+    expect(dispatched()[0]).toEqual(new FindTranscribedRecordingsQuery(DIGEST_MEETING_ID));
+  });
 });

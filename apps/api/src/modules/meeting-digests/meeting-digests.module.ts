@@ -4,9 +4,12 @@ import { CqrsModule } from '@nestjs/cqrs';
 import { AuthModule } from '../auth/auth.module';
 import { ClaudeAgentModule } from '../claude-agent/claude-agent.module';
 import { RequestDigestWhenTranscribedHandler } from './events/request-digest-when-transcribed.handler';
+import { WithdrawDigestWhenDeletedHandler } from './events/withdraw-digest-when-deleted.handler';
 import { MeetingDigestsController } from './meeting-digests.controller';
 import { MEETING_DIGEST_WORKER, MeetingDigestWorker } from './processing/meeting-digest-worker';
+import { MeetingDigestAnnouncer } from './services/meeting-digest-announcer';
 import { MeetingDigestClaimRepository } from './services/meeting-digest-claim.repository';
+import { MeetingDigestDeleteFollower } from './services/meeting-digest-delete-follower';
 import { MeetingDigestGenerator } from './services/meeting-digest-generator';
 import { MeetingDigestRepository } from './services/meeting-digest.repository';
 import { MeetingDigestsService } from './services/meeting-digests.service';
@@ -22,6 +25,9 @@ import { PENDING_DIGEST_REQUESTS, PendingDigestRequests } from './services/pendi
  * recordings are transcribed and what was said in them are two queries `meeting-files`
  * answers, and its trigger is that module's `MeetingFileChangedEvent`. It imports neither
  * `MeetingsModule` nor `MeetingFilesModule`, and reads neither's table.
+ *
+ * What it says back is one event, `MeetingDigestChangedEvent`, after every committed write.
+ * The files stream forwards it to the meeting's open pages; this module knows no stream.
  */
 @Module({
   // `AuthModule` is for the guard on the one route.
@@ -32,9 +38,13 @@ import { PENDING_DIGEST_REQUESTS, PendingDigestRequests } from './services/pendi
     MeetingDigestRepository,
     MeetingDigestClaimRepository,
     MeetingDigestsService,
+    MeetingDigestAnnouncer,
+    MeetingDigestDeleteFollower,
     // `@EventsHandler` registers nothing on its own, as a command handler does not: left out
-    // of this array, a transcribed recording asks for nothing and nothing says why.
+    // of this array, a transcribed recording asks for nothing, a deleted one is followed by
+    // nothing, and nothing says why.
     RequestDigestWhenTranscribedHandler,
+    WithdrawDigestWhenDeletedHandler,
     PendingDigestRequests,
     { provide: PENDING_DIGEST_REQUESTS, useExisting: PendingDigestRequests },
     MeetingDigestWorker,

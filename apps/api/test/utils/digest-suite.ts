@@ -8,7 +8,11 @@ import {
   MEETING_DIGEST_WORKER_TOKEN,
   PENDING_DIGEST_REQUESTS_TOKEN,
   meetingDigestUrl,
+  meetingFileEventsUrl,
+  meetingFileUrl,
 } from './fixtures';
+import { openSse } from './sse';
+import type { SseClient } from './sse';
 import { fixture } from './transcription-suite';
 import type { TranscriptionSuite, WorkerHandle } from './transcription-suite';
 
@@ -50,10 +54,28 @@ export function configureDigest(
   config.set('MEETING_DIGEST_TIMEOUT_SECONDS', timeLimitSeconds);
 }
 
+/** The `event:` name a digest is sent under on the files stream, restated like the copy above. */
+export const DIGEST_EVENT = 'digest';
+
+/** One meeting's stream, read for what it says about the digest. */
+export interface DigestStream {
+  /**
+   * The digest the next `digest` event carried, skipping whatever else the stream sent —
+   * and held to what every one of them owes a page that keeps the higher of two: its
+   * meeting, and a version above the last this stream was sent.
+   */
+  next(): Promise<MeetingDigest>;
+  /** Resolves when the stream sends no `digest` event for `forMs`, and rejects if it does. */
+  quiet(forMs?: number): Promise<void>;
+}
+
 export interface DigestSuite {
   claude: FakeClaudeAgent;
   worker(): WorkerHandle;
-  /** Resolves once every request a transcribed recording started has been written. */
+  /**
+   * Resolves once everything a file's event started has been written and announced: the
+   * request a transcribed recording makes, and what a deleted one does to the digest.
+   */
   requested(): Promise<void>;
   /** Changes the suite application's settings for the rest of the test. */
   configure(settings: DigestSettings): void;
@@ -63,6 +85,10 @@ export interface DigestSuite {
    * said in it — and to its request for a digest having been written, if it made one.
    */
   transcribe(token: string, meetingId: string, transcript: string): Promise<MeetingFile>;
+  /** Deletes a file, and returns once the digest has followed it. */
+  remove(token: string, meetingId: string, fileId: string): Promise<void>;
+  /** Opens the meeting's files stream, closed again after the test. */
+  watch(token: string, meetingId: string): Promise<DigestStream>;
 }
 
 /**
@@ -78,9 +104,17 @@ export function useDigestSuite(
   transcription: TranscriptionSuite,
   claude: FakeClaudeAgent,
 ): DigestSuite {
+  const open: SseClient[] = [];
+
   beforeEach(() => {
     claude.reset();
     configureDigest(suite.app());
+  });
+
+  afterEach(() => {
+    for (const client of open.splice(0)) {
+      client.close();
+    }
   });
 
   const requested = (): Promise<void> =>
@@ -108,6 +142,34 @@ export function useDigestSuite(
       await requested();
 
       return file;
+    },
+    remove: async (token, meetingId, fileId) => {
+      await suite
+        .delete(meetingFileUrl(meetingId, fileId))
+        .set('Authorization', `Bearer ${token}`)
+        .expect(204);
+      await requested();
+    },
+    watch: async (token, meetingId) => {
+      const client = await openSse(suite, meetingFileEventsUrl(meetingId), token);
+      let lastVersion = 0;
+
+      open.push(client);
+
+      return {
+        next: async () => {
+          const digest = JSON.parse((await client.nextOf(DIGEST_EVENT)).data) as MeetingDigest;
+
+          expect(digest.meetingId).toBe(meetingId);
+          expect(digest.version).toBeGreaterThan(lastVersion);
+          lastVersion = digest.version;
+
+          return digest;
+        },
+        quiet: async (forMs = 300) => {
+          await expect(client.nextOf(DIGEST_EVENT, forMs)).rejects.toThrow('No event within');
+        },
+      };
     },
   };
 }

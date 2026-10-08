@@ -9,6 +9,11 @@ export enum MeetingDigestFailure {
   TRANSCRIPTS_TOO_LONG = 'TRANSCRIPTS_TOO_LONG',
   /** Claude answered, and the answer is not a digest. Nothing of it is kept. */
   INVALID_ANSWER = 'INVALID_ANSWER',
+  /**
+   * Claude answered, and whether the recordings it read are all still there could not be
+   * established. Nothing of it is kept: an answer is stored only once that is known.
+   */
+  SOURCES_UNCHECKED = 'SOURCES_UNCHECKED',
 }
 
 export interface MeetingDigestErrorOptions extends ErrorOptions {
@@ -17,9 +22,9 @@ export interface MeetingDigestErrorOptions extends ErrorOptions {
 }
 
 /**
- * What `MeetingDigestGenerator` throws for a failure it decided itself. Everything else it
- * lets through as the `ClaudeAgentError` it was — a refused token, an unreachable API, a call
- * that was hung up on.
+ * What `MeetingDigestGenerator` throws for a failure it decided itself, and the worker for
+ * the one it decides after an answer. Everything else is let through as the
+ * `ClaudeAgentError` it was — a refused token, an unreachable API, a call that was hung up on.
  *
  * **The message is for a log, never for a user**, and it never quotes a transcript or an
  * answer: what a failed digest shows is fixed copy chosen by whoever records the failure.

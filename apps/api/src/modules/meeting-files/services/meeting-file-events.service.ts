@@ -2,16 +2,24 @@ import { BeforeApplicationShutdown, Injectable, Logger, OnModuleInit } from '@ne
 import type { MessageEvent } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventBus } from '@nestjs/cqrs';
-import type { MeetingFile } from '@repo/shared';
+import type { MeetingDigest, MeetingFile } from '@repo/shared';
 import { Observable, ReplaySubject, Subject, interval, merge, timer } from 'rxjs';
 import type { Subscription } from 'rxjs';
-import { filter, map, startWith, takeUntil } from 'rxjs/operators';
+import { map, startWith, takeUntil } from 'rxjs/operators';
 
+import { MeetingDigestChangedEvent } from '../../meeting-digests/events/meeting-digest-changed.event';
 import { MeetingFileChangedEvent } from '../events/meeting-file-changed.event';
 import { AnnouncedDeletes } from './announced-deletes';
 
 /** The `event:` name every file change is sent under. A client filters on it. */
 export const FILE_EVENT = 'file';
+
+/**
+ * The `event:` name the meeting's digest is sent under, on the same stream: a second stream
+ * would double every meeting page's long-lived connections against a browser's six per
+ * origin. A client that does not know the name ignores it, as it does a heartbeat.
+ */
+export const DIGEST_EVENT = 'digest';
 
 /**
  * The `event:` name of a heartbeat. It carries no `data:`, which makes it a no-op for a
@@ -69,25 +77,30 @@ export class MeetingFileEventsService implements OnModuleInit, BeforeApplication
    * One subscription for the whole process, not one per stream: the bus carries every
    * module's events, and a filter per open connection would re-run the same `instanceof` for
    * each of them.
+   *
+   * **Two events are forwarded, and only a file's is checked against the deletes.** The
+   * digest's is `MeetingDigestChangedEvent`, the one thing this module knows of the digest:
+   * it carries a version, so an older one that arrives late is the subscriber's to drop,
+   * and nothing here has to order it.
    */
   onModuleInit(): void {
-    this.subscription = this.events
-      .pipe(
-        filter(
-          (event): event is MeetingFileChangedEvent => event instanceof MeetingFileChangedEvent,
-        ),
-      )
-      .subscribe((event) => {
-        // Asked before the lookup, so a delete is remembered whether or not anyone is watching:
-        // the late event it guards against may find a page that opened in between.
-        if (!this.deleted.admits(event.file)) {
-          return;
-        }
+    this.subscription = this.events.subscribe((event) => {
+      if (event instanceof MeetingDigestChangedEvent) {
+        this.send(event.meetingId, digestMessage(event.digest));
+      } else if (event instanceof MeetingFileChangedEvent && this.deleted.admits(event.file)) {
+        // Asked whether or not anyone is watching, so a delete is always remembered: the
+        // late event it guards against may find a page that opened in between.
+        this.send(event.meetingId, fileMessage(event.file));
+      }
+    });
+  }
 
-        // No subject means nobody is watching this meeting. Dropping the event here is the
-        // whole reason a missed one has to be harmless: the client's next list is the repair.
-        this.meetings.get(event.meetingId)?.next(fileMessage(event.file));
-      });
+  /**
+   * No subject means nobody is watching this meeting. Dropping the event here is the whole
+   * reason a missed one has to be harmless: the client's next fetch is the repair.
+   */
+  private send(meetingId: string, message: MessageEvent): void {
+    this.meetings.get(meetingId)?.next(message);
   }
 
   /**
@@ -189,6 +202,11 @@ export class MeetingFileEventsService implements OnModuleInit, BeforeApplication
  */
 function fileMessage(file: MeetingFile): MessageEvent {
   return { type: FILE_EVENT, id: new Date().toISOString(), data: file };
+}
+
+/** The digest as `GET …/digest` answers it; `id` as for a file. Its order is its `version`. */
+function digestMessage(digest: MeetingDigest): MessageEvent {
+  return { type: DIGEST_EVENT, id: new Date().toISOString(), data: digest };
 }
 
 /**

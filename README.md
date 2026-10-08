@@ -163,7 +163,10 @@ Restart the API afterwards. A new transcript needs transcription on as well (abo
 digest is generated with no request from anyone and read with
 `GET /api/meetings/:id/digest`, by the meeting's host and participants: a `status` — `queued`,
 `generating`, then `ready` or `failed` with a `failureReason` — and, once one has been stored,
-the `content`. The meeting page does not show it yet.
+the `content`. Deleting a recording takes away the digest built from it at once, and another
+is generated from the recordings that are left; with none left the meeting has no digest.
+Every change is also sent as a `digest` event on the meeting's files stream
+(`GET /api/meetings/:id/files/events`). The meeting page does not show it yet.
 
 - **Every generation is a paid request**, typically under a cent and a few seconds; the API
   log has each one's duration, model, and cost, and no response carries them.

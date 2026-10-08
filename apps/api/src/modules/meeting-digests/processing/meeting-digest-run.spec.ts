@@ -21,6 +21,7 @@ const settle = (ms: number): Promise<void> => new Promise((resolve) => setTimeou
 describe('runDigestGeneration', () => {
   const renewLease = jest.fn();
   const readTranscripts = jest.fn();
+  const readTranscribedIds = jest.fn();
   const generate = jest.fn();
   const logger = { log: jest.fn(), warn: jest.fn(), error: jest.fn() } as unknown as Logger;
   let shutdown: AbortController;
@@ -29,6 +30,7 @@ describe('runDigestGeneration', () => {
     runDigestGeneration({
       claimed: CLAIMED,
       readTranscripts,
+      readTranscribedIds,
       generate,
       leases: { renewLease },
       logger,
@@ -42,6 +44,7 @@ describe('runDigestGeneration', () => {
     shutdown = new AbortController();
     renewLease.mockReset().mockResolvedValue(new Date(Date.now() + 30_000));
     readTranscripts.mockReset().mockResolvedValue(TRANSCRIPTS);
+    readTranscribedIds.mockReset().mockResolvedValue([FIRST_RECORDING_ID, SECOND_RECORDING_ID]);
     generate.mockReset().mockResolvedValue(GENERATED);
   });
 

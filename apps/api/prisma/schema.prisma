@@ -249,7 +249,8 @@ model MeetingDigest {
   id        String @id @default(uuid()) @db.Uuid
   meetingId String @unique @map("meeting_id") @db.Uuid
 
-  /// Null once a generation was asked for and there was nothing left to generate from: the
+  /// Null for a meeting that has a row and no digest: its last transcribed recording was
+  /// deleted, or a recording its digest was built from was while nothing is generated. The
   /// row stays, because `version` has to keep rising for the clients that saw it.
   status            MeetingDigestStatus?
   /// User-safe copy only, and only while the status is `FAILED`; the cause is logged.

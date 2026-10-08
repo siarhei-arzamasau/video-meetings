@@ -57,8 +57,8 @@ Five worked examples, in the order worth reading them:
   right is invisible in the code.
 
 - **`meeting-digests`** — read after `meeting-files`, whose worker it copies. It is also the
-  one module that reaches three others and imports none of them: two queries, one event, and
-  the visibility read. It has a section of its own below.
+  one module that reaches three others and imports none of them: two queries, one event in
+  and one out, and the visibility read. It has a section of its own below.
 
 `health` still shows the minimum a module needs when it changes no state and reaches no
 database; a module with nothing to write needs no commands.
@@ -74,10 +74,12 @@ straight from a controller and a service is not a violation of the house style �
 `MeetingsService` is the example, and routing its two lookups through a `QueryBus` for
 symmetry with `POST /meetings` would be ceremony. The test is whether the read crosses a
 boundary, not whether it sits next to a write. **Nothing else from `@nestjs/cqrs` is used**:
-no sagas, and one event — `MeetingFileChangedEvent`, on the in-process `EventBus` (see
-_Events and the SSE stream_). The files stream subscribes to the bus by hand; the digest's
-`RequestDigestWhenTranscribedHandler` is the one `@EventsHandler`, and like a command handler
-it does nothing until it is in its module's `providers`. `CqrsModule` is imported per feature module, never
+no sagas, and two events on the in-process `EventBus` — `MeetingFileChangedEvent` and
+`MeetingDigestChangedEvent` (see _Events and the SSE stream_). The files stream subscribes to
+the bus by hand, for both; the digest's two `@EventsHandler`s — one for a recording that was
+transcribed, one for a file that was deleted — both handle the files' event, and like a
+command handler neither does anything until it is in its module's `providers`. `CqrsModule`
+is imported per feature module, never
 globally, so a module's dependencies stay readable from its own `imports` array; the buses
 still behave globally at runtime, which is what lets two modules share one without depending
 on each other.
@@ -396,6 +398,12 @@ them, in upload order. Three things about them:
   string's `length` counts as one — so memory is bounded by the limit, not by a meeting of
   fifty one-gigabyte recordings.
 
+**And one event comes back.** `MeetingDigestChangedEvent(meetingId, digest)` is published by
+`meeting-digests` after every committed write, and the files stream forwards it to the
+meeting's open pages. That class — a meeting id and a `MeetingDigest`, imported for an
+`instanceof` — is everything `meeting-files` knows of the digest; neither module is in the
+other's `imports`, and neither reads the other's table.
+
 ## Meeting files (`src/modules/meeting-files`)
 
 What the code cannot say for itself. The PRD is `docs/specs/2026-09-19-meeting-file-upload-prd.md`
@@ -661,6 +669,20 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   state announced late, and dropping it is right either way. The purge's repeat of `deleted`
   still goes out. The last 1,024 deletes are remembered, which a late event, trailing its
   delete by milliseconds, cannot outrun.
+- **The digest is a second event on this stream, and it orders itself.**
+  `MeetingDigestChangedEvent` is forwarded as `event: digest` beside `event: file`: a second
+  stream would double every meeting page's long-lived connections against a browser's six per
+  origin, and who may watch a meeting's digest is who may watch its files. Its data is the
+  whole `MeetingDigest` as `GET :id/digest` answers it — read again after the write, by the
+  code that route runs, because what a digest shows depends on which recordings are
+  transcribed now and no write to its row knows that. **It carries `version`, which is why it
+  goes through neither mechanism above.** A subscriber keeps the higher of two, and that one
+  comparison settles everything the files contract needs machinery for: two writes announced
+  out of order, an event that arrives after the fetch that already saw it, and a snapshot
+  taken one write later than the write that caused it. `MeetingFileHandOvers` and
+  `AnnouncedDeletes` exist because a `MeetingFile` has nothing to compare; do not put the
+  digest through either, and do not send a digest without its version having risen for
+  whatever changed. A client that does not know the name ignores it, as a heartbeat is.
 - **Fan-out is in-process, and that fixes a single API instance.** `MeetingFileEventsService`
   subscribes once per process and keeps a `Subject` per watched meeting; `GET :id/files/events`
   is a `@Sse` route merging that with a heartbeat, ended by `MEETING_FILES_STREAM_TTL_SECONDS`.
@@ -906,11 +928,11 @@ A meeting's summary, action items, and decisions, generated from the transcripts
 recordings, stored, and served at `GET /api/meetings/:id/digest`. The contract is
 [the PRD](../../docs/prd-meeting-digest-summary-action-items-decisions.md); every decision
 under it, and the phases, are in
-[its plan](../../docs/plan-meeting-digest-summary-action-items-decisions.md). **Phases 1 and 2
-of 7 are built**: a recording that reaches Transcribed gives its meeting a digest, and anyone
-who can see the meeting can read it. Not yet: an event on the files stream and a reaction to
-a deleted recording (phase 3), an owner linked to a participant (4), and a request to
-generate or retry (5). What a reader of the code would get wrong:
+[its plan](../../docs/plan-meeting-digest-summary-action-items-decisions.md). **Phases 1 to 3
+of 7 are built**: a recording that reaches Transcribed gives its meeting a digest, anyone who
+can see the meeting can read it, a deleted recording takes away what was built from it, and
+every change is sent to the meeting's open streams. Not yet: an owner linked to a participant
+(4), and a request to generate or retry (5). What a reader of the code would get wrong:
 
 **What leaves, and when**
 
@@ -950,8 +972,12 @@ generate or retry (5). What a reader of the code would get wrong:
 - **Content is stored even when the row goes back to `QUEUED`.** An answer that arrives after
   another request is still a whole digest of the recordings it names as its sources. The
   read marks it out of date until its replacement lands.
-- **`version` rises with every write a client is shown, and a lease renewal is not one.** It
-  is what will order an event against a fetch (phase 3); nothing reads it yet.
+- **`version` rises with every change to what `GET` answers, and a lease renewal is not one.**
+  It is what orders an event against an event or a fetch: a client keeps the higher of two.
+  **Two writes exist only to move it** — a recording transcribed with the setting off, and a
+  deleted recording the digest was not built from. Neither changes a column; both change
+  `outOfDate`, which the read derives. An answer that changed under an unchanged version is
+  one a page holding the old answer has no reason to take.
 - **The raw statements set `id` and `updated_at` themselves.** `@default(uuid())` and
   `@updatedAt` are the Prisma client's, and the request and the claim do not go through it —
   hence `gen_random_uuid()`, `now()`, and a database default on `updated_at`.
@@ -978,20 +1004,106 @@ generate or retry (5). What a reader of the code would get wrong:
   include's statements to a transaction's one connection together, which `pg` deprecates.
 - **A meeting with no digest is a 200 with `version: 0`**, not a 404 — the 404 is "you cannot
   see this meeting", and one shape is all a client has to read.
+- **`MeetingDigestsService.currentOf` is the read without the question of who is asking**,
+  and `findOne` is the visibility check in front of it. An announcement has no user: it goes
+  to streams whose guard has already decided. One method for both is what makes an event the
+  answer `GET` would give — phase 4's owner names and phase 5's `availableAction` reach the
+  stream by being added there, and nowhere else.
+
+**Deleted recordings**
+
+- **`WithdrawDigestWhenDeletedHandler` is tidying on top of the read, not what the rule
+  rests on.** `GET` withholds a digest from the moment the delete commits. What the handler
+  adds is that the words leave the tables, that a replacement is generated with nobody
+  asking, and that open pages are told. So a reaction that fails is logged and not retried,
+  and it runs with the setting off: the setting only decides about the replacement.
+- **What a delete does is one decision, `digestAfterDelete`, and one transaction.** Content
+  one of whose recordings is gone is removed — whichever file the event named, so a delete
+  whose reaction never ran is caught up with by the next. Then a replacement is asked for,
+  when the setting is on and a transcribed recording is left, or the status is cleared. With
+  no transcribed recording left there is no digest whatever the row said, `GENERATING`
+  included: that generation finds its claim gone, and its answer is not written.
+- **Clearing a `GENERATING` row does not hang up on its call at once, and that is accepted.**
+  The worker finds the claim gone at its next lease renewal, a third of the lease away. One
+  replica runs one loop, so nothing starts meanwhile; with two, a recording transcribed in
+  those seconds queues a row the other may claim while the first call is still open — one
+  call paid for and discarded, nothing wrong stored. It is the lapsed-lease overlap reached
+  sooner; the plan's decision 8 has what closing it would cost every other digest.
+- **Following a delete is `MeetingDigestDeleteFollower`'s, for both of its callers** — the
+  event handler, and the worker's second look below. The order of its steps is its
+  correctness, which is why there is one copy of them.
+- **The revision is read before the recordings, and a clear gives way to a request made
+  since.** A recording transcribed after the recordings were read is not among them, and its
+  request moved the revision; clearing regardless would leave a meeting with a recording and
+  nothing queued. **The row is locked before its sources are read**, which orders the
+  transaction against a generation's `complete` — without the lock it could remove the old
+  content's rows and blank the summary of the new content that landed between.
+- **Every `deleted` is listened to, a PDF's and the purge's repeat included**, because which
+  recordings a digest was built from is this module's to know: the event carries the file as
+  its delete read it. A meeting with no digest row costs one indexed read. The purge is
+  indistinguishable from the delete, and the one thing it repeats is the version of a digest
+  that was not built from the recording — an event carrying what the page already holds.
+- **The one thing read from the event is whether the file had a transcription status at
+  all — never which.** A status is given by the write that makes a file `ready` and the
+  delete is conditional on the status it read, so "had one" cannot be stale; "transcribing"
+  can, for a recording transcribed between the delete's read and its write. Any recording's
+  delete is therefore followed as one that may have taken the out-of-date mark with it, and
+  a version sometimes moves for nothing. Gate it on `transcribed` and that flip of
+  `outOfDate` goes out under the version a page already holds.
+- **The worker discards an answer one of whose recordings was deleted while Claude wrote
+  it.** `runDigestGeneration` asks which recordings are transcribed once the answer is in
+  hand, and reports `sourceDeleted` instead of sources; `DigestOutcomeRecorder.discard`
+  hands the claim back as a shutdown does, queued and uncounted, and logs what the answer
+  cost. A check that cannot be made fails the digest (`SOURCES_UNCHECKED`, the generic
+  sentence) rather than store unchecked.
+- **And it looks again once the answer is stored, which is not a repeat of the first look.**
+  The first cannot see a delete in progress, and one that commits just after it can be
+  followed _before_ the answer lands: that reaction finds none of the answer's sources and
+  changes nothing, and the answer is then stored naming a deleted recording, with nothing
+  queued. `MeetingDigestDeleteFollower.recheckStored` reads the recordings after `complete`
+  committed and follows the delete itself if one is gone. One of the two always sees the
+  other: a delete committed before that read is missing from it, and one committed after it
+  has its own reaction lock the row after the answer was stored. Drop either look and an
+  order is uncovered — the first also keeps a deleted recording's words from being written
+  at all in every order but that one.
+- **One gap is left on purpose.** A claim that finds no transcribed recording clears the
+  status and leaves the content rows, as phase 2 built it; they are withheld, and removed by
+  the next delete in the meeting. It is reached only when a delete's reaction never ran.
+
+**Announcements**
+
+- **`MeetingDigestAnnouncer` is the one publisher of `MeetingDigestChangedEvent`**, called
+  by whoever has just committed a write: the request handler, the delete follower, and the
+  worker's recorder on the branch where its conditional write landed. A write that lost its claim changed nothing and
+  announces nothing. A new write to the row owes a call to it — and, if it changes what `GET`
+  answers without changing a status, a version to announce it under.
+- **It reads the digest again instead of being handed one**, so an event is a snapshot at
+  least as new as the write it follows, and sometimes newer: two writes close together can be
+  announced as the same digest twice. That is harmless to a client that keeps the higher
+  version, and is why nothing here tries to pair an event with "its" write.
+- **The worker waits for the announcement of its claim before it asks Claude.** Started and
+  left behind, that read would as often find the answer a quick generation had already
+  stored, and no page would ever be told "generating". It costs a few reads per generation.
+- **It never rejects.** The write is committed; a read that fails costs the open pages one
+  event, repaired by the fetch they make when their stream next opens, and must not fail a
+  generation or undo a request.
 
 **The trigger and the worker**
 
 - **The trigger is the file event, not the transcription's transaction.**
   `RequestDigestWhenTranscribedHandler` asks for a digest when a file is announced `ready` and
-  `transcribed` — the one event a file in that state is ever announced with. The request is a
+  `transcribed` — the one event a file in that state is ever announced with. With the setting
+  off it asks for nothing, and moves the version of a stored digest instead, which that
+  recording has just made out of date. The request is a
   second write, after the first committed, so a process killed between them leaves a
   transcribed recording with nothing queued: exactly the state of one transcribed with the
   setting off. A request that fails is logged and not retried, for the same reason. Closing
   the window would mean `meeting-files` writing this module's table.
 - **`PendingDigestRequests` exists because the bus does not wait for a handler.** It holds
-  the requests in flight, for shutdown — which must not close the connection under one — and
-  for `drain()`, which waits for them before it looks for work. The handler registers its
-  request before its first `await`, and that has to stay so: the bus calls it inside
+  what the two handlers have started — a request, a delete being followed, and the
+  announcement after each — for shutdown, which must not close the connection under one, and
+  for `drain()`, which waits for them before it looks for work. A handler registers its
+  work before its first `await`, and that has to stay so: the bus calls it inside
   `publish`, which is what makes "the transcription worker has drained" imply "the request is
   one `settled()` waits for".
 - **The worker is the transcription worker's shape, on this module's row**: a polling loop of
@@ -1257,7 +1369,11 @@ Nine things about that setup are easy to get wrong:
   assert "the digest covers all three" without a model's wording. `useDigestSuite` resets it
   and switches the setting on before each test; its `transcribe` takes a recording all the
   way to Transcribed through the fake Whisper, and returns once the request that made has
-  been written. Every other spec file runs with the digest off.
+  been written — as `remove` deletes a file and returns once the digest has followed it,
+  both by waiting on `PendingDigestRequests`. `watch` opens the meeting's files stream and
+  hands over its `digest` events one at a time, each held to a version above the last — so
+  every spec that reads the stream is also a spec of the rule a page relies on. Every other
+  spec file runs with the digest off.
 - **An environment the contract refuses does not throw when `AppModule` is imported.**
   `ConfigModule.forRoot` is `async`, so the refusal is a rejected promise inside the module's
   `imports` that nothing awaits until Nest compiles it — and an `expect(import(…))` passes
@@ -1275,7 +1391,7 @@ Update it in the same commit as the change;
 one owns what is specific to `@repo/api`. The sections above each name what would invalidate
 them — a global added to `configure-app.ts`, a Prisma upgrade that moves the constraint `meta`
 shape, a fourth message on the auth/user boundary, a new exemplar module replacing one of the
-five, a second event or the first saga, a later phase of the meeting digest, a change to the
+five, a third event or the first saga, a later phase of the meeting digest, a change to the
 `apps/api/**` lint overrides. Adding a feature
 module that follows the existing shape needs no update: document the shape, not each module
 that uses it.

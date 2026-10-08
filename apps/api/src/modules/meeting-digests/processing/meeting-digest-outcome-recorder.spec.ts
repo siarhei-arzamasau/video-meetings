@@ -6,7 +6,8 @@ import { NO_DIGEST_STATUS } from '../services/meeting-digest-claim-writes';
 import type { MeetingDigestClaimRepository } from '../services/meeting-digest-claim.repository';
 import { FIRST_RECORDING_ID } from '../services/meeting-digest-record.fixture';
 import { DigestStatus } from '../services/meeting-digest-status';
-import { DigestOutcomeRecorder, spendOf } from './meeting-digest-outcome-recorder';
+import { DigestOutcomeRecorder } from './meeting-digest-outcome-recorder';
+import { spendOf } from './meeting-digest-spend';
 import { CLAIMED, GENERATED, HELD, LEASE } from './meeting-digest-worker.fixture';
 
 const { QUEUED, READY, FAILED } = DigestStatus;
@@ -28,6 +29,7 @@ describe('DigestOutcomeRecorder', () => {
   const recorder = new DigestOutcomeRecorder(
     { complete, fail, release, clear } as unknown as MeetingDigestClaimRepository,
     { log, warn, error } as unknown as Logger,
+    async () => undefined,
   );
   const startedAt = Date.now() - 3_200;
 
@@ -223,8 +225,8 @@ describe('DigestOutcomeRecorder', () => {
     });
   });
 
-  it('logs a claim with the status it was taken from and how many times it has been taken', () => {
-    recorder.claimed(CLAIMED);
+  it('logs a claim with the status it was taken from and how many times it has been taken', async () => {
+    await recorder.claimed(CLAIMED);
 
     expect(log).toHaveBeenCalledWith(expect.stringContaining('QUEUED -> GENERATING, claim 1'));
   });

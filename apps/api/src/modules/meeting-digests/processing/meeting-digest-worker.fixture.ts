@@ -5,8 +5,12 @@ import { Test } from '@nestjs/testing';
 import { ClaudeAgentFailure } from '../../claude-agent/claude-agent.constants';
 import { ClaudeAgentError } from '../../claude-agent/claude-agent.error';
 import type { MeetingTranscripts } from '../../meeting-files/queries/find-meeting-transcripts.query';
+import { FindTranscribedRecordingsQuery } from '../../meeting-files/queries/find-transcribed-recordings.query';
+import type { TranscribedRecording } from '../../meeting-files/queries/find-transcribed-recordings.query';
+import { MeetingDigestAnnouncer } from '../services/meeting-digest-announcer';
 import { NO_DIGEST_STATUS } from '../services/meeting-digest-claim-writes';
 import { MeetingDigestClaimRepository } from '../services/meeting-digest-claim.repository';
+import { MeetingDigestDeleteFollower } from '../services/meeting-digest-delete-follower';
 import type { ClaimedDigest } from '../services/meeting-digest-claim.repository';
 import { MeetingDigestGenerator } from '../services/meeting-digest-generator';
 import type { GeneratedMeetingDigest } from '../services/meeting-digest-generator';
@@ -42,6 +46,12 @@ export const TRANSCRIPTS: MeetingTranscripts = {
     { fileId: SECOND_RECORDING_ID, text: 'Grace sends the release notes.' },
   ],
 };
+
+/** The meeting's transcribed recordings: the two `TRANSCRIPTS` were read from, still there. */
+export const TRANSCRIBED: TranscribedRecording[] = TRANSCRIPTS.transcripts.map(({ fileId }) => ({
+  id: fileId,
+  uploaderId: '11111111-1111-4111-8111-111111111111',
+}));
 
 export const GENERATED: GeneratedMeetingDigest = {
   answer: {
@@ -85,9 +95,18 @@ export interface DigestWorkerDoubles {
   fail: jest.Mock;
   release: jest.Mock;
   clear: jest.Mock;
-  /** The query bus: the one query the worker dispatches is for the meeting's transcripts. */
+  /**
+   * The query bus. The worker dispatches two queries: the meeting's transcripts, which is
+   * what a spec scripts with `mockResolvedValue`, and its transcribed recordings once an
+   * answer is in hand, which `transcribed` answers whatever `execute` is scripted with.
+   */
   execute: jest.Mock;
+  transcribed: jest.Mock;
   generate: jest.Mock;
+  /** `MeetingDigestAnnouncer.announce`: called with the meeting after every write that landed. */
+  announce: jest.Mock;
+  /** `MeetingDigestDeleteFollower.recheckStored`: the second look, after an answer is stored. */
+  recheckStored: jest.Mock;
 }
 
 export function digestWorkerDoubles(): DigestWorkerDoubles {
@@ -99,7 +118,10 @@ export function digestWorkerDoubles(): DigestWorkerDoubles {
     release: jest.fn(),
     clear: jest.fn(),
     execute: jest.fn(),
+    transcribed: jest.fn(),
     generate: jest.fn(),
+    announce: jest.fn(),
+    recheckStored: jest.fn(),
   };
 }
 
@@ -112,7 +134,10 @@ export function resetDigestWorkerDoubles(doubles: DigestWorkerDoubles): void {
   doubles.release.mockReset().mockResolvedValue(true);
   doubles.clear.mockReset().mockResolvedValue(NO_DIGEST_STATUS);
   doubles.execute.mockReset().mockResolvedValue(TRANSCRIPTS);
+  doubles.transcribed.mockReset().mockResolvedValue(TRANSCRIBED);
   doubles.generate.mockReset().mockResolvedValue(GENERATED);
+  doubles.announce.mockReset().mockResolvedValue(undefined);
+  doubles.recheckStored.mockReset().mockResolvedValue(undefined);
 }
 
 const DEFAULTS: Record<string, unknown> = {
@@ -132,7 +157,10 @@ export async function buildDigestWorker(
   doubles: DigestWorkerDoubles,
   values: Record<string, unknown> = {},
 ): Promise<BuiltDigestWorker> {
-  const { execute, generate, ...claims } = doubles;
+  const { execute, transcribed, generate, announce, recheckStored, ...claims } = doubles;
+  // By class, so that scripting the transcripts never scripts the second query with them.
+  const dispatch = (query: unknown): unknown =>
+    query instanceof FindTranscribedRecordingsQuery ? transcribed(query) : execute(query);
   const moduleRef = await Test.createTestingModule({
     providers: [
       MeetingDigestWorker,
@@ -145,8 +173,10 @@ export async function buildDigestWorker(
         },
       },
       { provide: MeetingDigestClaimRepository, useValue: claims },
-      { provide: QueryBus, useValue: { execute } },
+      { provide: QueryBus, useValue: { execute: dispatch } },
       { provide: MeetingDigestGenerator, useValue: { generate } },
+      { provide: MeetingDigestAnnouncer, useValue: { announce } },
+      { provide: MeetingDigestDeleteFollower, useValue: { recheckStored } },
     ],
   }).compile();
 
