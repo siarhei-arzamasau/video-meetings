@@ -606,6 +606,19 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   `UploadMeetingFileCommand`. The event carries the whole `MeetingFile`, not a diff: the contract
   has no version field, so a subscriber replaces the row by id and a missed event is repaired by
   the next full list.
+  **Two publishers can announce one row out of commit order, and nothing here prevents it.**
+  The write that hands a row to a worker and that worker's claim are announced by different
+  actors, each when its own write returns, and Node does not always resume them in the order
+  PostgreSQL committed them. Measured on 2026-10-08 with the real repositories against the
+  Compose Postgres: with the claim issued continuously against the write that queues a
+  recording, the claim resumed first in 16 of 1,800 runs. At one poll a second that is rare,
+  and what it costs is a page reading "Queued for transcription" under a running transcription
+  until the next full list — the stream's TTL reopen at the latest — or until the
+  transcription ends. A retry and its claim, and an upload and the file worker's claim, are
+  the same shape. Closing it takes a row version in the contract for a subscriber to compare,
+  or one in-process step around each hand-over's write and announcement that the claim's
+  announcement waits for. Neither is built, so do not read "never before it commits" as an
+  ordering guarantee between publishers.
 - **Fan-out is in-process, and that fixes a single API instance.** `MeetingFileEventsService`
   subscribes once per process and keeps a `Subject` per watched meeting; `GET :id/files/events`
   is a `@Sse` route merging that with a heartbeat, ended by `MEETING_FILES_STREAM_TTL_SECONDS`.
