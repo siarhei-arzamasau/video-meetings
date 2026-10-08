@@ -27,9 +27,14 @@ export interface Transcript {
  * the text when it arrives.** A tab opened after the `await` is a popup as far as a browser is
  * concerned, and several block it without saying so.
  *
- * The object URLs live as long as the row and are revoked when it goes. Revoked as soon as
- * the tab had one — what the download does — the tab could not be reloaded; and a row that is
- * gone is a recording that was deleted, whose transcript should stop opening.
+ * **A row fetches its transcript once.** A stored transcript never changes — nothing sends a
+ * transcribed recording back to the queue — so the first answer's object URL serves every
+ * later press, each in a tab of its own. Asked again every time, a row held one more copy of
+ * the text per press for as long as the page stayed open.
+ *
+ * That URL lives as long as the row and is revoked when it goes. Revoked as soon as the tab
+ * had it — what the download does — the tab could not be reloaded; and a row that is gone is
+ * a recording that was deleted, whose transcript should stop opening.
  *
  * A 401 goes to `onUnauthorized`, like every other request the row makes.
  */
@@ -40,16 +45,21 @@ export function useTranscript(
 ): Transcript {
   const [error, setError] = useState<string | null>(null);
   const [isOpening, setIsOpening] = useState(false);
-  const objectUrls = useRef<string[]>([]);
+  /** The row's one object URL, made by the first press that was answered. */
+  const fetched = useRef<{ url: string | null }>({ url: null });
   const isMounted = useRef(false);
 
   useEffect(() => {
-    const opened = objectUrls.current;
+    const held = fetched.current;
     isMounted.current = true;
 
     return () => {
       isMounted.current = false;
-      opened.splice(0).forEach((url) => URL.revokeObjectURL(url));
+
+      if (held.url !== null) {
+        URL.revokeObjectURL(held.url);
+        held.url = null;
+      }
     };
   }, []);
 
@@ -64,10 +74,9 @@ export function useTranscript(
         return;
       }
 
-      const url = URL.createObjectURL(transcript);
-
-      objectUrls.current.push(url);
-      tab.location.replace(url);
+      // `??=`: two presses that were both still waiting share whichever answer came first.
+      fetched.current.url ??= URL.createObjectURL(transcript);
+      tab.location.replace(fetched.current.url);
     } catch (failure) {
       // An empty tab left open would read as a transcript that is blank.
       tab.close();
@@ -97,6 +106,13 @@ export function useTranscript(
     // this page is cut here instead: what the tab shows has no business reaching it.
     tab.opener = null;
     setError(null);
+
+    if (fetched.current.url !== null) {
+      tab.location.replace(fetched.current.url);
+
+      return;
+    }
+
     setIsOpening(true);
     void show(tab);
   }

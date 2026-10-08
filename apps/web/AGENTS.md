@@ -189,7 +189,9 @@ aliases in sync if either changes.
     text is another service's output; the type it is shown under is this app's.
   - **The object URL is revoked when the row unmounts, not on the next tick** as the
     download's is. A tab cannot be reloaded from a revoked URL, and a row that has gone is a
-    recording that was deleted.
+    recording that was deleted. **A row makes one and reuses it**: a stored transcript never
+    changes, so a later press points its tab at the first answer rather than fetching the
+    text again and holding a second copy of it.
   - **`tab.opener` is set to `null`**, because `noopener` would return no window to point at
     the text.
 - **A file over 100 MB is uploaded in chunks, and the row is the only part that looks

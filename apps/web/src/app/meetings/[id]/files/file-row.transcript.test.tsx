@@ -117,6 +117,28 @@ describe('opening a transcript', () => {
     expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:transcript-1');
   });
 
+  it('asks once: a later press points its own tab at the text the first one fetched', async () => {
+    const { unmount } = renderRow(TRANSCRIBED);
+    const user = userEvent.setup();
+
+    await user.click(openTranscript());
+    await waitFor(() => {
+      expect(tab.location.replace).toHaveBeenCalledTimes(1);
+    });
+    await user.click(openTranscript());
+
+    // A stored transcript never changes, so a second copy of it would only be held memory.
+    expect(openTab).toHaveBeenCalledTimes(2);
+    expect(tab.location.replace).toHaveBeenCalledTimes(2);
+    expect(tab.location.replace).toHaveBeenLastCalledWith('blob:transcript-1');
+    expect(fetchTranscript).toHaveBeenCalledTimes(1);
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+
+    unmount();
+
+    expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:transcript-1');
+  });
+
   it('closes the tab when the row goes before the text arrives', async () => {
     const arrival: { resolve?: (transcript: Blob) => void } = {};
     vi.mocked(fetchTranscript).mockReturnValue(
