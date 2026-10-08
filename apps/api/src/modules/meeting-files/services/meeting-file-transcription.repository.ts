@@ -109,11 +109,11 @@ export class MeetingFileTranscriptionRepository {
    *
    * Raw so the new lease is the database's `now()` and comes back in the same statement.
    */
-  async renewLease(id: string, lease: Date | null, leaseSeconds: number): Promise<Date | null> {
+  async renewLease(fileId: string, lease: Date | null, leaseSeconds: number): Promise<Date | null> {
     const rows = await this.prisma.$queryRaw<Array<{ leasedUntil: Date }>>`
       UPDATE "meeting_files"
       SET transcription_leased_until = now() + make_interval(secs => ${leaseSeconds})
-      WHERE id = ${id}::uuid
+      WHERE id = ${fileId}::uuid
         AND status = 'ready'
         AND transcription_status = 'TRANSCRIBING'
         AND transcription_leased_until IS NOT DISTINCT FROM ${lease}::timestamptz
@@ -133,7 +133,7 @@ export class MeetingFileTranscriptionRepository {
    * The lease comes off on every edge, since none of them ends in `TRANSCRIBING`.
    */
   async transition(
-    id: string,
+    fileId: string,
     from: TranscriptionStatus,
     to: TranscriptionStatus,
     patch: TranscriptionPatch,
@@ -143,7 +143,7 @@ export class MeetingFileTranscriptionRepository {
       throw new Error('Handing a transcription claim back is `release`, which uncounts it');
     }
 
-    return this.write(id, from, to, patch, lease);
+    return this.write(fileId, from, to, patch, lease);
   }
 
   /**
@@ -152,9 +152,9 @@ export class MeetingFileTranscriptionRepository {
    * is expected to land on a transcription that runs for minutes, and must never be what
    * uses up a recording's three claims. A crash decrements nothing, so those still count.
    */
-  release(id: string, lease: Date | null): Promise<boolean> {
+  release(fileId: string, lease: Date | null): Promise<boolean> {
     return this.write(
-      id,
+      fileId,
       TranscriptionStatus.TRANSCRIBING,
       TranscriptionStatus.QUEUED,
       { transcriptionAttempts: { decrement: 1 } },
@@ -174,7 +174,7 @@ export class MeetingFileTranscriptionRepository {
   }
 
   private async write(
-    id: string,
+    fileId: string,
     from: TranscriptionStatus,
     to: TranscriptionStatus,
     patch: TranscriptionWrite,
@@ -183,7 +183,12 @@ export class MeetingFileTranscriptionRepository {
     assertTranscriptionTransition(from, to);
 
     const { count } = await this.prisma.meetingFile.updateMany({
-      where: { id, status: 'ready', transcriptionStatus: from, transcriptionLeasedUntil: lease },
+      where: {
+        id: fileId,
+        status: 'ready',
+        transcriptionStatus: from,
+        transcriptionLeasedUntil: lease,
+      },
       data: { transcriptionStatus: to, transcriptionLeasedUntil: null, ...patch },
     });
 
