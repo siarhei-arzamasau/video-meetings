@@ -25,5 +25,5 @@ export {
   retryMeetingFileTranscription,
   uploadMeetingFile,
 } from './meeting-files';
-export { fetchMeetingDigest } from './meeting-digests';
+export { fetchMeetingDigest, requestMeetingDigest } from './meeting-digests';
 export { abortUpload, completeUpload, createUpload, getUpload, putChunk } from './uploads';

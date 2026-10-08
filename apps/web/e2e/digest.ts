@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { Locator, Page } from '@playwright/test';
+import type { Locator, Page, Response } from '@playwright/test';
 import { expect } from '@playwright/test';
 
 import { API_URL } from './fixtures';
@@ -42,15 +42,27 @@ async function control(method: 'PUT' | 'DELETE', path: string): Promise<void> {
  * What a digest holds is decided by the recording's transcript (`digestTranscript`), which a
  * spec sets through the fake transcriber. The one thing that cannot be written down ahead of
  * time is *when* — so a transcript names a key, and a generation whose transcripts name a key
- * the spec is holding waits until that key is released. A key nobody holds delays nothing.
+ * the spec is holding waits (`holdKey`) or fails (`failsWhile`) until that key is released.
+ * A key nobody holds delays and fails nothing.
  */
 export const claude = {
   /** A new key, unlike any other test's. */
   key: (): string => `e2e-hold-${randomUUID()}`,
   hold: (key: string): Promise<void> => control('PUT', `/control/holds/${key}`),
   release: (key: string): Promise<void> => control('DELETE', `/control/holds/${key}`),
-  /** Releases every key, so no test inherits a generation nobody will ever answer. */
-  reset: (): Promise<void> => control('DELETE', '/control/holds'),
+  /**
+   * `MEETING_DIGEST_ENABLED` in the API the suite started, which boots with it on. Off, a
+   * transcribed recording asks for no digest and nobody is offered one. **Nothing tells an
+   * open page that it changed** — in a deployment it is a restart — so open pages after it.
+   */
+  setting: (state: 'on' | 'off'): Promise<void> => control('PUT', `/control/setting/${state}`),
+  /**
+   * Releases every key and switches the setting back on, so no test inherits a generation
+   * nobody will ever answer — or an API that generates nothing.
+   */
+  reset: async (): Promise<void> => {
+    await Promise.all([control('DELETE', '/control/holds'), control('PUT', '/control/setting/on')]);
+  },
 };
 
 export interface DigestScript {
@@ -62,6 +74,8 @@ export interface DigestScript {
   holdKey?: string;
   /** The generation fails, as Anthropic being unreachable would fail it. */
   fails?: boolean;
+  /** It fails only while the spec holds this key: released, the same transcript is answered. */
+  failsWhile?: string;
 }
 
 /**
@@ -80,6 +94,7 @@ export function digestTranscript(script: DigestScript): string {
     ...(script.decisions ?? []).map((decision) => `[[digest:decision ${decision}]]`),
     ...(script.holdKey === undefined ? [] : [`[[digest:hold ${script.holdKey}]]`]),
     ...(script.fails === true ? ['[[digest:fail]]'] : []),
+    ...(script.failsWhile === undefined ? [] : [`[[digest:fail ${script.failsWhile}]]`]),
   ].join(' ');
 }
 
@@ -110,6 +125,14 @@ export const generatingDigest = (page: Page): Locator =>
   digestSection(page).getByText('Generating digest…');
 export const failedDigest = (page: Page): Locator => digestSection(page).getByText('Digest failed');
 export const outOfDateMark = (page: Page): Locator => digestSection(page).getByText('Out of date');
+
+/** The section's one control, under whichever of its two names the digest gives it. */
+export const generateDigestButton = (page: Page): Locator =>
+  digestSection(page).getByRole('button', { name: 'Generate digest', exact: true });
+export const retryDigestButton = (page: Page): Locator =>
+  digestSection(page).getByRole('button', { name: 'Retry', exact: true });
+/** Every button of the section: none, for a reader who may ask for nothing. */
+export const digestButtons = (page: Page): Locator => digestSection(page).getByRole('button');
 
 /**
  * Opens a meeting's page and waits until it has drawn its files and been given its digest.
@@ -153,6 +176,22 @@ export async function digestViaApi(token: string, meetingId: string): Promise<Di
   }
 
   return (await response.json()) as DigestViaApi;
+}
+
+const isDigestRequestUrl = (url: string): boolean => url.endsWith('/digest/generation');
+
+/** The answer to "generate now", as the page that pressed Generate or Retry receives it. */
+export const isDigestRequest = (response: Response): boolean =>
+  response.request().method() === 'POST' && isDigestRequestUrl(response.url());
+
+/** The status "generate now" answers this user with, asked as the page would ask. */
+export async function requestDigestStatusViaApi(token: string, meetingId: string): Promise<number> {
+  const response = await fetch(`${API_URL}/meetings/${meetingId}/digest/generation`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${token}` },
+  });
+
+  return response.status;
 }
 
 /** Set on the page once it has loaded, and gone if the page is ever loaded again. */

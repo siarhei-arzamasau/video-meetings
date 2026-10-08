@@ -39,7 +39,8 @@ export class ScriptedClaudeAgent {
       });
     }
 
-    if (script.fails) {
+    // Asked once the wait is over, so a spec may hold a generation and then decide how it ends.
+    if (script.fails || this.holds.holdsAny(script.failKeys)) {
       // What a spec looks for on the page, to show the reason a user reads is never this.
       throw new ClaudeAgentError(ClaudeAgentFailure.FAILED, `${CLAUDE_MARKER}: overloaded_error`);
     }

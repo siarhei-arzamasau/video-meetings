@@ -173,6 +173,12 @@ build it into the API; phases 6–7 put it on the page.
     what a digest holds from directives in the transcripts, but waits only while a spec is
     holding the key a transcript names, on a control port of the entry point's own — a hold
     written into a transcript alone would outlive a test that failed.
+    **A failure that ends is a key too, and the setting is switched on the same port**
+    (phase 7): "the scripted Claude answering again" is a generation that fails only while
+    a spec holds the key its transcript names; and "a recording transcribed with the
+    setting off" needs the setting changed in a process a spec cannot restart, which the
+    entry point does with `ConfigService.set` — safe there and nowhere else, since what the
+    setting gates in that process is the scripted Claude.
 
 ## Contract additions (`@repo/shared`)
 
@@ -629,17 +635,62 @@ covers the section, the shared stream, and the version rule.
 
 **Tasks:**
 
-- [ ] `requestMeetingDigest` in the API client, with Vitest.
-- [ ] The action in `DigestSection`: "Generate digest" or "Retry" as `availableAction` says,
+- [x] `requestMeetingDigest` in the API client, with Vitest.
+- [x] The action in `DigestSection`: "Generate digest" or "Retry" as `availableAction` says,
       shown only to the host and to the uploader of a transcribed recording in the files list,
       and to neither while that list holds no transcribed recording (decision 9);
       a 409 refetches the digest, any other error shows inline with Dismiss, as a file retry's
       does. Vitest for who sees it.
-- [ ] Playwright spec, with the test entry point able to switch the setting: a recording
+- [x] Playwright spec, with the test entry point able to switch the setting: a recording
       transcribed with it off shows "Generate digest" to the host and its uploader and not to
       another participant, and clicking ends in a digest; a failed digest shows Retry to the
       same two, and with the scripted Claude answering again Retry ends in a digest; neither
       control is present while a digest is current, queued, or generating.
+
+_As built:_
+
+- **Who is offered the control is `offeredDigestAction`**, a pure function in
+  `src/lib/meeting-digest-action.ts`, called by `useDigestAction` from `MeetingSections` —
+  the one component that holds both the digest and the files list. `DigestSection` takes
+  the result as an optional `action`, so its phase 6 spec passed untouched: handed none, it
+  is the section of a reader who may ask for nothing.
+- **The request's answer is taken, not refetched, and that is where this stops mirroring
+  the row's Retry.** The row refetches on a 200 because a file's answer cannot be put in
+  order against the stream; a digest's can, by its version (decision 9). So the feed gained
+  `accept`, which takes the answer as a fetch is taken, and a request overtaken by a claim
+  and a second failure leaves that failure on the page. A 409 refetches and any other error
+  shows inline with Dismiss, as the task says.
+- **The section is drawn for a control alone in two states**, which phase 6 drew nothing
+  for: no status and no content with `generate` on offer, and `ready` with its content
+  withheld. A sentence stands where a digest would be — "This meeting's recordings have no
+  digest yet." — because a button under a bare heading does not say what it is for. For a
+  reader who is offered nothing, both still draw nothing.
+- **An error is shown only beside the control that was pressed.** Not in the task: kept,
+  it came back beside the next Retry, which nobody had pressed. It is recorded with the
+  version of the digest it was pressed on and shown while that version is held and its
+  control is offered — derived on each render, not cleared by an effect when the control is
+  seen to go. Review found the two orders an effect misses: a failure that lands after the
+  stream has already taken the control away, and a request, a claim and a second failure
+  arriving in one render. `meeting-sections.digest-error.test.tsx` was red on both first.
+- **A press moves focus to the section's heading.** Not in the task either: the control is
+  removed once the request is taken, and a button removed while it holds focus drops a
+  keyboard reader at the top of the page. `ui-ux-pro-max` rates keyboard navigation High.
+- **The Playwright spec has a third case the task does not name**: with the setting off a
+  second recording marks the stored digest out of date and nothing is offered; switched on
+  again, Generate is offered beside it and ends in a digest of both — decision 10's
+  reading, and the PRD's "with the setting off … a digest stored earlier is still shown".
+- **The spec was red first**: run with the control built and not yet handed to the
+  section, where all three cases failed on the missing button.
+- **Not done: the run against the real model** that "Done when" asks for — token removed
+  from Anthropic's reach, upload, Failed, restored, Retry, Ready. It needs the real Whisper
+  to transcribe the upload, which is not running on the machine this phase was built on and
+  was not to be started. Nothing in this phase has been checked against either.
+- **Found by the inspection and fixed for all five uses: the inline error's colour.**
+  `text-danger` at 14px measured 3.57:1 on a card in the light theme and 3.97:1 in the
+  dark, under WCAG AA's 4.5:1, and it was the files rows' own class, in four places before
+  this one. All five now use `text-danger-soft-foreground`, the token HeroUI writes danger
+  text in: 6.74:1 light and 6.30:1 dark, measured in Chromium on the digest's error and on
+  a row's. `--danger` itself is untouched, since it is also a button's fill.
 
 **Done when:** the spec is green with the whole browser suite; a run against the real model is
 recorded in the commit body — token removed from Anthropic's reach, upload, Failed, restored,

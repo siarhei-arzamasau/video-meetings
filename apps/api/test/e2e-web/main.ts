@@ -37,9 +37,16 @@ async function bootstrap(): Promise<void> {
   configureApp(app);
   app.enableShutdownHooks();
 
-  await listenForControl(holds);
+  const config = app.get(ConfigService);
 
-  const port = app.get(ConfigService).get<number>('PORT', 3001);
+  await listenForControl({
+    holds,
+    // Read by the handlers, the worker, and the digest's read each time they run, so a
+    // write here is the whole of switching it: `test/utils/digest-suite.ts` does the same.
+    setDigestEnabled: (enabled) => config.set('MEETING_DIGEST_ENABLED', enabled),
+  });
+
+  const port = config.get<number>('PORT', 3001);
   await app.listen(port, '0.0.0.0');
 
   Logger.log(

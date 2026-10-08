@@ -77,7 +77,7 @@ describe('DigestSection', () => {
         'The recordings of this meeting are too long to turn into one digest.',
       ),
     ).toBeTruthy();
-    // Phase 7's: nobody is offered a control here yet.
+    // Handed no `action`, this is the section of a reader who may ask for nothing.
     expect(screen.queryByRole('button')).toBeNull();
   });
 

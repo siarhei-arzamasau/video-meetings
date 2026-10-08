@@ -57,7 +57,7 @@ export function UploadRow({ upload, onCancel, onDismiss, onRetry }: UploadRowPro
           {file.name}
         </span>
         {status === 'failed' ? (
-          <span className="text-danger text-sm" role="alert">
+          <span className="text-danger-soft-foreground text-sm" role="alert">
             {error}
           </span>
         ) : (

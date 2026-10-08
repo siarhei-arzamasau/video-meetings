@@ -139,6 +139,16 @@ export function RetryIcon() {
   );
 }
 
+/** For asking that something be written: a four-point spark, with a smaller one beside it. */
+export function SparkIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>
+      <path d="M10 4.5 11.6 9a2 2 0 0 0 1.3 1.3l4.6 1.7-4.6 1.6a2 2 0 0 0-1.3 1.3L10 19.5l-1.6-4.6a2 2 0 0 0-1.3-1.3L2.5 12l4.6-1.7A2 2 0 0 0 8.4 9Z" />
+      <path d="M18.5 3.5v4M16.5 5.5h4" />
+    </svg>
+  );
+}
+
 export function InfoIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4" {...strokeProps}>

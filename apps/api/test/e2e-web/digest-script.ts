@@ -18,6 +18,7 @@ import { recordingsIn } from '../utils/fake-claude-agent';
  * | `[[digest:decision TEXT]]`          | A decision                                          |
  * | `[[digest:hold KEY]]`               | No answer while the spec is holding `KEY`           |
  * | `[[digest:fail]]`                   | The call fails, with words only "Anthropic" says    |
+ * | `[[digest:fail KEY]]`               | It fails only while the spec is holding `KEY`       |
  *
  * A prompt with no directive at all — every recording of the specs that are not about the
  * digest — is answered with a summary and two empty lists.
@@ -31,7 +32,13 @@ export interface DigestScript {
   };
   /** Keys this generation waits on. It is answered once the spec holds none of them. */
   holdKeys: string[];
+  /** Fails whatever the spec does: a failure nothing but a new recording gets past. */
   fails: boolean;
+  /**
+   * Keys this generation fails under. With none of them held it is answered — so a spec
+   * that lets go and presses Retry sees the same transcripts end in a digest.
+   */
+  failKeys: string[];
 }
 
 const DIRECTIVE = /\[\[digest:([a-z]+)(?:\s+([\s\S]*?))?\]\]/g;
@@ -53,6 +60,7 @@ export function digestScriptOf(prompt: string): DigestScript {
     },
     holdKeys: [],
     fails: false,
+    failKeys: [],
   };
 
   for (const [, name, text = ''] of recordings.join('\n').matchAll(DIRECTIVE)) {
@@ -66,8 +74,10 @@ export function digestScriptOf(prompt: string): DigestScript {
       script.answer.decisions.push({ description: value });
     } else if (name === 'hold') {
       script.holdKeys.push(value);
-    } else if (name === 'fail') {
+    } else if (name === 'fail' && value === '') {
       script.fails = true;
+    } else if (name === 'fail') {
+      script.failKeys.push(value);
     }
   }
 

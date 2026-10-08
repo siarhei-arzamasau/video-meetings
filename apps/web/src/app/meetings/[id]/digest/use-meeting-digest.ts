@@ -20,6 +20,15 @@ export interface MeetingDigestFeed {
   refresh(): void;
   /** One `digest` event from the stream. Stable between renders, for the same reason. */
   receive(digest: MeetingDigest): void;
+  /**
+   * The digest the API answered a Generate or a Retry with. **Taken as a fetch is**: it is
+   * the API's answer to this page, so of two with one version it wins, and against a higher
+   * one already held it loses — which is the case that matters. The answer travels on a
+   * connection of its own, and the stream may by then have said `queued`, a worker's claim,
+   * and the next failure; a file's retry has to refetch the list to be put in order against
+   * that, and a digest only has to be compared.
+   */
+  accept(digest: MeetingDigest): void;
 }
 
 interface Fetch {
@@ -139,9 +148,18 @@ export function useMeetingDigest(
     },
     [meetingId],
   );
+  const accept = useCallback(
+    (answered: MeetingDigest): void => {
+      // An answer that outlived the meeting it was asked about is nobody's.
+      if (answered.meetingId === meetingId) {
+        setHeld((current) => laterDigest(current, answered, 'fetch'));
+      }
+    },
+    [meetingId],
+  );
 
   // A digest held from the meeting this component showed before is not this meeting's.
   const digest = held?.meetingId === meetingId ? held : null;
 
-  return { digest, ...fetches, receive };
+  return { digest, ...fetches, receive, accept };
 }

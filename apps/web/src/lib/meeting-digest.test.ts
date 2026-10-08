@@ -96,7 +96,8 @@ describe('digestPresentation', () => {
     ['a digest with neither a status nor content', digest()],
     // Withheld: one of its recordings was deleted and nothing has replaced it yet.
     ['a ready digest whose content is withheld', digest({ status: 'ready' })],
-    // Phase 7 gives this one a control; until then there is nothing to say about it.
+    // What may be asked for is not something a digest shows: `digestSectionView` adds the
+    // control, for the reader it is offered to.
     ['only an action somebody could ask for', digest({ availableAction: 'generate' })],
   ])('shows nothing at all for %s', (_case, current) => {
     expect(digestPresentation(current)).toBeNull();

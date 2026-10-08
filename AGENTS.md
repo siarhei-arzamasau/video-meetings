@@ -58,24 +58,21 @@ All five of its phases are built: Whisper, the status in the API, the status and
 transcript link on the meeting page, and the retry of a failed transcription — the route, and
 Retry on the row for the uploader or the host.
 
-**The meeting digest is being built, and six of its seven phases are — all of the API, and
-the digest on the meeting page.** A digest is a
+**The meeting digest is built — all seven of its phases.** A digest is a
 meeting's summary, action items, and decisions, written by Claude — through the Claude Agent
 SDK — from the transcripts of its recordings:
 [`docs/prd-meeting-digest-summary-action-items-decisions.md`](docs/prd-meeting-digest-summary-action-items-decisions.md),
 with every decision that PRD leaves open, the contract, and the phases in
 [`docs/plan-meeting-digest-summary-action-items-decisions.md`](docs/plan-meeting-digest-summary-action-items-decisions.md).
-Built so far: the API generates a digest when a recording is transcribed, stores it, serves
+The API generates a digest when a recording is transcribed, stores it, serves
 it at `GET /api/meetings/:id/digest`, withdraws and replaces it when a recording it was built
 from is deleted, sends every change as a `digest` event on the files stream, reports an
 action item's owner as the participant the spoken name identifies, and takes a request to
-generate or retry one from the host or a transcribed recording's uploader; and the meeting
+generate or retry one from the host or a transcribed recording's uploader; the meeting
 page shows the digest and follows it over that stream, for everyone who can see the
-meeting. Not yet: Generate and Retry on that page (7) — until then nothing in the web app
-sends that request. **It is the first feature to send
+meeting, and offers those two "Generate digest" or "Retry". **It is the first feature to send
 meeting content to a third party**, which is why `MEETING_DIGEST_ENABLED` ships off; read the
-plan's decisions before changing `src/modules/meeting-digests`, and do not start a later
-phase from inside an earlier one.
+plan's decisions before changing `src/modules/meeting-digests`.
 
 ## Commands
 

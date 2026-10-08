@@ -7,6 +7,10 @@
  * holds — never registered, released, or forgotten by `releaseAll` at a test's end — holds
  * nothing, so a meeting another test left behind is answered at once whatever its transcript
  * says.
+ *
+ * **A failure that can end is a key too** (`[[digest:fail KEY]]`): the generation fails while
+ * the spec holds the key and is answered once it lets go, which is all "Anthropic came back"
+ * is. The same rule covers it — a key nobody holds fails nothing.
  */
 export class DigestHolds {
   private readonly held = new Set<string>();
@@ -26,6 +30,11 @@ export class DigestHolds {
     this.wake();
   }
 
+  /** Whether the spec is holding any of `keys` at this moment. Never waits. */
+  holdsAny(keys: ReadonlyArray<string>): boolean {
+    return keys.some((key) => this.held.has(key));
+  }
+
   /**
    * Resolves once none of `keys` is held — at once, when none is — and rejects with the
    * signal's reason if the caller hangs up first.
@@ -36,7 +45,7 @@ export class DigestHolds {
         if (signal.aborted) {
           this.waiting.delete(check);
           reject(signal.reason instanceof Error ? signal.reason : new Error('Hung up'));
-        } else if (!keys.some((key) => this.held.has(key))) {
+        } else if (!this.holdsAny(keys)) {
           this.waiting.delete(check);
           signal.removeEventListener('abort', check);
           resolve();

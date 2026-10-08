@@ -106,17 +106,17 @@ export function FileRow({
           <span className="text-muted text-sm">{transcription.reason}</span>
         )}
         {downloadError !== null && (
-          <span className="text-danger text-sm" role="alert">
+          <span className="text-danger-soft-foreground text-sm" role="alert">
             {downloadError}
           </span>
         )}
         {retry.error !== null && (
-          <span className="text-danger text-sm" role="alert">
+          <span className="text-danger-soft-foreground text-sm" role="alert">
             {retry.error}
           </span>
         )}
         {transcript.error !== null && (
-          <span className="text-danger text-sm" role="alert">
+          <span className="text-danger-soft-foreground text-sm" role="alert">
             {transcript.error}
           </span>
         )}

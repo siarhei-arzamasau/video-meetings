@@ -175,8 +175,9 @@ Every change is also sent as a `digest` event on the meeting's files stream
 section under the files — "Digest queued", "Generating digest…", then the summary, the
 action items with their owners, and the decisions — that appears, is marked out of date
 and replaced, and goes, for everyone who can see the meeting and with no reload. It carries
-a note that it is AI-generated and may contain mistakes. The page has no control for the
-request below yet.
+a note that it is AI-generated and may contain mistakes. The section also carries the one
+control for the request below — "Generate digest" or "Retry" — for the two kinds of member
+who may send it.
 
 `POST /api/meetings/:id/digest/generation` asks for a digest that no recording asked for,
 and takes no body. The digest says when there is something to ask for, in `availableAction`:

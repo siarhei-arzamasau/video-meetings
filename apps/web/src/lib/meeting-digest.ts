@@ -125,6 +125,8 @@ export interface DigestPresentation {
  * **Nothing at all without one of the two** — a meeting with no transcribed recording, a
  * digest withdrawn with a recording and not yet replaced, and a page that has not heard from
  * the API yet all look the same: no section, rather than an empty frame around nothing.
+ * That is what a digest says to anybody. What one reader may do about it — the control that
+ * two of those states are given — is added by `digestSectionView` in `meeting-digest-action.ts`.
  *
  * Every string of the content is handed on exactly as it came. It is a model's writing about
  * what was said in a recording, so it is text for React to escape and never markup.

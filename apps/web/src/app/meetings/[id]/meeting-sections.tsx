@@ -3,6 +3,7 @@
 import type { Meeting, User } from '@repo/shared';
 
 import { DigestSection } from './digest/digest-section';
+import { useDigestAction } from './digest/use-digest-action';
 import { FilesSection } from './files/files-section';
 import { useMeetingUpdates } from './use-meeting-updates';
 
@@ -26,7 +27,23 @@ interface MeetingSectionsProps {
  * it would push the list they are using down the page each time; under them it moves nothing.
  */
 export function MeetingSections({ token, meeting, user, onUnauthorized }: MeetingSectionsProps) {
-  const { files, digest } = useMeetingUpdates(token, meeting.id, onUnauthorized);
+  const { files, digest, refreshDigest, acceptDigest } = useMeetingUpdates(
+    token,
+    meeting.id,
+    onUnauthorized,
+  );
+  // Here rather than in the section, because it reads both halves of the page: the digest
+  // says what may be asked for, and the files list says whether this reader may ask.
+  const digestAction = useDigestAction({
+    token,
+    meeting,
+    user,
+    digest,
+    list: files.list,
+    onAccepted: acceptDigest,
+    onStale: refreshDigest,
+    onUnauthorized,
+  });
 
   return (
     <>
@@ -37,7 +54,7 @@ export function MeetingSections({ token, meeting, user, onUnauthorized }: Meetin
         files={files}
         onUnauthorized={onUnauthorized}
       />
-      <DigestSection digest={digest} />
+      <DigestSection digest={digest} action={digestAction} />
     </>
   );
 }

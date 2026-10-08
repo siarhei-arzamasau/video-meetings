@@ -951,15 +951,15 @@ A meeting's summary, action items, and decisions, generated from the transcripts
 recordings, stored, and served at `GET /api/meetings/:id/digest`. The contract is
 [the PRD](../../docs/prd-meeting-digest-summary-action-items-decisions.md); every decision
 under it, and the phases, are in
-[its plan](../../docs/plan-meeting-digest-summary-action-items-decisions.md). **Phases 1 to 6
-of 7 are built** — all of the API, and the digest on the meeting page: a recording that reaches Transcribed gives its
+[its plan](../../docs/plan-meeting-digest-summary-action-items-decisions.md). **All seven
+phases are built**: a recording that reaches Transcribed gives its
 meeting a digest, anyone who can see the meeting can read it, a deleted recording takes away
 what was built from it, every change is sent to the meeting's open streams, an action item's
 owner is reported as the member of the meeting the spoken name identifies, and the host or
 a transcribed recording's uploader can ask for a digest that no recording asked for —
-`POST /api/meetings/:id/digest/generation`. The meeting page shows the digest and follows
-it over the stream ([the web guide](../web/AGENTS.md#the-digest)). Not yet: Generate and
-Retry on that page (7) — until then the route has no caller but a spec.
+`POST /api/meetings/:id/digest/generation`. The meeting page shows the digest, follows
+it over the stream, and is that route's one caller: "Generate digest" or "Retry" in the
+digest's section ([the web guide](../web/AGENTS.md#the-digest)).
 What a reader of the code would get wrong:
 
 **What leaves, and when**
@@ -1477,9 +1477,13 @@ Nine things about that setup are easy to get wrong:
   day someone points that script back at `nest start`, every recording the browser specs
   transcribe is a paid request to Anthropic. What the scripted Claude does is decided by
   directives in the transcripts it is sent — the table is in `digest-script.ts` — and a
-  generation is held only while a spec holds the key its transcript names, on a
+  generation is held, or failed, only while a spec holds the key its transcript names, on a
   loopback-only control port (3103) that is a listener of the entry point's own, not a route
-  of the application. Nothing under `test/e2e-web` is covered by `pnpm typecheck`; `ts-node`
+  of the application. **That port also switches `MEETING_DIGEST_ENABLED` in the running
+  process** (`ConfigService.set`, as `configureDigest` does for the specs here), because a
+  recording "transcribed while the setting was off" is the state Generate exists for and a
+  spec cannot restart the API. That stays inside the rule above: what the setting gates in
+  this process is the scripted Claude, whichever way it is switched. Nothing under `test/e2e-web` is covered by `pnpm typecheck`; `ts-node`
   type-checks it at every boot, so a changed `src` signature it uses stops the browser suite
   from starting rather than failing a spec.
 - **`maxWorkers: 1` is load-bearing**, for the same reason: Jest parallelises across spec
@@ -1539,7 +1543,7 @@ Update it in the same commit as the change;
 one owns what is specific to `@repo/api`. The sections above each name what would invalidate
 them — a global added to `configure-app.ts`, a Prisma upgrade that moves the constraint `meta`
 shape, a fourth message on the auth/user boundary, a new exemplar module replacing one of the
-five, a third event or the first saga, a later phase of the meeting digest, a change to the
+five, a third event or the first saga, a change to the
 `apps/api/**` lint overrides. Adding a feature
 module that follows the existing shape needs no update: document the shape, not each module
 that uses it.
