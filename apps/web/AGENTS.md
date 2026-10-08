@@ -274,15 +274,18 @@ each of which was a bug once:
   answered and a refetch that was lost, it still shows the failure, with a Retry the API
   would answer 409 — and nothing in it would ever arm the poll. It stops at the first fetch
   that lands, when the list can speak for itself again.
-- **One polite `role="status"` region** (`FilesSection`, visually hidden) announces how many
-  files are processing, and each transcription that ends: one per section, never one per row,
-  and empty on first render so nothing is read aloud for arriving. `useFilesAnnouncement`
+- **One polite `role="status"` region** (`FilesAnnouncement`, visually hidden) announces how
+  many files are processing, and each transcription that ends: one per section, never one per
+  row, and empty on first render so nothing is read aloud for arriving. `useFilesAnnouncement`
   derives both from the list, so the poll says what the stream would. **A transcription is
   announced at its two ends only** — the transcript is ready, or it failed — and only for a
   row the page saw queued or running: the steps between are three interruptions where one
   says everything, and a recording that arrives finished is nobody's news. Changes that land
   in one render are joined into one phrase, since the region holds one string and a second
-  write would replace the first before it was read.
+  write would replace the first before it was read. **A phrase worded like the last one is
+  still said, because the region's node is keyed on the phrase's number, not left to its
+  text.** A retry that fails again produces the same sentence twice running; as a bare string
+  in state the second is a no-op, the DOM does not change, and a screen reader says nothing.
 
 ## API access
 

@@ -8,9 +8,9 @@ import { FileIcon, PlusIcon, WarningIcon } from '@/components/icons';
 import { acceptAttribute, sortNewestFirst } from '@/lib/meeting-files';
 import { DeleteFileDialog } from './delete-file-dialog';
 import { FileRow } from './file-row';
+import { FilesAnnouncement } from './files-announcement';
 import { UploadRow } from './upload-row';
 import { useDropTarget } from './use-drop-target';
-import { useFilesAnnouncement } from './use-files-announcement';
 import { useMeetingFiles } from './use-meeting-files';
 import { useUploadQueue } from './use-upload-queue';
 
@@ -51,7 +51,6 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
 
   const listed = list.state === 'ready' ? list.files : NO_FILES;
   const files = sortNewestFirst(listed);
-  const announcement = useFilesAnnouncement(listed);
   const isEmpty = list.state === 'ready' && files.length === 0 && uploads.length === 0;
   // The queue is shown whenever it has rows, even while the list is loading or failed to load:
   // an upload the user just started must show its progress, its Cancel, or its rejection.
@@ -63,13 +62,7 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
       className={`gap-0 p-6 transition-shadow ${isDragging ? 'ring-accent ring-2 ring-offset-2' : ''}`}
       {...handlers}
     >
-      {/* One polite region for the whole section. Since the page follows its files over a
-          stream, a row settles, arrives, or vanishes with no action from the reader, and the
-          chip going is a change only a sighted one sees. `aria-atomic`, so the phrase is read
-          whole rather than as whatever word changed. */}
-      <output className="sr-only" aria-atomic="true">
-        {announcement}
-      </output>
+      <FilesAnnouncement files={listed} />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-0.5">
