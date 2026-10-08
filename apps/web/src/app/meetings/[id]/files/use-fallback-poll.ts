@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 
 import { isAwaitingWorker } from '@/lib/meeting-files';
-import type { FilesList } from './use-files-snapshot';
+import type { FilesSnapshot } from './use-files-snapshot';
 
 /**
  * How often the list refetches while a worker still owes a result — **the fallback, not
@@ -19,6 +19,12 @@ export const POLL_INTERVAL_MS = 3_000;
  * poll beside it would be three requests a second across an open meeting page for nothing.
  * `isAwaitingWorker` still gates it, so the fallback stops once both workers are done.
  *
+ * **A fetch that failed is asked for again, whatever the list says.** The list it left behind
+ * is the old one, and the old one can show nothing awaited when something is: a row's Retry is
+ * answered, its refetch is lost, and the row still reads "failed" while a worker has the file.
+ * Nothing in that list would arm the poll, so `lastFetchFailed` does — until a fetch lands and
+ * the list can speak for itself again.
+ *
  * **`settled` is a dependency on purpose.** Each fetch that comes back is what arms the next
  * timer; on a condition alone the poll would fire once and stop. It is the count and not the
  * list, because a fetch that fails keeps the list it had — the very same object — and a poll
@@ -27,12 +33,19 @@ export const POLL_INTERVAL_MS = 3_000;
  */
 export function useFallbackPoll(
   streamAvailable: boolean,
-  list: FilesList,
-  settled: number,
-  refresh: () => void,
+  {
+    list,
+    settled,
+    lastFetchFailed,
+    refresh,
+  }: Pick<FilesSnapshot, 'list' | 'settled' | 'lastFetchFailed' | 'refresh'>,
 ): void {
   useEffect(() => {
-    if (streamAvailable || list.state !== 'ready' || !isAwaitingWorker(list.files)) {
+    if (streamAvailable || list.state !== 'ready') {
+      return;
+    }
+
+    if (!lastFetchFailed && !isAwaitingWorker(list.files)) {
       return;
     }
 
@@ -41,5 +54,5 @@ export function useFallbackPoll(
     return () => {
       clearTimeout(timer);
     };
-  }, [streamAvailable, list, settled, refresh]);
+  }, [streamAvailable, list, settled, lastFetchFailed, refresh]);
 }

@@ -42,8 +42,9 @@ export interface Retry {
  * already have said that, then a worker's claim, then the next failure. Written over the row it
  * would show a file that has failed again as queued, with no Retry, and no event would follow
  * to correct it. So the answer is only a cue: `onRetried` refetches the list, which is what
- * can be put in order against the stream. The stream moves the row on from there, and the
- * fallback poll runs for exactly those two states when there is no stream.
+ * can be put in order against the stream. The stream moves the row on from there; with no
+ * stream the fallback poll does, which runs for exactly those two states — and for a refetch
+ * that failed, so a lost one cannot leave a retried row reading "failed".
  */
 export function useRetry(
   token: string,

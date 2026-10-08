@@ -164,9 +164,11 @@ aliases in sync if either changes.
   it — `uploaded`, or `ready` with its transcription `queued` — and written over the row it
   can be the oldest thing on the page; the files stream section below has why. The refetch is
   also what starts the fallback poll, which runs for exactly those two states, when there is
-  no stream. A 409 means someone else got there first, so the list is asked rather than
-  second-guessed; anything else shows inline with Dismiss. A second hook for the
-  transcription's retry would be a second copy of those answers, free to drift from the first.
+  no stream — and a refetch that fails is asked for again by that poll, so a lost one cannot
+  leave a retried row reading "failed". A 409 means someone else got there first, so the list
+  is asked rather than second-guessed; anything else shows inline with Dismiss. A second hook
+  for the transcription's retry would be a second copy of those answers, free to drift from
+  the first.
 - **A recording's transcription is a second status on the row, beside the file's own and never
   instead of it.** `transcriptionPresentation` sits next to `statusPresentation` in
   `src/lib/meeting-files.ts` and `TranscriptionStatus` draws it in the same slot, in the row's
@@ -267,6 +269,11 @@ each of which was a bug once:
   re-armed by `settled`, the count of fetches that came back, not by the list. A failed fetch
   keeps the list it had — the same object — so a poll armed by the list stopped at its first
   failure, which is the API restarting: the one time the page has nothing but the poll.
+  **So does any other refetch that fails while there is no stream** (`lastFetchFailed`), even
+  over a list with nothing awaited in it. That list is the old one: after a Retry that was
+  answered and a refetch that was lost, it still shows the failure, with a Retry the API
+  would answer 409 — and nothing in it would ever arm the poll. It stops at the first fetch
+  that lands, when the list can speak for itself again.
 - **One polite `role="status"` region** (`FilesSection`, visually hidden) announces how many
   files are processing, and each transcription that ends: one per section, never one per row,
   and empty on first render so nothing is read aloud for arriving. `useFilesAnnouncement`

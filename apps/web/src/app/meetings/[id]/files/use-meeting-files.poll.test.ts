@@ -6,6 +6,7 @@ import type * as ApiClient from '@/lib/api-client';
 import { listMeetingFiles } from '@/lib/api-client';
 import { watchMeetingFiles } from '@/lib/meeting-file-stream';
 
+import type { MeetingFiles } from './use-meeting-files';
 import { POLL_INTERVAL_MS, useMeetingFiles } from './use-meeting-files';
 
 vi.mock('@/lib/api-client', async (importOriginal) => ({
@@ -29,10 +30,20 @@ const recording = (overrides: Partial<MeetingFile> = {}): MeetingFile => ({
 const onUnauthorized = vi.fn();
 
 /** Mounts the hook on a network that cannot hold the stream, and lets the first lists land. */
-async function mountWithoutStream(): Promise<void> {
-  renderHook(() => useMeetingFiles('a-signed-jwt', 'm1', onUnauthorized));
+async function mountWithoutStream(): Promise<{ current: MeetingFiles }> {
+  const { result } = renderHook(() => useMeetingFiles('a-signed-jwt', 'm1', onUnauthorized));
 
   await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+
+  return result;
+}
+
+/** What a row does once its Retry is answered, and lets that one fetch come back. */
+async function refetch(files: { current: MeetingFiles }): Promise<void> {
+  await act(async () => {
+    files.current.refresh();
     await vi.advanceTimersByTimeAsync(0);
   });
 }
@@ -108,6 +119,35 @@ describe('the fallback poll', () => {
     vi.mocked(listMeetingFiles).mockResolvedValue([
       recording({ transcriptionStatus: 'transcribed' }),
     ]);
+
+    expect(await listRequestsDuringOneInterval()).toBe(1);
+    expect(await listRequestsDuringOneInterval()).toBe(0);
+  });
+
+  it('asks again after a refetch that failed, though the list it kept shows nothing awaited', async () => {
+    const failed = recording({ transcriptionStatus: 'failed' });
+    const queued = recording({ transcriptionStatus: 'queued' });
+    vi.mocked(listMeetingFiles).mockResolvedValue([failed]);
+    const files = await mountWithoutStream();
+
+    // The retry was answered, so a worker is owed — and the refetch that would say so is lost.
+    vi.mocked(listMeetingFiles).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    vi.mocked(listMeetingFiles).mockResolvedValue([queued]);
+    await refetch(files);
+    expect(files.current.list).toEqual({ state: 'ready', files: [failed] });
+
+    // The poll asks for it again, and from there it is the ordinary one: a queued recording.
+    expect(await listRequestsDuringOneInterval()).toBe(1);
+    expect(files.current.list).toEqual({ state: 'ready', files: [queued] });
+    expect(await listRequestsDuringOneInterval()).toBe(1);
+  });
+
+  it('stops again once that refetch has landed on a list with nothing awaited', async () => {
+    vi.mocked(listMeetingFiles).mockResolvedValue([recording({ transcriptionStatus: 'failed' })]);
+    const files = await mountWithoutStream();
+
+    vi.mocked(listMeetingFiles).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    await refetch(files);
 
     expect(await listRequestsDuringOneInterval()).toBe(1);
     expect(await listRequestsDuringOneInterval()).toBe(0);

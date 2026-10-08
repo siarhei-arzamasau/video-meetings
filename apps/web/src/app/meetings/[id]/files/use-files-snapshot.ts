@@ -21,6 +21,11 @@ export interface FilesSnapshot {
    * object it was, so this is the only thing that says one has come back.
    */
   settled: number;
+  /**
+   * The last fetch to come back failed: the list shown is older than the one that was asked
+   * for, and may say nothing is awaited when something is. See `useFallbackPoll`.
+   */
+  lastFetchFailed: boolean;
   /** Refetch now. */
   refresh(): void;
   /** Applies one change from the event stream, where the insert / replace / remove rule puts it. */
@@ -34,7 +39,8 @@ interface Fetch {
   isActive(): boolean;
   pending: RefObject<MeetingFile[] | null>;
   setList: Dispatch<SetStateAction<FilesList>>;
-  onSettled(): void;
+  /** Once per fetch that comes back to a live effect, with whether its list landed. */
+  onSettled(landed: boolean): void;
   onUnauthorized(): void;
 }
 
@@ -65,7 +71,7 @@ async function load({
       state: 'ready',
       files: missed.reduce<ReadonlyArray<MeetingFile>>(applyFileEvent, files),
     });
-    onSettled();
+    onSettled(true);
   } catch (error) {
     if (!isActive()) {
       return;
@@ -83,7 +89,7 @@ async function load({
       // A poll that fails does not blank a list that was fine a moment ago.
       current.state === 'ready' ? current : { state: 'failed', message: describeFailure(error) },
     );
-    onSettled();
+    onSettled(false);
   }
 }
 
@@ -105,7 +111,7 @@ export function useFilesSnapshot(
 ): FilesSnapshot {
   const [list, setList] = useState<FilesList>({ state: 'loading' });
   const [tick, setTick] = useState(0);
-  const [settled, setSettled] = useState(0);
+  const [fetches, setFetches] = useState({ settled: 0, lastFetchFailed: false });
   // Events that arrived while a fetch was in flight, to replay on top of the snapshot it
   // brings back; `null` while nothing is in flight. A ref, so `applyChange` stays stable.
   const pending = useRef<MeetingFile[] | null>(null);
@@ -124,7 +130,8 @@ export function useFilesSnapshot(
       isActive: () => active,
       pending,
       setList,
-      onSettled: () => setSettled((count) => count + 1),
+      onSettled: (landed) =>
+        setFetches(({ settled }) => ({ settled: settled + 1, lastFetchFailed: !landed })),
       onUnauthorized,
     });
 
@@ -146,5 +153,5 @@ export function useFilesSnapshot(
     );
   }, []);
 
-  return { list, setList, settled, refresh, applyChange };
+  return { list, setList, ...fetches, refresh, applyChange };
 }

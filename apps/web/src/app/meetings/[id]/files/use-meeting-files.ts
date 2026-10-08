@@ -93,9 +93,10 @@ function useLocalEdits({
  *
  * **The poll is the fallback.** `watchMeetingFiles` reopens a dropped stream with a backoff
  * and after three drops inside a minute gives up; the three second poll then runs while a
- * file is processing or a recording is waiting on its transcript, and `STREAM_RETRY_MS` later
- * the stream is tried again. An API restart produces exactly those three drops, and a page must
- * not stay on the poll for good because of one. A retry that opens refetches the list too.
+ * file is processing or a recording is waiting on its transcript — or the last refetch failed,
+ * since the list it left cannot say what is awaited — and `STREAM_RETRY_MS` later the stream is
+ * tried again. An API restart produces exactly those three drops, and a page must not stay on
+ * the poll for good because of one. A retry that opens refetches the list too.
  *
  * **A retry's answer is not written into the list, which is why there is no `replace` here.**
  * It says what the row was when the retry left it, and it arrives on a connection of its own:
@@ -121,7 +122,7 @@ export function useMeetingFiles(
     onUnauthorized,
   });
 
-  useFallbackPoll(streamAvailable, list, snapshot.settled, refresh);
+  useFallbackPoll(streamAvailable, snapshot);
 
   const { add, remove } = useLocalEdits(snapshot);
 
