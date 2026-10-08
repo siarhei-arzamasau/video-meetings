@@ -25,6 +25,8 @@ import { buildPipeline } from './processing/pipeline';
 import { QueueTranscriptionStep } from './processing/steps/queue-transcription.step';
 import { HttpTranscriptionProvider } from './processing/transcription/http-transcription.provider';
 import { TRANSCRIPTION_PROVIDER } from './processing/transcription/transcription-provider';
+import { FindMeetingTranscriptsHandler } from './queries/handlers/find-meeting-transcripts.handler';
+import { FindTranscribedRecordingsHandler } from './queries/handlers/find-transcribed-recordings.handler';
 import { ContentSniffer } from './services/content-sniffer';
 import { MeetingFileEventsService } from './services/meeting-file-events.service';
 import { MeetingFileHandOvers } from './services/meeting-file-hand-overs';
@@ -64,6 +66,10 @@ import { VisibleMeetingGuard } from './visible-meeting.guard';
     StoreChunkHandler,
     CompleteUploadHandler,
     AbortUploadHandler,
+    // The two reads that cross out of this module, for whatever describes a meeting as a
+    // whole: which recordings are transcribed, and what was said in them.
+    FindTranscribedRecordingsHandler,
+    FindMeetingTranscriptsHandler,
     MeetingFilesService,
     MeetingFileEventsService,
     // One instance for the module: the handlers and the file worker register their hand-overs

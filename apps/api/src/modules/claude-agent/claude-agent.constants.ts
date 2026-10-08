@@ -9,6 +9,8 @@ export enum ClaudeAgentFailure {
   NOT_CONFIGURED = 'NOT_CONFIGURED',
   /** Anthropic refused the configured token. */
   AUTHENTICATION = 'AUTHENTICATION',
+  /** The prompt is more than the model can read at once. Sending it again ends the same way. */
+  PROMPT_TOO_LONG = 'PROMPT_TOO_LONG',
   /** Anything else: the process would not start, the API errored, the turn was cut short. */
   FAILED = 'FAILED',
 }

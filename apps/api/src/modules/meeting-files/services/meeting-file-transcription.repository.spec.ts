@@ -15,15 +15,17 @@ const { QUEUED, TRANSCRIBING, TRANSCRIBED, FAILED } = TranscriptionStatus;
 describe('MeetingFileTranscriptionRepository', () => {
   const updateMany = jest.fn();
   const count = jest.fn();
+  const findMany = jest.fn();
   const queryRaw = jest.fn();
   const repository = new MeetingFileTranscriptionRepository({
-    meetingFile: { updateMany, count },
+    meetingFile: { updateMany, count, findMany },
     $queryRaw: queryRaw,
   } as unknown as PrismaService);
 
   beforeEach(() => {
     updateMany.mockReset().mockResolvedValue({ count: 1 });
     count.mockReset().mockResolvedValue(1);
+    findMany.mockReset().mockResolvedValue([]);
     queryRaw.mockReset().mockResolvedValue([]);
   });
 
@@ -163,6 +165,31 @@ describe('MeetingFileTranscriptionRepository', () => {
       count.mockResolvedValue(0);
 
       await expect(repository.isFileReady(FILE_ID)).resolves.toBe(false);
+    });
+  });
+
+  describe('findTranscribedOf', () => {
+    const MEETING_ID = '44444444-4444-4444-8444-444444444444';
+
+    it("reads a meeting's ready, transcribed recordings in upload order", async () => {
+      const recording = { id: FILE_ID, uploaderId: 'uploader', transcriptKey: 'key' };
+      findMany.mockResolvedValue([recording]);
+
+      await expect(repository.findTranscribedOf(MEETING_ID)).resolves.toEqual([recording]);
+
+      expect(findMany).toHaveBeenCalledWith({
+        // `ready` is what leaves a deleted recording out: a delete changes the file's status
+        // and nothing of its transcription's.
+        where: { meetingId: MEETING_ID, status: 'ready', transcriptionStatus: TRANSCRIBED },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: { id: true, uploaderId: true, transcriptKey: true },
+      });
+    });
+
+    it('leaves out a row with no transcript key, which has no transcript to read', async () => {
+      findMany.mockResolvedValue([{ id: FILE_ID, uploaderId: 'uploader', transcriptKey: null }]);
+
+      await expect(repository.findTranscribedOf(MEETING_ID)).resolves.toEqual([]);
     });
   });
 

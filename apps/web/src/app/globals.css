@@ -72,3 +72,24 @@
   --field-shadow: 0 0 0 1px oklch(56% 0.006 286.033) inset;
   --field-hover: color-mix(in oklab, var(--field-background) 92%, var(--foreground) 8%);
 }
+
+/* HeroUI writes three pieces of form text in `--danger`: a field's error message, the label of
+   a field that is invalid, and the asterisk on a required one. `--danger` is a fill — the
+   danger button's background, chosen to sit under `--danger-foreground` — and as text it is
+   3.57:1 on a light card and 3.97:1 on a dark one, where WCAG AA needs 4.5:1 and the error
+   message is 12px. Redirected, all three measure 6.70:1 on a light card and 6.30:1 on a dark
+   one — 6.14:1 and 7.20:1 straight on the page — in Chromium, on the sign-in and
+   registration forms.
+
+   Redirected for these two components rather than overridden for the theme: darkening
+   `--danger` itself would darken every danger button with it. Neither component draws
+   anything but text, so inside them the token can only ever be a text colour, and
+   `--danger-soft-foreground` is the one HeroUI itself writes danger text in — the same red
+   mixed towards `--foreground`. Redefining the property, not restating HeroUI's selectors,
+   is what reaches all three at once, the asterisk's `::after` included, and keeps reaching
+   them when an upgrade rewords a selector. The soft token is resolved on `:root`, so this
+   reads the theme's own value in light and dark alike and needs no scoping. */
+.label,
+.field-error {
+  --danger: var(--danger-soft-foreground);
+}

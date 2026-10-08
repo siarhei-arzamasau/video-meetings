@@ -40,6 +40,16 @@ process.env['MEETING_FILES_WORKER_ENABLED'] = 'false';
 process.env['MEETING_FILES_LEASE_SECONDS'] = '5';
 
 /**
+ * The digest off, whatever the developer's `.env` says — the environment wins over the env
+ * files. Left to that file, a machine set up as the README describes would give every spec
+ * that does not bind the fake Claude the real `ClaudeAgentService` with the setting on, and a
+ * run with `ANTHROPIC_AUTH_TOKEN` exported empty, which is how a run proves it needs no
+ * token, would not boot at all. The digest specs switch it on through `ConfigService.set`
+ * (`useDigestSuite`), and the at-boot cases set the variable themselves and put this back.
+ */
+process.env['MEETING_DIGEST_ENABLED'] = 'false';
+
+/**
  * A budget no spec can exhaust, over a window too short to accumulate one.
  *
  * Every auth request in a spec file shares one counter — one address, one in-process store,

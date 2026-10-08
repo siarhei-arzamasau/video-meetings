@@ -2,10 +2,10 @@ import type { Readable } from 'node:stream';
 
 import type { Logger } from '@nestjs/common';
 
+import { startLeaseHeartbeat } from '../../../../common/processing/lease-heartbeat';
+import type { LeaseRenewer } from '../../../../common/processing/lease-heartbeat';
 import type { MeetingFileRecord } from '../../services/meeting-file.mapper';
 import type { MeetingFileStorage } from '../../storage/meeting-file-storage';
-import { startLeaseHeartbeat } from '../lease-heartbeat';
-import type { LeaseRenewer } from '../lease-heartbeat';
 import type { TranscriptionProvider } from './transcription-provider';
 
 /** How one request to the provider ended, with what the caller needs to record it. */
@@ -59,10 +59,10 @@ export async function runTranscription({
   const timeLimit = AbortSignal.timeout(limitSeconds * 1_000);
   const claimLost = new AbortController();
   const heartbeat = startLeaseHeartbeat({
-    files: leases,
+    leases,
     logger,
-    fileId: claimed.id,
-    meetingId: claimed.meetingId,
+    claimId: claimed.id,
+    subject: `File ${claimed.id} of meeting ${claimed.meetingId}`,
     lease: claimed.transcriptionLeasedUntil,
     leaseSeconds,
     onLost: () => claimLost.abort(),

@@ -143,6 +143,62 @@ Under `docker compose` the `api` service finds Whisper by itself: set
 `MEETING_FILES_TRANSCRIPTION_ENABLED=true` in the root `.env` and bring the stack up with
 `--profile transcription`.
 
+### Meeting digest (optional, and it sends transcripts to Anthropic)
+
+A meeting can have a digest — a summary, the action items with whoever was named for each,
+and the decisions — written by Claude from the transcripts of its recordings. It is **off by
+default, because switching it on sends meeting content to a third party**: with
+`MEETING_DIGEST_ENABLED=true`, the text of every transcribed recording of a meeting is sent
+to Anthropic each time one of that meeting's recordings is transcribed. The transcripts are
+all that is sent — no recording, file name, email address, user id, or storage path — and with
+the setting off nothing is sent at all.
+
+```bash
+# apps/api/.env
+MEETING_DIGEST_ENABLED=true
+ANTHROPIC_AUTH_TOKEN=...          # required with the flag on: the API refuses to boot without it
+```
+
+Restart the API afterwards. A new transcript needs transcription on as well (above). The
+digest is generated with no request from anyone and read with
+`GET /api/meetings/:id/digest`, by the meeting's host and participants: a `status` — `queued`,
+`generating`, then `ready` or `failed` with a `failureReason` — and, once one has been stored,
+the `content`. Deleting a recording takes away the digest built from it at once, and another
+is generated from the recordings that are left; with none left the meeting has no digest.
+An action item's `owner` is a `participant` — a user id and that person's current display
+name — when the name spoken identifies exactly one of the meeting's host and participants,
+and otherwise the `name` as it was spoken; the API makes that match itself, after Claude has
+answered, so no participant's name is sent. It is the one place a member of a meeting can
+read another member's display name, and never an email address.
+Every change is also sent as a `digest` event on the meeting's files stream
+(`GET /api/meetings/:id/files/events`), which is how the meeting page shows it: a Digest
+section under the files — "Digest queued", "Generating digest…", then the summary, the
+action items with their owners, and the decisions — that appears, is marked out of date
+and replaced, and goes, for everyone who can see the meeting and with no reload. It carries
+a note that it is AI-generated and may contain mistakes. The section also carries the one
+control for the request below — "Generate digest" or "Retry" — for the two kinds of member
+who may send it.
+
+`POST /api/meetings/:id/digest/generation` asks for a digest that no recording asked for,
+and takes no body. The digest says when there is something to ask for, in `availableAction`:
+`generate` for transcribed recordings with no current digest — transcribed before the flag
+was on — and `retry` for a digest that failed. The meeting's host and the uploader of any of
+its transcribed recordings may send it, and anyone else gets a 404. For those two, a digest
+that is current, queued, or generating answers 409, and so does every digest while the flag
+is off.
+
+- **Every generation is a paid request**, typically under a cent and a few seconds; the API
+  log has each one's duration, model, and cost, and no response carries them.
+- **A digest that fails is not retried unless somebody asks**, and fails nothing else: the
+  recordings stay ready and their transcripts still open. `MEETING_DIGEST_TIMEOUT_SECONDS` (default 240) bounds one
+  generation, and a meeting whose transcripts are together past about 1.7 million characters
+  — some thirty hours of speech — fails as too long rather than being digested in part.
+- **Setting the flag back to `false`** sends nothing more and keeps every digest already
+  stored readable. Recordings transcribed while it was off get no digest when it comes back,
+  until the host or their uploader asks for one.
+- **`docker compose` does not pass these two variables to its `api` service**: the digest is
+  set up for an API run with `pnpm dev`.
+
 ## Scripts
 
 Run from the repository root:
@@ -169,14 +225,17 @@ pnpm --filter=@repo/web test:e2e        # Playwright; starts the API and the web
 ```
 
 The browser suite also starts a fake transcriber on 3102 and points its API at it, so neither
-suite needs Whisper running.
+suite needs Whisper running. Its API is booted with the meeting digest on and a scripted
+stand-in for Claude inside it (listening for the specs on 3103), so neither suite needs an
+Anthropic token or the network either.
 
 Both truncate the `users` table in whatever `DATABASE_URL` points at, and they share it, so run
 one at a time.
 
-A third suite sends real requests to Anthropic through the Claude Agent SDK. It needs no
+A third suite sends real requests to Anthropic through the Claude Agent SDK — among them the
+transcripts of a made-up meeting, to check the digest Claude writes from them. It needs no
 database, but it does need the network and `ANTHROPIC_AUTH_TOKEN` in `apps/api/.env.local`
-or `apps/api/.env`:
+or `apps/api/.env`, and a run costs a few cents:
 
 ```bash
 pnpm --filter=@repo/api test:live

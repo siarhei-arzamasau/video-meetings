@@ -27,21 +27,24 @@ src/
   configure-app.ts      Every global that shapes request handling
   app.module.ts         Root module — register new feature modules here
   config/               Environment contract
-  common/               Cross-cutting filters and interceptors, and shutdown/ for what
-                        the process does with its connections when it is stopped
+  common/               Cross-cutting filters and interceptors, shutdown/ for what the
+                        process does with its connections when it is stopped, and
+                        processing/ for what every polling worker shares
   modules/<feature>/    One directory per feature: module, controller, specs, and
                         commands/ — a command class plus its handler per write operation.
-                        queries/ mirrors it where a read crosses a module boundary.
+                        queries/ mirrors it where a read crosses a module boundary,
+                        events/ where a module publishes an event or handles one.
                         services/ holds collaborators the handlers share.
                         storage/ and processing/ appear where a module owns bytes on disk
-                        or a background worker (meeting-files is the one that does).
+                        or a background worker (meeting-files has both, meeting-digests
+                        a worker).
   generated/prisma/     Prisma client output — generated, gitignored, never edit
 prisma/
   schema.prisma         Datasource, generator, and models
   migrations/           Applied migrations — never edit one that has shipped
 ```
 
-Four worked examples, in the order worth reading them:
+Five worked examples, in the order worth reading them:
 
 - **`auth`** — the shape to copy for a new feature module. CQRS, one command class and one
   handler per write, and that is the house style for anything new, not an exception.
@@ -52,6 +55,11 @@ Four worked examples, in the order worth reading them:
 - **`meeting-files`** — the largest: two commands, a read service, a storage service over
   `fs`, and two polling workers. It has its own section below because most of what it does
   right is invisible in the code.
+
+- **`meeting-digests`** — read after `meeting-files`, whose worker it copies. It is also the
+  one module that reaches three others — `meeting-files`, `meetings`, `user` — and imports
+  none of them: four queries, one event in and one out, and the visibility read. It has a
+  section of its own below.
 
 `health` still shows the minimum a module needs when it changes no state and reaches no
 database; a module with nothing to write needs no commands.
@@ -67,8 +75,12 @@ straight from a controller and a service is not a violation of the house style �
 `MeetingsService` is the example, and routing its two lookups through a `QueryBus` for
 symmetry with `POST /meetings` would be ceremony. The test is whether the read crosses a
 boundary, not whether it sits next to a write. **Nothing else from `@nestjs/cqrs` is used**:
-no sagas, and no events beyond the one in-process `EventBus` the file worker publishes on
-(see _Events and the SSE stream_). `CqrsModule` is imported per feature module, never
+no sagas, and two events on the in-process `EventBus` — `MeetingFileChangedEvent` and
+`MeetingDigestChangedEvent` (see _Events and the SSE stream_). The files stream subscribes to
+the bus by hand, for both; the digest's two `@EventsHandler`s — one for a recording that was
+transcribed, one for a file that was deleted — both handle the files' event, and like a
+command handler neither does anything until it is in its module's `providers`. `CqrsModule`
+is imported per feature module, never
 globally, so a module's dependencies stay readable from its own `imports` array; the buses
 still behave globally at runtime, which is what lets two modules share one without depending
 on each other.
@@ -369,6 +381,45 @@ only for a field a file route actually decides with. `MeetingFilesModule` does n
 `MeetingsModule`, and `MeetingsController.findOne` still reads from `MeetingsService` — two
 reads sharing one `visibleTo` is the accepted price of the in-module read staying off the bus.
 
+### The third boundary — what meeting-digests asks of the others
+
+`meeting-files` answers two queries for whatever describes a meeting as a whole:
+`FindTranscribedRecordingsQuery(meetingId)` — which recordings are transcribed, id and
+uploader — and `FindMeetingTranscriptsQuery(meetingId, maxCharacters)` — what was said in
+them, in upload order. Three things about them:
+
+- **Neither carries a user or checks visibility.** Who may ask about the meeting is the
+  caller's to have decided, as it is for `FindUserByIdQuery`; a route that dispatches one
+  without `FindVisibleMeetingQuery` first has published a meeting's transcripts.
+- **A storage key never crosses.** The handlers answer ids and text; a path under
+  `MEETING_FILES_DIR` is this module's business.
+- **The transcripts query stops at `maxCharacters` instead of loading past it**, and answers
+  `withinLimit: false` with no text at all rather than part of it. A transcript is checked by
+  its size on disk before it is read — UTF-8 never spends more than three bytes on what a
+  string's `length` counts as one — so memory is bounded by the limit, not by a meeting of
+  fifty one-gigabyte recordings.
+
+**For an action item's owner it asks two more, of the other two modules**:
+`FindMeetingMemberIdsQuery(meetingId)`, which `meetings` answers — the host and the
+participants, ids only, `null` for no such meeting — and `FindUsersByIdsQuery(userIds)`,
+which `user` answers — an id and a display name each, in one statement.
+
+- **Neither carries a user or checks visibility either.** The worker has no user to carry,
+  and the read has already decided. A route that dispatched `FindUsersByIdsQuery` with ids
+  its caller chose would have published every user's name.
+- **`FindUsersByIdsQuery` selects two columns instead of mapping a row down.** It is the one
+  read that hands a user's name to somebody else, so an email address is never loaded on
+  the way; `UserDisplayName` is declared beside it for the reason `UserCredentials` is
+  declared beside its queries.
+- **The member ids are a query of their own, not a third column on
+  `FindVisibleMeetingQuery`**, which stays the two columns every file route pays for.
+
+**And one event comes back.** `MeetingDigestChangedEvent(meetingId, digest)` is published by
+`meeting-digests` after every committed write, and the files stream forwards it to the
+meeting's open pages. That class — a meeting id and a `MeetingDigest`, imported for an
+`instanceof` — is everything `meeting-files` knows of the digest; neither module is in the
+other's `imports`, and neither reads the other's table.
+
 ## Meeting files (`src/modules/meeting-files`)
 
 What the code cannot say for itself. The PRD is `docs/specs/2026-09-19-meeting-file-upload-prd.md`
@@ -444,13 +495,14 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   status at `processing` and status alone cannot tell the current holder from the one it
   replaced. A caller that gets `false` has lost a race and discards its result rather than
   overwriting — including removing the thumbnail it wrote, which nothing else would find.
-- **A slow claim keeps its lease with a heartbeat.** `startLeaseHeartbeat` renews the lease
-  every `lease / 3` seconds through the repository's `renewLease` — raw as well, because it
+- **A slow claim keeps its lease with a heartbeat.** `startLeaseHeartbeat` — in
+  `src/common/processing`, beside `PollingLoop`, because the digest worker in another module
+  uses both — renews the lease every `lease / 3` seconds through the repository's `renewLease` — raw as well, because it
   returns the lease the row now holds, and the final conditional write is on the value the
   _last renewal_ set, not the one the claim did. A renewal updating zero rows means the row is
   no longer ours — the heartbeat reports `null`, the conditional writes miss on purpose, and the
   result and its bytes are discarded. Renewals never overlap and `stop()` waits for the one in
-  flight, since each is conditional on the lease the previous one set. Both workers use it. No
+  flight, since each is conditional on the lease the previous one set. Both workers here use it. No
   file step outlasts the 60 second lease today; a transcription always does, and passes an
   `onLost` so its request is hung up the moment the claim is gone rather than minutes later.
 - **`attempts` counts claims, not failures.** A row claimed a fourth time is failed unrun; a
@@ -555,6 +607,13 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   carries `attempts` and `leased_until` for the same reason `meeting_files` does, and
   `expires_at` is the whole lifecycle — aborting sets it to `now()`, so abort and expiry are one
   path in the worker and the row needs no status column.
+- **That "now" is the earlier of two clocks, and has to be.** `findOwned` compares the expiry
+  with this process's clock and every claim with PostgreSQL's `now()`, and the two are never
+  quite one — the database's is a VM's. Stamped with either alone, a session ended on purpose
+  stayed live to the other for as long as they differed: not yet the worker's to collect, and
+  still open to a completion. That failed `collects an aborted session` once in 500 runs.
+  `expire` writes `LEAST(now(), <this clock>)`, and `meeting-file-upload-expiry.e2e-spec.ts`
+  holds it to that with this process's clock moved five seconds each way.
 - **What bounds the disk is the per-uploader cap, not the file cap.** Since a session counts
   against nothing per meeting, and an uploader need never call `complete`, the file cap alone
   let one account open 1 GiB sessions without limit and fill the volume for a day.
@@ -633,6 +692,20 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   state announced late, and dropping it is right either way. The purge's repeat of `deleted`
   still goes out. The last 1,024 deletes are remembered, which a late event, trailing its
   delete by milliseconds, cannot outrun.
+- **The digest is a second event on this stream, and it orders itself.**
+  `MeetingDigestChangedEvent` is forwarded as `event: digest` beside `event: file`: a second
+  stream would double every meeting page's long-lived connections against a browser's six per
+  origin, and who may watch a meeting's digest is who may watch its files. Its data is the
+  whole `MeetingDigest` as `GET :id/digest` answers it — read again after the write, by the
+  code that route runs, because what a digest shows depends on which recordings are
+  transcribed now and no write to its row knows that. **It carries `version`, which is why it
+  goes through neither mechanism above.** A subscriber keeps the higher of two, and that one
+  comparison settles everything the files contract needs machinery for: two writes announced
+  out of order, an event that arrives after the fetch that already saw it, and a snapshot
+  taken one write later than the write that caused it. `MeetingFileHandOvers` and
+  `AnnouncedDeletes` exist because a `MeetingFile` has nothing to compare; do not put the
+  digest through either, and do not send a digest without its version having risen for
+  whatever changed. A client that does not know the name ignores it, as a heartbeat is.
 - **Fan-out is in-process, and that fixes a single API instance.** `MeetingFileEventsService`
   subscribes once per process and keeps a `Subject` per watched meeting; `GET :id/files/events`
   is a `@Sse` route merging that with a heartbeat, ended by `MEETING_FILES_STREAM_TTL_SECONDS`.
@@ -759,8 +832,11 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
 
 ## Claude (`src/modules/claude-agent`)
 
-`ClaudeAgentService.runPrompt(prompt, model)` is a prompt in and text out, through the Claude
-Agent SDK. No route reaches it; a feature that wants Claude imports `ClaudeAgentModule`.
+`ClaudeAgentService` is Claude through the Claude Agent SDK, two ways: `runPrompt(prompt, model)`
+is a prompt in and text out, and `runStructuredPrompt(request, signal)` is a system prompt, a
+prompt, and a JSON schema in and an object bound to that schema out, with its model, cost, and
+token counts. No route reaches either; a feature that wants Claude imports `ClaudeAgentModule`,
+and the meeting digest is the one that does.
 
 - **The SDK is Claude Code as a library, not an HTTP client.** Each call starts a Claude Code
   process — a native binary of about 220 MB, installed as a per-platform optional dependency —
@@ -775,15 +851,421 @@ Agent SDK. No route reaches it; a feature that wants Claude imports `ClaudeAgent
   started it, which would point the SDK, configured token and all, at that session's endpoint.
   A variable the process really needs, a proxy for one, is added to that list.
 - **`ANTHROPIC_AUTH_TOKEN` is the only credential, and its absence is an error, not a
-  fallback.** It is optional at boot, since nothing in a request path needs it yet. Without the
-  check in `requireAuthToken` the process would authenticate with whatever the host has — on a
+  fallback.** It is optional at boot while `MEETING_DIGEST_ENABLED` is off, since nothing then
+  needs it, and required with it on. Without the check in `requireAuthToken` the process would authenticate with whatever the host has — on a
   developer's machine, their own Claude login — and the call would succeed on the wrong account.
 - **Never import the SDK at the top of a file.** It is ESM-only. Node 24 loads it from this
   CommonJS build regardless, but Jest fails on it with `Cannot use import statement outside a
 module` unless Node runs with `--experimental-vm-modules`, and `ClaudeAgentModule` is in
   `AppModule`, so a top-level import would fail every e2e spec before its first test. The
-  `await import()` inside `runPrompt` runs only when a prompt is sent; everything else the
-  service takes from the package is `import type`.
+  `await import()` inside `ClaudeAgentSdkLoader.loadQuery` runs only when a prompt is sent;
+  everything else the module takes from the package is `import type`.
+- **`ClaudeAgentSdkLoader` is the seam the service's own decisions are tested through, and
+  nothing else.** The specs beside the service hand it a scripted process
+  (`claude-agent-process.fixture.ts`) and hold it to what it decides around one: that nothing
+  is started without a token, what a process is started with — the options and the
+  environment, variable by variable — and what becomes of a call its caller hung up on. They
+  say nothing about how the real process behaves; that stays `test:live`'s, because a scripted
+  SDK only repeats back what a spec assumed about it. Do not bind a fake over the loader to
+  give a feature's tests a Claude: those fake `ClaudeAgentService` itself.
+- **A schema-bound answer fits the single turn, and that was measured, not assumed.** With
+  `outputFormat` the SDK gives the model one tool of its own, `StructuredOutput` — there
+  whatever `tools: []` says, and the only tool the process then holds — and the model answers
+  by calling it. That call ends the turn with no second request, so `maxTurns` stays 1; the
+  result reports `num_turns: 2` all the same, counting the tool's reply. The numbers are beside
+  `SINGLE_TURN`. What the cap costs is the correction: an answer the SDK rejects against the
+  schema has no second request to be put right in, and ends as a failure. Raise it only for
+  that, and only with the process still holding no tool that touches the host.
+- **The structured output is `unknown`, and the caller validates it again.** The schema was
+  enforced by another process on the provider's word. A caller that stores or renders the
+  answer checks the shape itself, with bounds on every length.
+- **`signal` hangs up, and a call that was hung up on never resolves.** The SDK takes a
+  controller, closes the process's input on abort, and kills it about two seconds later — so
+  the rejection trails the abort by that much, and an answer that lands inside those two
+  seconds is discarded with its cost on the error. Without that, whether a time limit ended in
+  an answer would depend on which side of it the last token fell. The failure is `FAILED`
+  whatever the reason: the signal is the caller's, and so is knowing why it fired. The signal
+  is checked three times — before the call, after the SDK has loaded, and after the result —
+  and `claude-agent.service.abort.spec.ts` has a case for each; none of them is redundant.
+- **What a result becomes is `outcomeOf`, a pure function with a table beside it**
+  (`services/claude-agent-outcome.ts`). An API error arrives as a _successful_ result whose
+  text is the error; a refused token is told by the assistant message's `error`; a prompt past
+  the context window by the result's `terminal_reason` — `blocking_limit` when Claude Code
+  declines to send it, which costs nothing — and never by the text beside it, which is the
+  SDK's to reword. A shape the SDK surprises you with is a new row in that spec, taken from a
+  real run. `ClaudeAgentError` carries the `failure` a caller branches on, a message that is
+  **for the log and never for a user**, and `costUsd` whenever a result reported one: an
+  answer that could not be used was paid for all the same.
+- **Input is billed at the cache-write rate, a quarter above the listed one.** Claude Code
+  marks the prompt for Anthropic's prompt cache, and a one-turn call never reads it back.
+  The measurements are in `src/config/meeting-digest.defaults.ts`.
+
+Its one caller is `MeetingDigestGenerator` (`src/modules/meeting-digests`): transcripts in, a
+validated digest out, one request and no state. What calls the generator, and what is done
+with its answer, is the next section. The PRD is
+[`docs/prd-meeting-digest-summary-action-items-decisions.md`](../../docs/prd-meeting-digest-summary-action-items-decisions.md)
+and the decisions under it are in
+[its plan](../../docs/plan-meeting-digest-summary-action-items-decisions.md). Six things about
+it that read like omissions:
+
+- **The transcripts are sent whole or not at all.** Past `MAX_DIGEST_TRANSCRIPT_CHARACTERS`
+  the prompt builder throws and nothing is sent; nothing is ever cut to fit or summarised in
+  parts, because a digest of part of a meeting would be shown as the digest of the meeting.
+  The cap counts characters — tokens cannot be counted without asking Anthropic — so a denser
+  script can pass it and be refused by the model, which ends in the same failure.
+- **A transcript is not escaped, and the answer is not cleaned.** What was said goes into the
+  prompt as it was said, markup and text addressed to the model included; the instructions are
+  what keep it from being obeyed, and `test:live` holds the real model to that. So a
+  transcript can hold a `</recording>` of its own, which is why the instructions call the
+  _whole user message_ transcript rather than "what is inside a recording", and why the
+  injection fixture speaks from outside one. The guard keeps markup as the characters it is:
+  the digest is rendered as text, and the place that renders is the place that knows what is
+  safe.
+- **A blank transcript is sent, and only no transcript at all is refused.** Whisper
+  transcribes silence as empty text, and that recording is still one of the meeting's. The
+  instructions say what the digest of recordings with no speech is — a summary that says so,
+  and two empty lists — so a caller has one behaviour to rely on and this code never writes a
+  summary of its own. A caller that would rather not pay for it decides that for itself.
+- **A list past its bound is cut, and the summary says so.** `MAX_DIGEST_ITEMS` is fifty of
+  each; a meeting that states more gets the most important fifty and a closing sentence that
+  the list is not complete, because part of a list shown as all of it is the PRD's "part
+  presented as the whole" in small. The answer has no field for it — the sentence is the
+  model's, in the summary — and a model that returned all sixty instead would fail the call,
+  there being no second turn to cut them in. `test:live` measured that it does not.
+- **An owner in the answer is a name and can be nothing else.** The schema has no field for a
+  user and the guard refuses an answer with an extra one, so no answer can point at a
+  participant. Linking a name to one is the API's decision, made from the meeting's members.
+- **The guard is all or nothing.** One unfit field refuses the whole answer, and its `problem`
+  names a path and a rule without quoting the answer — it is for a log.
+
+The cap and the time limit's default are measurements, stated with their numbers beside
+`DEFAULT_MEETING_DIGEST_TIMEOUT_SECONDS`. Re-measure when the model changes, **and whenever
+the instructions do**, since they are part of every prompt: `MEETING_DIGEST_MEASURE_CHARACTERS`,
+`MEETING_DIGEST_MEASURE_RUSSIAN_CHARACTERS`, and `MEETING_DIGEST_MEASURE_OUTCOMES` switch on
+the runs of `test:live` that are too expensive to be on by default
+(`test/meeting-digest-measure.live-spec.ts`, which says what each costs).
+
+## Meeting digests (`src/modules/meeting-digests`)
+
+A meeting's summary, action items, and decisions, generated from the transcripts of its
+recordings, stored, and served at `GET /api/meetings/:id/digest`. The contract is
+[the PRD](../../docs/prd-meeting-digest-summary-action-items-decisions.md); every decision
+under it, and the phases, are in
+[its plan](../../docs/plan-meeting-digest-summary-action-items-decisions.md). **All seven
+phases are built**: a recording that reaches Transcribed gives its
+meeting a digest, anyone who can see the meeting can read it, a deleted recording takes away
+what was built from it, every change is sent to the meeting's open streams, an action item's
+owner is reported as the member of the meeting the spoken name identifies, and the host or
+a transcribed recording's uploader can ask for a digest that no recording asked for —
+`POST /api/meetings/:id/digest/generation`. The meeting page shows the digest, follows
+it over the stream, and is that route's one caller: "Generate digest" or "Retry" in the
+digest's section ([the web guide](../web/AGENTS.md#the-digest)).
+What a reader of the code would get wrong:
+
+**What leaves, and when**
+
+- **Switched on, it sends transcript text to Anthropic — which the transcription PRD ruled
+  out, and is why `MEETING_DIGEST_ENABLED` ships off.** What is sent is what was said, under
+  an ordinal: no file name, id, email address, display name, or storage path, and an e2e
+  spec reads the captured prompt to hold it to that. Give the prompt a field only together
+  with a decision about that field leaving the deployment. **That includes the members'
+  names**, which would help the model spell an owner and are read only after it has
+  answered (_Owners_, below).
+- **The setting stops new work and nothing else**, as the transcription's does. Off, a newly
+  transcribed recording asks for nothing, the worker claims nothing, and a `QUEUED` row
+  waits; a stored digest is still served, and both rules about recordings still apply to it,
+  because the read applies them. The request route answers 409 and the read offers no
+  `availableAction`. The handlers, the worker, and the read ask `ConfigService` when they
+  run, so the e2e suite flips it between tests. **Nothing is generated when it comes back**
+  for a recording transcribed while it was off: nothing revisits a transcribed recording,
+  and the way forward is somebody asking (_Generate and Retry_, below).
+- **With it on, a missing `ANTHROPIC_AUTH_TOKEN` stops the boot** — its presence, never
+  whether Anthropic accepts it. A refused token fails a digest, not the process that serves
+  every upload.
+
+**The row**
+
+- **One row per meeting, and its status and its content are two things.** `status` is where
+  the _latest_ generation stands; the summary and the three child tables are what the last
+  _successful_ one stored. A generation that fails leaves the content where it was, so a
+  digest can be `failed` and readable at once — the PRD's "if that replacement fails, it
+  stays, with the failure". The edges, and what takes each, are the table in
+  `services/meeting-digest-status.ts`.
+- **`requested_revision` is the whole of a request.** `MeetingDigestRepository.request` is one
+  upsert that bumps it. A claim remembers the revision it took, and the write that ends it is
+  `READY`, `FAILED`, or no status only if the revision has not moved — `QUEUED` otherwise.
+  All three go through `settle`, so a fourth way to end a claim gets the condition by being
+  written there. That is all of
+  "never two generations at once, and one more after a change": a request made while a
+  generation is out changes no status, takes no lock, and tells the worker nothing.
+- **Every fresh request resets the claim count, and so does a requeue.** `attempts` bounds
+  the crashes of one generation, not the life of a row: three recordings arriving one behind
+  another are three generations, and counting them as claims would fail the fourth unrun.
+- **Content is stored even when the row goes back to `QUEUED`.** An answer that arrives after
+  another request is still a whole digest of the recordings it names as its sources. The
+  read marks it out of date until its replacement lands.
+- **`version` rises with every change to what `GET` answers, and a lease renewal is not one.**
+  It is what orders an event against an event or a fetch: a client keeps the higher of two.
+  **Two writes exist only to move it** — a recording transcribed with the setting off, and a
+  deleted recording the digest was not built from. Neither changes a column; both change
+  `outOfDate`, which the read derives. An answer that changed under an unchanged version is
+  one a page holding the old answer has no reason to take. **Two changes do that all the
+  same**, each said where it is made: a linked owner's new name (_Owners_), and an
+  `availableAction` that left with a meeting's last recording (_Generate and Retry_).
+- **The raw statements set `id` and `updated_at` themselves.** `@default(uuid())` and
+  `@updatedAt` are the Prisma client's, and the request and the claim do not go through it —
+  hence `gen_random_uuid()`, `now()`, and a database default on `updated_at`.
+- **`@@index([meetingId])` beside `@unique` is deliberate**: `.claude/rules/prisma.md` asks
+  for an index on every foreign key by that name. The unique constraint is what `ON CONFLICT`
+  names.
+
+**The read**
+
+- **Both of the PRD's rules about recordings are derived on every read**, in
+  `toMeetingDigest`, from the digest's sources against the recordings transcribed now:
+  content is returned only while every source is still one of them, and is `outOfDate` when
+  one of them is not a source. So they hold with the setting off, before anything has reacted
+  to a delete, and in whatever order events arrive. Do not replace them with a column
+  somebody has to keep true.
+- **The digest row is read before the recordings**, and the order is the point: a recording
+  deleted between the two reads is already missing from the second, so its words are
+  withheld. The other way round, that delete would be served.
+- **The row and its three tables are read in one `REPEATABLE READ` transaction.** They are
+  four statements, and at the default isolation each sees what had committed when it began:
+  a generation landing between two of them gave a read the earlier summary over the later
+  action items. `complete`'s transaction is only half of "never half a digest"; this is the
+  other half. They are four awaited reads rather than one `include` because Prisma sends an
+  include's statements to a transaction's one connection together, which `pg` deprecates.
+- **A meeting with no digest is a 200 with `version: 0`**, not a 404 — the 404 is "you cannot
+  see this meeting", and one shape is all a client has to read.
+- **`MeetingDigestsService.currentOf` is the read without the question of who is asking**,
+  and `findOne` is the visibility check in front of it. An announcement has no user: it goes
+  to streams whose guard has already decided. One method for both is what makes an event the
+  answer `GET` would give — an owner's current name reaches the stream by being read there,
+  and `availableAction` by being decided there, and nowhere else. `describe` is its second
+  half, for a caller that already holds the row: the request route answers with the row its
+  own write left.
+
+**Owners**
+
+- **Claude answers a name; which member it is, is decided here, after the answer.**
+  `matchOwner` (`services/meeting-digest-owner.ts`) links a spoken name to a member when
+  every word of it is a word of exactly one display name among the host and participants,
+  compared without case. A word is a run of letters and digits, which is what lets a name
+  nobody chose — `ada.lovelace`, derived from an address — take part. **Nothing in it is
+  approximate**: no prefix, no initial, no dropped accent, no other script. A wrong owner is
+  worse than none, so a first name two members share links to neither.
+- **The members are read once the answer is in hand** — inside `runDigestGeneration`, under
+  its heartbeat, and only for an answer that is going to be stored. That order is why no
+  name is in the prompt.
+- **Members that cannot be read link nobody; they do not fail the digest.** That is the
+  opposite of an answer whose recordings cannot be checked, on purpose: storing those
+  unchecked could serve a deleted recording's words, while an owner left as the name that
+  was spoken is what the PRD prefers whenever a match is in doubt — and failing would throw
+  away a generation that was paid for. `ownerLinksOf` logs the cause and never rejects; the
+  names stay unlinked until the meeting's next generation.
+- **An owner is two columns: `owner_name`, always, and `owner_id`, when it matched.** The id
+  is written from the match and from nothing in the answer, whose schema has no field for
+  one. The name stays for the day the link is gone (`onDelete: SetNull`), when the item is
+  still somebody's.
+- **The read asks what each linked member is called now** — one `FindUsersByIdsQuery` for
+  all of a digest's owners, none for a digest that links nobody — so a rename shows with no
+  generation and no write. **It does not move `version` either** — one of the two changes
+  to what `GET` answers that do not: nothing tells this module a user was renamed, so an
+  open page keeps the old name until its next fetch. Closing that takes an event from the
+  user module, not a column here.
+- **This is the only place a user's display name is shown to another user**: to the members
+  of a meeting, for the members its digest links, on `GET …/digest` and on the `digest`
+  event that is the same answer — an id and a display name, never an email address. What
+  bounds it is that the ids come from the digest's own rows, matched from the meeting's
+  members, and never from a request. **It leans on a meeting's participants being fixed at
+  creation**: the day one can be removed, their links have to go with them, or the read has
+  to ask who is still in the meeting.
+
+**Deleted recordings**
+
+- **`WithdrawDigestWhenDeletedHandler` is tidying on top of the read, not what the rule
+  rests on.** `GET` withholds a digest from the moment the delete commits. What the handler
+  adds is that the words leave the tables, that a replacement is generated with nobody
+  asking, and that open pages are told. So a reaction that fails is logged and not retried,
+  and it runs with the setting off: the setting only decides about the replacement.
+- **What a delete does is one decision, `digestAfterDelete`, and one transaction.** Content
+  one of whose recordings is gone is removed — whichever file the event named, so a delete
+  whose reaction never ran is caught up with by the next. Then a replacement is asked for,
+  when the setting is on and a transcribed recording is left, or the status is cleared. With
+  no transcribed recording left there is no digest whatever the row said, `GENERATING`
+  included: that generation finds its claim gone, and its answer is not written.
+- **Clearing a `GENERATING` row does not hang up on its call at once, and that is accepted.**
+  The worker finds the claim gone at its next lease renewal, a third of the lease away. One
+  replica runs one loop, so nothing starts meanwhile; with two, a recording transcribed in
+  those seconds queues a row the other may claim while the first call is still open — one
+  call paid for and discarded, nothing wrong stored. It is the lapsed-lease overlap reached
+  sooner; the plan's decision 8 has what closing it would cost every other digest.
+- **Following a delete is `MeetingDigestDeleteFollower`'s, for both of its callers** — the
+  event handler, and the worker's second look below. The order of its steps is its
+  correctness, which is why there is one copy of them.
+- **The revision is read before the recordings, and a clear gives way to a request made
+  since.** A recording transcribed after the recordings were read is not among them, and its
+  request moved the revision; clearing regardless would leave a meeting with a recording and
+  nothing queued. **The row is locked before its sources are read**, which orders the
+  transaction against a generation's `complete` — without the lock it could remove the old
+  content's rows and blank the summary of the new content that landed between.
+- **Every `deleted` is listened to, a PDF's and the purge's repeat included**, because which
+  recordings a digest was built from is this module's to know: the event carries the file as
+  its delete read it. A meeting with no digest row costs one indexed read. The purge is
+  indistinguishable from the delete, and the one thing it repeats is the version of a digest
+  that was not built from the recording — an event carrying what the page already holds.
+- **The one thing read from the event is whether the file had a transcription status at
+  all — never which.** A status is given by the write that makes a file `ready` and the
+  delete is conditional on the status it read, so "had one" cannot be stale; "transcribing"
+  can, for a recording transcribed between the delete's read and its write. Any recording's
+  delete is therefore followed as one that may have taken the out-of-date mark with it, and
+  a version sometimes moves for nothing. Gate it on `transcribed` and that flip of
+  `outOfDate` goes out under the version a page already holds.
+- **The worker discards an answer one of whose recordings was deleted while Claude wrote
+  it.** `runDigestGeneration` asks which recordings are transcribed once the answer is in
+  hand, and reports `sourceDeleted` instead of sources; `DigestOutcomeRecorder.discard`
+  hands the claim back as a shutdown does, queued and uncounted, and logs what the answer
+  cost. A check that cannot be made fails the digest (`SOURCES_UNCHECKED`, the generic
+  sentence) rather than store unchecked.
+- **And it looks again once the answer is stored, which is not a repeat of the first look.**
+  The first cannot see a delete in progress, and one that commits just after it can be
+  followed _before_ the answer lands: that reaction finds none of the answer's sources and
+  changes nothing, and the answer is then stored naming a deleted recording, with nothing
+  queued. `MeetingDigestDeleteFollower.recheckStored` reads the recordings after `complete`
+  committed and follows the delete itself if one is gone. One of the two always sees the
+  other: a delete committed before that read is missing from it, and one committed after it
+  has its own reaction lock the row after the answer was stored. Drop either look and an
+  order is uncovered — the first also keeps a deleted recording's words from being written
+  at all in every order but that one.
+- **One gap is left on purpose.** A claim that finds no transcribed recording clears the
+  status and leaves the content rows, as phase 2 built it; they are withheld, and removed by
+  the next delete in the meeting. It is reached only when a delete's reaction never ran.
+
+**Generate and Retry**
+
+- **`POST :id/digest/generation` is the one caller of the edges into `QUEUED` that no
+  recording caused** — from no status, from `READY`, and from `FAILED`. Everything else
+  that queues a digest is a recording being transcribed or deleted. Generate and Retry are
+  this one request, `RequestMeetingDigestCommand`: what differs is the digest it finds, and
+  the digest says which it would be (`availableAction`).
+- **The gate, its order, and its 404s are the transcription retry's**: a meeting the caller
+  cannot see, then a caller who is neither the host nor the uploader of one of its
+  transcribed recordings — another participant included — each the 404 a guessed id gets.
+  The 409s come after, so only someone who could have asked ever learns what the digest or
+  the deployment refuses.
+- **One rule decides what the read offers and what the route accepts: `requestabilityOf`**
+  (`services/meeting-digest-action.ts`). No transcribed recording refuses everything; a
+  failed digest may always be retried; anything else may be generated unless it is queued,
+  generating, or built from exactly the recordings transcribed now. The mapper reports
+  `availableAction` where it allows and the write refuses where it does not, so change it
+  there and nowhere else. **Generate therefore covers more than "no digest"**: a digest that
+  is out of date with nothing queued, and one withheld by a delete nothing reacted to, are
+  both states nothing else will ever leave.
+- **This request can be refused, and a transcribed recording's cannot — on purpose.** A
+  recording that arrives while a generation is out is "one more after it". A person pressing
+  a button over a digest that is queued, generating, or current is asking for a second paid
+  request for the same recordings, and gets a 409.
+- **It is decided under the row's lock, and a meeting with no row is given an empty one
+  first so that there is a lock to take** (`requestGenerationByHand`). Without it two
+  requests for such a meeting both find nothing, and the second adds a revision to the row
+  the first queued — one more generation than was asked for, if a worker claims it between
+  them. The lock also orders the decision against a generation's `complete`, as a delete's
+  is ordered. What is then written is `requestGeneration`, like every other request: the
+  claim count back at 0, the reason cleared, the content left alone.
+- **The recordings it is decided against are read before that lock, and moving the read
+  under it is not the fix it looks like.** A recording deleted in between can let through a
+  request for a digest the delete has just made current — and leaves the row where the same
+  request committing just _before_ the same delete leaves it, `QUEUED` over current
+  content, because a delete takes no request back. Asking `meeting-files` from inside the
+  transaction would buy nothing but a second connection wanted by every transaction that
+  holds one, which empties the pool at as many requests at once as it has connections.
+- **The setting is asked about after the gate and before the write, and that is not the
+  transcription retry's answer.** That route queues with its setting off, to wait for it.
+  A digest queued while nothing is generated would be a paid request made the day somebody
+  switches the setting on, by nobody — so off is a 409, and `availableAction` is absent.
+- **No failure is refused a retry**, where the transcription's refuses the time limit: a
+  generation that was hung up on is a process the SDK has killed, not a Whisper still
+  running, and transcripts that are too long fail again unsent, at no cost.
+- **It answers the row as its own write left it** — read inside the transaction, before
+  the lock lets a worker at it — because answering `generating` would say the request did
+  something it did not. The claim's event carries a higher version.
+- **`availableAction` is the same for every reader**, and so for every stream: it says what
+  the digest allows, not whether this reader may ask. Who is shown the control is the
+  page's to work out from the files it holds.
+- **It is the second thing that can change under an unchanged `version`.** When the last
+  transcribed recording of a meeting with nothing stored is deleted, Generate is no longer
+  offered and nothing is written: a meeting with no digest row has no version to move, and
+  a delete never makes a row. The page is expected to offer the action only while its own
+  files list holds a transcribed recording, and to answer a 409 by fetching the digest
+  again. A setting that changed is a restart, which ends every stream and so has every page
+  fetch.
+
+**Announcements**
+
+- **`MeetingDigestAnnouncer` is the one publisher of `MeetingDigestChangedEvent`**, called
+  by whoever has just committed a write: the two request handlers — a transcribed
+  recording's, and Generate and Retry's — the delete follower, and the worker's recorder on
+  the branch where its conditional write landed. A write that lost its claim changed nothing
+  and announces nothing, as a refused request does. A new write to the row owes a call to
+  it — and, if it changes what `GET` answers without changing a status, a version to
+  announce it under.
+- **It reads the digest again instead of being handed one**, so an event is a snapshot at
+  least as new as the write it follows, and sometimes newer: two writes close together can be
+  announced as the same digest twice. That is harmless to a client that keeps the higher
+  version, and is why nothing here tries to pair an event with "its" write.
+- **The worker waits for the announcement of its claim before it asks Claude.** Started and
+  left behind, that read would as often find the answer a quick generation had already
+  stored, and no page would ever be told "generating". It costs a few reads per generation.
+- **It never rejects.** The write is committed; a read that fails costs the open pages one
+  event, repaired by the fetch they make when their stream next opens, and must not fail a
+  generation or undo a request.
+
+**The trigger and the worker**
+
+- **The trigger is the file event, not the transcription's transaction.**
+  `RequestDigestWhenTranscribedHandler` asks for a digest when a file is announced `ready` and
+  `transcribed` — the one event a file in that state is ever announced with. With the setting
+  off it asks for nothing, and moves the version of a stored digest instead, which that
+  recording has just made out of date. The request is a
+  second write, after the first committed, so a process killed between them leaves a
+  transcribed recording with nothing queued: exactly the state of one transcribed with the
+  setting off. A request that fails is logged and not retried, for the same reason. Closing
+  the window would mean `meeting-files` writing this module's table.
+- **`PendingDigestRequests` exists because the bus does not wait for a handler.** It holds
+  what the two handlers have started — a request, a delete being followed, and the
+  announcement after each — for shutdown, which must not close the connection under one, and
+  for `drain()`, which waits for them before it looks for work. A handler registers its
+  work before its first `await`, and that has to stay so: the bus calls it inside
+  `publish`, which is what makes "the transcription worker has drained" imply "the request is
+  one `settled()` waits for".
+- **The worker is the transcription worker's shape, on this module's row**: a polling loop of
+  its own where `MEETING_FILES_WORKER_ENABLED` is on, one `SKIP LOCKED` claim, the heartbeat,
+  a fourth claim failed unrun, a shutdown that hands the claim back uncounted from
+  `onModuleDestroy`, and `drain()` under the string token `MEETING_DIGEST_WORKER`. It runs
+  under the files worker's `MEETING_FILES_LEASE_SECONDS` and `MEETING_FILES_POLL_MS`: a
+  second pair of variables would only ever be set to the same values.
+- **What hung up on a generation is read from the signal's reason, not from two flags.** The
+  SDK's rejection trails an abort by up to two seconds, so by the time it arrives both the
+  time limit and a shutdown may have fired; an `AbortSignal.any` carries the reason of the
+  first, and that one ended the call. Two flags would hand a generation that timed out back
+  to the queue whenever a deploy landed in those two seconds, to time out again.
+- **A claim that finds no transcribed recording clears the status** — no call, no failure,
+  no retry: the meeting has no digest. **Unless a request was made since the claim**, which
+  leaves the row `QUEUED` instead: a recording transcribed after the worker looked asked
+  while the row was `GENERATING`, and its request changed nothing but the revision. A claim
+  that finds the transcripts past the cap fails as too long with nothing sent.
+- **Failures store copy, never causes**, as everywhere: four sentences from `@repo/shared` —
+  generic, the time limit, too long, repeated attempts — chosen in
+  `processing/meeting-digest-failure.ts` from what ended the generation. The SDK's and
+  Anthropic's words stay in the log. **There is no automatic retry**: every generation is a
+  paid request, and the first error ends it. That includes an answer the database will
+  not store — a NUL in its text is enough: `DigestOutcomeRecorder.complete` records the
+  generic failure rather than let the claim lapse and the meeting be sent, and paid for,
+  twice more.
+- **The log is the only place a generation's cost is kept.** Every one — stored, failed, or
+  discarded with a lost claim — is logged with its duration, its model, and what the SDK
+  says it cost. No row holds a cost and no response carries one.
 
 ## Bootstrap behaviour (`src/configure-app.ts`)
 
@@ -843,6 +1325,20 @@ to the in-network name (`whisper:8000`), and takes the flag from the root `.env`
 time limit is stated once for code, in `src/config/transcription.defaults.ts`, and restated
 in those two files because neither can import — change all three together. The model has no
 default in code at all: those two files are the only places the local one is named.
+
+**The digest's two variables are in the first two and not the third.** `MEETING_DIGEST_ENABLED`
+and `MEETING_DIGEST_TIMEOUT_SECONDS` are in the contract and `apps/api/.env.example`, with
+`ANTHROPIC_AUTH_TOKEN` required whenever the flag is on. `docker-compose.yml` hands its `api`
+service none of the three, so the digest is off there whatever the root `.env` says: nobody
+has yet checked that the image, which is Alpine, carries a Claude Code binary the SDK can
+start. Adding them to Compose goes with that check. The time limit's default is stated once
+for code, in `src/config/meeting-digest.defaults.ts`, with its measurements.
+
+**The contract is two classes, and `validate` checks them as one.** The transcription
+settings are `TranscriptionEnvironmentVariables` in `env.validation.transcription.ts`, which
+`EnvironmentVariables` extends — class-validator and class-transformer both inherit a
+parent's decorators. That is a file-size split, not a second contract: a new variable goes
+where its feature's are, and a third feature's would extend the chain.
 
 **A rule the contract cannot express with a type is still the contract's job.** `JWT_SECRET`
 is rejected when it is one of the placeholders this repository has published, not only when it
@@ -911,8 +1407,12 @@ excludes the pattern as it does specs, so a fixture never reaches `dist`.
 
 **`test:live` is a third suite, and the only one that leaves the machine.** `test/*.live-spec.ts`
 under `test/jest-live.json` sends real requests to Anthropic — nothing mocked, nothing replayed
-— so it needs the network and a working `ANTHROPIC_AUTH_TOKEN`, and costs a fraction of a cent
-a run. It needs no database, which is why it is not an e2e spec, and nothing runs it but you.
+— so it needs the network and a working `ANTHROPIC_AUTH_TOKEN`, and costs a few cents a run. It needs no database, which is why it is not an e2e spec, and nothing runs it but you.
+`claude-agent.live-spec.ts` is the SDK itself; `meeting-digest.live-spec.ts` is the digest's
+instructions held to the PRD by the real model, over the reference transcripts in
+`test/fixtures/meeting-digest` (`test/utils/meeting-digest-fixtures.ts` says what each is, and
+how the recording of the script beside them was made); `meeting-digest-measure.live-spec.ts`
+is the digest's measurements, every one of them skipped unless its variable asks for it.
 
 - **The token comes from the env files, not the shell.** The spec builds a `ConfigModule` over
   `ENV_FILE_PATHS`, the files `AppModule` reads, relative to `apps/api`. They are gitignored,
@@ -926,9 +1426,13 @@ a run. It needs no database, which is why it is not an e2e spec, and nothing run
 - **The refused-token test is what makes the other one evidence.** It swaps in a token
   Anthropic never issued and expects `AUTHENTICATION`; were the SDK using a credential it
   found elsewhere on the host, that call would succeed too.
+- **A digest spec asserts what a digest holds, never how it is worded.** The model words the
+  same meeting differently on every run, so the reference is checked for two action items, an
+  owner, and a decision by pattern — and a wording assertion would be a flaky one.
 
-A mocked SDK would only repeat back what the mock assumed, so the unit spec beside
-`ClaudeAgentService` covers the one thing decided before a request leaves: no token, no call.
+A mocked SDK would only repeat back what the mock assumed, so the unit specs cover what is
+decided on this side of it: no token, no call; a call already called off starts nothing; and
+`outcomeOf`'s table of what each result the SDK is known to produce becomes.
 
 E2E specs run against the **real database** `DATABASE_URL` points at — by default your
 development one; point it elsewhere if local rows matter to you. `test/utils/create-test-app.ts`
@@ -940,7 +1444,7 @@ test inherits another's rows (which is also what makes a repeated run independen
 `afterAll` so the final test's fixtures are not stranded. **The web app's Playwright suite
 truncates the same table, so the two must never run at the same time.**
 
-Seven things about that setup are easy to get wrong:
+Nine things about that setup are easy to get wrong:
 
 - **Environment must be set in `test/setup-env.ts`, not in a helper.** `ConfigModule.forRoot()`
   is evaluated when `app.module.ts` is _imported_ and prefers `process.env`, so anything
@@ -948,7 +1452,11 @@ Seven things about that setup are easy to get wrong:
   app signs tokens with the developer's local `JWT_SECRET` while the specs verify with the test
   one. The failure looks like broken signing code, not configuration. Jest `setupFiles` runs
   early enough. The same file points `MEETING_FILES_DIR` at a per-run temp directory and sets
-  `MEETING_FILES_WORKER_ENABLED=false`.
+  `MEETING_FILES_WORKER_ENABLED=false`. **It also sets `MEETING_DIGEST_ENABLED=false`**,
+  which looks redundant beside a default of off and is not: the env files are still read,
+  so a developer's `.env` with the digest on would otherwise switch it on for every spec —
+  the real `ClaudeAgentService` wherever the fake is not bound — and a run with
+  `ANTHROPIC_AUTH_TOKEN` exported empty would not boot.
 - **`start:e2e-web` must stay in step with it**: the same temp-dir idea, but the worker **on**
   with a fast poll, because the web app's browser suite watches the Processing chip disappear —
   and the same out-of-reach auth rate limit, because that suite registers through the UI in
@@ -956,6 +1464,28 @@ Seven things about that setup are easy to get wrong:
   switches transcription **on** and names `127.0.0.1:3102`, where that suite starts a fake of
   its own (`apps/web/e2e/fake-transcriber.mjs`); here the setting stays off except under
   `useTranscriptionSuite`.
+- **`start:e2e-web` does not run `src/main.ts`: it runs `test/e2e-web/main.ts` through
+  `ts-node`**, and that file is the browser suite's Claude. The Claude Agent SDK has no HTTP
+  seam to stand a fake behind, as Whisper has `TRANSCRIPTION_API_URL`, so the stand-in has
+  to be inside the process — and production code is given no way to ask for one. The entry
+  point is `main.ts` again with one provider overridden: the same `AppModule`, the same
+  `configureApp`, the same workers, and `ScriptedClaudeAgent` bound over `ClaudeAgentService`.
+  **The setting, the token, and the fake are switched together, in `test/e2e-web/environment.ts`,
+  and must stay together**: it sets `MEETING_DIGEST_ENABLED=true` and a placeholder
+  `ANTHROPIC_AUTH_TOKEN` (the boot check wants one, and the suite is run with the variable
+  exported empty) before `AppModule` is imported. Move the setting into the script and the
+  day someone points that script back at `nest start`, every recording the browser specs
+  transcribe is a paid request to Anthropic. What the scripted Claude does is decided by
+  directives in the transcripts it is sent — the table is in `digest-script.ts` — and a
+  generation is held, or failed, only while a spec holds the key its transcript names, on a
+  loopback-only control port (3103) that is a listener of the entry point's own, not a route
+  of the application. **That port also switches `MEETING_DIGEST_ENABLED` in the running
+  process** (`ConfigService.set`, as `configureDigest` does for the specs here), because a
+  recording "transcribed while the setting was off" is the state Generate exists for and a
+  spec cannot restart the API. That stays inside the rule above: what the setting gates in
+  this process is the scripted Claude, whichever way it is switched. Nothing under `test/e2e-web` is covered by `pnpm typecheck`; `ts-node`
+  type-checks it at every boot, so a changed `src` signature it uses stops the browser suite
+  from starting rather than failing a spec.
 - **`maxWorkers: 1` is load-bearing**, for the same reason: Jest parallelises across spec
   files, and in parallel they delete each other's fixtures and a seeded `register` starts
   returning 409. Remove it only alongside per-worker database isolation.
@@ -963,8 +1493,9 @@ Seven things about that setup are easy to get wrong:
   table and column names directly. A response is not evidence about what was written: asserting
   through the API would reuse the same `include` the implementation does, so a row the code
   never meant to write — the host landing in `meeting_participants` — would be invisible.
-  `truncateUsers` cascades to `meetings`, `meeting_files`, and `meeting_file_uploads`, which is
-  why the file specs need no cleanup of their own and why there is deliberately no second
+  `truncateUsers` cascades to `meetings`, `meeting_files`, `meeting_file_uploads`, and the
+  four `meeting_digest*` tables, which is why the file and digest specs need no cleanup of
+  their own and why there is deliberately no second
   truncation helper to disagree with it about what "clean" means. The files' helpers also seed
   states a route cannot produce on demand (`leased_until`, `attempts`, `purged_at`, a past
   `expires_at`, a transcription claim whose worker died).
@@ -980,6 +1511,27 @@ Seven things about that setup are easy to get wrong:
   request the worker aborts really is hung up on (`hangUps`). `useTranscriptionSuite` starts
   it, points the application at it, and switches the setting on before each test; every other
   spec file runs with transcription off, which is why none of them had to change.
+- **`test/utils/fake-claude-agent.ts` is the Claude the digest specs talk to**, bound over
+  `ClaudeAgentService` itself through `useApiSuite({ overrides: [claude.override()] })` — not
+  over the SDK loader, and not over the generator. So the prompt builder, the answer's guard,
+  and the worker all run for real, `calls` holds the exact text that would have left for
+  Anthropic, and no spec needs a token or the network. Its default answer is `digestOf` the
+  prompt — one decision per recording, quoting its transcript — which is what lets a spec
+  assert "the digest covers all three" without a model's wording. `useDigestSuite` resets it
+  and switches the setting on before each test; its `transcribe` takes a recording all the
+  way to Transcribed through the fake Whisper, and returns once the request that made has
+  been written — as `remove` deletes a file and returns once the digest has followed it,
+  both by waiting on `PendingDigestRequests`. `watch` opens the meeting's files stream and
+  hands over its `digest` events one at a time, each held to a version above the last — so
+  every spec that reads the stream is also a spec of the rule a page relies on. `ask` is
+  "generate now", returned unawaited because most of what a spec says about that route is
+  which status it answers. Every other spec file runs with the digest off.
+- **An environment the contract refuses does not throw when `AppModule` is imported.**
+  `ConfigModule.forRoot` is `async`, so the refusal is a rejected promise inside the module's
+  `imports` that nothing awaits until Nest compiles it — and an `expect(import(…))` passes
+  while the rejection surfaces in whichever test runs next. `meeting-digest-setting`'s boot
+  cases therefore compile the module, in `jest.isolateModulesAsync`, with `@nestjs/testing`
+  imported inside the isolate too so the two agree on what a module is.
 - **`test/utils/jwt.ts` verifies tokens with `node:crypto` alone**, never the library the API
   signs with, so a token only `@nestjs/jwt` can read fails the assertion. It is checked against
   a signature produced by `openssl dgst -sha256 -hmac`. Do not "simplify" it into `JwtService`.
@@ -991,6 +1543,7 @@ Update it in the same commit as the change;
 one owns what is specific to `@repo/api`. The sections above each name what would invalidate
 them — a global added to `configure-app.ts`, a Prisma upgrade that moves the constraint `meta`
 shape, a fourth message on the auth/user boundary, a new exemplar module replacing one of the
-four, the first event or saga, a change to the `apps/api/**` lint overrides. Adding a feature
+five, a third event or the first saga, a change to the
+`apps/api/**` lint overrides. Adding a feature
 module that follows the existing shape needs no update: document the shape, not each module
 that uses it.

@@ -1,0 +1,227 @@
+import type { Logger } from '@nestjs/common';
+
+import { startLeaseHeartbeat } from '../../../common/processing/lease-heartbeat';
+import type { LeaseRenewer } from '../../../common/processing/lease-heartbeat';
+import type { MeetingTranscripts } from '../../meeting-files/queries/find-meeting-transcripts.query';
+import { MAX_DIGEST_TRANSCRIPT_CHARACTERS } from '../meeting-digest.constants';
+import { MeetingDigestError, MeetingDigestFailure } from '../meeting-digest.error';
+import type { MeetingDigestAnswer } from '../services/meeting-digest-answer';
+import type { ClaimedDigest } from '../services/meeting-digest-claim.repository';
+import type { GeneratedMeetingDigest } from '../services/meeting-digest-generator';
+import type { DigestOwnerLinks } from '../services/meeting-digest-owner';
+
+/** What hung up on a generation. The first of them to fire is the one that ended it. */
+export enum DigestInterruption {
+  TIME_LIMIT = 'TIME_LIMIT',
+  SHUTDOWN = 'SHUTDOWN',
+  CLAIM_LOST = 'CLAIM_LOST',
+}
+
+/** An answer as it arrives: what it was built from, and nothing yet decided about keeping it. */
+interface AnswerInHand {
+  generated: GeneratedMeetingDigest;
+  sourceFileIds: ReadonlyArray<string>;
+}
+
+/**
+ * An answer every one of whose recordings was still transcribed when it arrived, with each
+ * owner it names matched against the meeting's members.
+ */
+export interface StorableDigest extends AnswerInHand {
+  ownerLinks: DigestOwnerLinks;
+}
+
+export type DigestRunOutcome =
+  | StorableDigest
+  /** An answer one of whose recordings was deleted while it was written: not to be stored. */
+  | { generated: GeneratedMeetingDigest; sourceDeleted: true }
+  /** The meeting has no transcribed recording left: there is nothing to send. */
+  | { nothingToGenerate: true }
+  | { error: unknown };
+
+/** How one generation ended, with what the caller needs to record it. */
+export interface DigestRun {
+  /** The lease the row holds now — `null` once a renewal found the claim gone. */
+  held: Date | null;
+  outcome: DigestRunOutcome;
+  /** What had hung up on the generator when it settled, if anything had. */
+  interruptedBy: DigestInterruption | null;
+}
+
+export interface DigestRunOptions {
+  claimed: ClaimedDigest;
+  /** The meeting's transcripts in upload order, or the fact that they are past the cap. */
+  readTranscripts: (meetingId: string) => Promise<MeetingTranscripts>;
+  /** The ids of the meeting's transcribed recordings, asked for once an answer is in hand. */
+  readTranscribedIds: (meetingId: string) => Promise<ReadonlyArray<string>>;
+  generate: (
+    transcripts: ReadonlyArray<string>,
+    signal: AbortSignal,
+  ) => Promise<GeneratedMeetingDigest>;
+  /** Which member each owner an answer names is, asked only for an answer that is kept. */
+  linkOwners: (meetingId: string, answer: MeetingDigestAnswer) => Promise<DigestOwnerLinks>;
+  leases: LeaseRenewer;
+  logger: Logger;
+  leaseSeconds: number;
+  limitSeconds: number;
+  /** Aborted when the process is shutting down. */
+  shutdown: AbortSignal;
+}
+
+/**
+ * Reads a meeting's transcripts and asks for one digest of them, keeping the claim's lease
+ * alive meanwhile, and reports how it ended. It writes nothing: what the row is told is the
+ * caller's decision.
+ *
+ * Three things hang up on the generator, and the caller is told which did: the time limit,
+ * shutdown, and a renewal that found the claim gone, after which `held` is `null` and there
+ * is nothing left to write. **Which one is read from the signal's own reason, as the
+ * generator settles** — the first to fire is the reason an `AbortSignal.any` carries. The
+ * rejection trails an abort by up to two seconds, the SDK's grace, so two flags read at that
+ * moment could both be up: a deploy that begins just after the limit fired would hand the
+ * claim back to be run, and to time out, again. And a signal that fires after the generator
+ * has settled did not end it, which is why nothing is read once the heartbeat is stopping.
+ *
+ * The time limit bounds the request to Claude and starts with it; reading the transcripts
+ * off the local disk is not what the limit is a measurement of.
+ *
+ * **An answer is reported for storing only if every recording it was built from is still
+ * transcribed**, asked once it is in hand and while the lease is still being renewed. A
+ * generation takes seconds, and a recording deleted in them must not come back as a digest;
+ * that answer is reported as `sourceDeleted`, and the caller hands the claim back. A delete
+ * that commits after this looked is the read's to withhold; nothing here can see a file
+ * being deleted, only that one has been. **So this look is not the last**: the caller takes
+ * a second once the answer is stored, because a delete that lands between the two can be
+ * followed before the write and find nothing of the answer to remove.
+ *
+ * **An answer's owners are matched to the meeting's members here too**, after its recordings
+ * were checked and under the same heartbeat: the members' names are read once the answer is
+ * in hand, which is how no name is ever part of what was sent.
+ */
+export async function runDigestGeneration(options: DigestRunOptions): Promise<DigestRun> {
+  const { claimed, leases, logger, leaseSeconds, shutdown } = options;
+  const claimLost = new AbortController();
+  const heartbeat = startLeaseHeartbeat({
+    leases,
+    logger,
+    claimId: claimed.id,
+    subject: `Digest of meeting ${claimed.meetingId}`,
+    lease: claimed.leasedUntil,
+    leaseSeconds,
+    onLost: () => claimLost.abort(),
+  });
+  let outcome: DigestRunOutcome;
+  let interruptedBy: DigestInterruption | null = null;
+
+  // Everything up to `heartbeat.stop()` is inside the `try`: a throw that escaped would
+  // leave the heartbeat renewing a claim nobody is working on, and a row that says
+  // generating for as long as the process lives.
+  try {
+    const transcripts = await options.readTranscripts(claimed.meetingId);
+    const timeLimit = AbortSignal.timeout(options.limitSeconds * 1_000);
+    const signal = AbortSignal.any([shutdown, claimLost.signal, timeLimit]);
+
+    let answered: AnswerInHand | { nothingToGenerate: true };
+
+    try {
+      answered = await generateFrom(transcripts, options.generate, signal);
+    } finally {
+      interruptedBy = interruptionOf(signal, timeLimit, shutdown);
+    }
+
+    // After the signal was read, not before: a limit that runs out during this check did
+    // not end the generation, whose answer is already in hand.
+    outcome = 'generated' in answered ? await heldToItsRecordings(answered, options) : answered;
+  } catch (error) {
+    outcome = { error };
+  }
+
+  return { held: await heartbeat.stop(), outcome, interruptedBy };
+}
+
+async function generateFrom(
+  transcripts: MeetingTranscripts,
+  generate: DigestRunOptions['generate'],
+  signal: AbortSignal,
+): Promise<AnswerInHand | { nothingToGenerate: true }> {
+  if (!transcripts.withinLimit) {
+    // The read stopped at the cap, so there is no text to hand the generator — whose own cap
+    // would refuse the same transcripts, but only after holding all of them to count them.
+    throw new MeetingDigestError(
+      MeetingDigestFailure.TRANSCRIPTS_TOO_LONG,
+      `The transcripts are past the cap of ${MAX_DIGEST_TRANSCRIPT_CHARACTERS} characters; nothing was sent`,
+    );
+  }
+
+  if (transcripts.transcripts.length === 0) {
+    return { nothingToGenerate: true };
+  }
+
+  const generated = await generate(
+    transcripts.transcripts.map(({ text }) => text),
+    signal,
+  );
+
+  return { generated, sourceFileIds: transcripts.transcripts.map(({ fileId }) => fileId) };
+}
+
+/**
+ * An answer, held to the recordings it was built from: reported for storing only if every
+ * one of them is still transcribed now that it has arrived — and then with its owners
+ * linked, which an answer that is about to be discarded has no use for.
+ */
+async function heldToItsRecordings(
+  { generated, sourceFileIds }: AnswerInHand,
+  { claimed, readTranscribedIds, linkOwners }: DigestRunOptions,
+): Promise<DigestRunOutcome> {
+  const transcribed = new Set(
+    await transcribedNow(claimed.meetingId, readTranscribedIds, generated),
+  );
+
+  if (!sourceFileIds.every((fileId) => transcribed.has(fileId))) {
+    return { generated, sourceDeleted: true };
+  }
+
+  const ownerLinks = await linkOwners(claimed.meetingId, generated.answer);
+
+  return { generated, sourceFileIds, ownerLinks };
+}
+
+/**
+ * The meeting's transcribed recordings as they are once the answer has arrived. A read that
+ * fails is a failed generation and not a reason to store unchecked — and the error carries
+ * what the answer cost, which is otherwise in nothing the caller is handed.
+ */
+async function transcribedNow(
+  meetingId: string,
+  readTranscribedIds: DigestRunOptions['readTranscribedIds'],
+  { costUsd }: GeneratedMeetingDigest,
+): Promise<ReadonlyArray<string>> {
+  try {
+    return await readTranscribedIds(meetingId);
+  } catch (cause) {
+    throw new MeetingDigestError(
+      MeetingDigestFailure.SOURCES_UNCHECKED,
+      'The recordings the answer was built from could not be checked; nothing of it is kept',
+      { cause, costUsd },
+    );
+  }
+}
+
+function interruptionOf(
+  signal: AbortSignal,
+  timeLimit: AbortSignal,
+  shutdown: AbortSignal,
+): DigestInterruption | null {
+  if (!signal.aborted) {
+    return null;
+  }
+
+  if (timeLimit.aborted && signal.reason === timeLimit.reason) {
+    return DigestInterruption.TIME_LIMIT;
+  }
+
+  return shutdown.aborted && signal.reason === shutdown.reason
+    ? DigestInterruption.SHUTDOWN
+    : DigestInterruption.CLAIM_LOST;
+}

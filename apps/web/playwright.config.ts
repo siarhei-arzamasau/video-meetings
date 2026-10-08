@@ -5,14 +5,18 @@ import { scaled } from './e2e/timeouts';
 /**
  * The browser e2e suite: a real Chromium against the real API and a real database.
  *
- * All three servers are the suite's own, on ports nothing else uses (3100/3101/3102), and
- * `reuseExistingServer` is off so a stray dev server cannot stand in for them. The API runs
+ * All three servers are the suite's own, on ports nothing else uses (3100/3101/3102, and
+ * 3103 for the API's scripted Claude), and `reuseExistingServer` is off so a stray dev server
+ * cannot stand in for them. The API runs
  * with the worker on and a fast poll — "the Processing chip disappears" needs the real
  * pipeline — and with its uploads in a temp directory. One worker and no retries: the specs
  * share one database, and a flaky test here is a bug, not a retry.
  *
  * The third is `e2e/fake-transcriber.mjs`, the Whisper the API is pointed at: transcription is
- * switched on for the whole suite, and no spec depends on a real model being there.
+ * switched on for the whole suite, and no spec depends on a real model being there. The
+ * meeting digest is on as well, and its Claude is inside the API: `start:e2e-web` boots
+ * `apps/api/test/e2e-web/main.ts`, the application with a scripted stand-in bound over the
+ * one service that would reach Anthropic. See `e2e/digest.ts` for how a spec scripts it.
  *
  * Not in `turbo.json` and not in CI, for the same reason the API's `test:e2e` is not: it
  * needs Postgres. Run it explicitly with `pnpm --filter=@repo/web test:e2e`. The API suite

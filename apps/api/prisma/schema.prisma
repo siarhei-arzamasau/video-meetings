@@ -43,10 +43,11 @@ model User {
   // Date, so any comparison against a real instant is wrong by the machine's offset.
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
 
-  hostedMeetings        Meeting[]            @relation("MeetingHost")
-  meetingParticipations MeetingParticipant[]
-  uploadedFiles         MeetingFile[]
-  fileUploads           MeetingFileUpload[]
+  hostedMeetings         Meeting[]                 @relation("MeetingHost")
+  meetingParticipations  MeetingParticipant[]
+  uploadedFiles          MeetingFile[]
+  fileUploads            MeetingFileUpload[]
+  ownedDigestActionItems MeetingDigestActionItem[] @relation("MeetingDigestActionItemOwner")
 
   @@map("users")
 }
@@ -71,6 +72,7 @@ model Meeting {
   participants MeetingParticipant[]
   files        MeetingFile[]
   fileUploads  MeetingFileUpload[]
+  digest       MeetingDigest?       @relation("MeetingDigestMeeting")
 
   @@index([hostId])
   @@map("meetings")
@@ -128,8 +130,8 @@ model MeetingFile {
   /// `<meetingId>/<fileId>` under MEETING_FILES_DIR. Opaque, so a name can never be a path.
   storageKey  String @unique @map("storage_key")
 
-  checksum     String?
-  thumbnailKey String? @map("thumbnail_key")
+  checksum      String?
+  thumbnailKey  String? @map("thumbnail_key")
   /// `<storageKey>.transcript.txt`, set by the write that makes the transcription
   /// `TRANSCRIBED` and by nothing else. Null for a row in any other transcription status.
   transcriptKey String? @map("transcript_key")
@@ -164,6 +166,8 @@ model MeetingFile {
   meeting  Meeting @relation(fields: [meetingId], references: [id], onDelete: Restrict)
   uploader User    @relation(fields: [uploaderId], references: [id], onDelete: Restrict)
 
+  digestSources MeetingDigestSource[] @relation("MeetingDigestSourceFile")
+
   @@index([meetingId, status])
   @@index([status, leasedUntil])
   /// The transcription claim: queued rows, and transcribing ones whose lease has lapsed.
@@ -189,8 +193,8 @@ model MeetingFileUpload {
   /// Int, like `MeetingFile.size`, and capped at 1 GiB for the same reason.
   size Int
 
-  chunkSize  Int @map("chunk_size")
-  chunkCount Int @map("chunk_count")
+  chunkSize      Int   @map("chunk_size")
+  chunkCount     Int   @map("chunk_count")
   /// Indexes durably on disk. A resend of the same index leaves one entry, so this is a set
   /// the handler keeps sorted rather than an append log.
   receivedChunks Int[] @map("received_chunks")
@@ -201,10 +205,10 @@ model MeetingFileUpload {
   attempts    Int       @default(0)
   leasedUntil DateTime? @map("leased_until") @db.Timestamptz(3)
 
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   /// When the session stops accepting chunks. Aborting sets this to now(); the worker treats
   /// expired and aborted identically, which is why abort needs no status column.
-  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
   /// Set once the chunk tree is gone, so the removal runs exactly once and a crash mid-removal
   /// is retried rather than forgotten.
   purgedAt  DateTime? @map("purged_at") @db.Timestamptz(3)
@@ -219,4 +223,139 @@ model MeetingFileUpload {
   @@index([uploaderId, purgedAt])
   @@index([expiresAt, purgedAt])
   @@map("meeting_file_uploads")
+}
+
+/// Where the latest generation of a meeting's digest stands. Stored UPPER_CASE
+/// (`.claude/rules/prisma.md`) and lower-case on the wire, as `MEETING_DIGEST_STATUSES`;
+/// `meeting-digest.mapper.ts` is the one place that translates.
+enum MeetingDigestStatus {
+  QUEUED
+  GENERATING
+  READY
+  FAILED
+
+  @@map("meeting_digest_status")
+}
+
+/// The digest of a meeting — summary, action items, decisions — written by Claude from the
+/// transcripts of its recordings, and the state of the generation that writes it. One row per
+/// meeting, made by the first request for a generation; a meeting nobody asked a digest for
+/// has none.
+///
+/// The status and the content are separate things on purpose: `status` is where the *latest*
+/// generation stands, the summary and the three child tables are what the last *successful*
+/// one stored. A second generation that fails leaves the first one's content where it was.
+model MeetingDigest {
+  id        String @id @default(uuid()) @db.Uuid
+  meetingId String @unique @map("meeting_id") @db.Uuid
+
+  /// Null for a meeting that has a row and no digest: its last transcribed recording was
+  /// deleted, or a recording its digest was built from was while nothing is generated. The
+  /// row stays, because `version` has to keep rising for the clients that saw it.
+  status            MeetingDigestStatus?
+  /// User-safe copy only, and only while the status is `FAILED`; the cause is logged.
+  failureReason     String?              @map("failure_reason")
+  /// Claims, not failures: incremented every time a worker takes the row, and back to 0 with
+  /// every generation that is asked for afresh.
+  attempts          Int                  @default(0)
+  leasedUntil       DateTime?            @map("leased_until") @db.Timestamptz(3)
+  /// Bumped by every request for a generation. A claim remembers the value it took, and the
+  /// write that ends it is final only if this has not moved meanwhile — otherwise the row
+  /// goes back to `QUEUED`. That is all of "never two at once, and one more after a change".
+  requestedRevision Int                  @default(0) @map("requested_revision")
+  /// Bumped by every write that changes what a client is shown. A client keeps the higher of
+  /// two, which orders an event against a fetch. A lease renewal changes nothing shown.
+  version           Int                  @default(0)
+
+  /// Null until a generation has succeeded. Bounded by the answer's guard, not the column.
+  summary     String?
+  /// When the stored content was generated; null exactly when `summary` is.
+  generatedAt DateTime? @map("generated_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Defaulted as well as `@updatedAt`: the request and the claim are raw SQL, which Prisma's
+  /// client-side `@updatedAt` never sees, so they set it themselves and an insert needs one.
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  // Cascade, unlike a file: a digest holds no bytes on disk, so nothing has to outlive the
+  // meeting in order to be cleaned up.
+  meeting     Meeting                   @relation("MeetingDigestMeeting", fields: [meetingId], references: [id], onDelete: Cascade)
+  actionItems MeetingDigestActionItem[] @relation("MeetingDigestActionItemDigest")
+  decisions   MeetingDigestDecision[]   @relation("MeetingDigestDecisionDigest")
+  sources     MeetingDigestSource[]     @relation("MeetingDigestSourceDigest")
+
+  /// The foreign key's index, as the rules ask for one by this name. `@unique` above is the
+  /// constraint — one digest per meeting, and what the request's `ON CONFLICT` names.
+  @@index([meetingId])
+  /// The claim: queued rows, and generating ones whose lease has lapsed.
+  @@index([status, leasedUntil])
+  @@map("meeting_digests")
+}
+
+/// One thing the meeting said has to be done. Replaced whole, with the decisions and the
+/// sources, by every generation that succeeds.
+model MeetingDigestActionItem {
+  id       String @id @default(uuid()) @db.Uuid
+  digestId String @map("digest_id") @db.Uuid
+
+  /// The order Claude gave the items in, which is the order they are shown in.
+  position    Int
+  description String
+  /// The owner as the transcripts named them, or null when they named nobody.
+  ownerName   String? @map("owner_name")
+  /// The host or participant that name was matched to, when it identifies exactly one. Null
+  /// for a name that matched nobody, or more than one — and for every name of a digest whose
+  /// members could not be read. Decided by the API from the meeting's members, never by the
+  /// model.
+  ownerId     String? @map("owner_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  digest MeetingDigest @relation("MeetingDigestActionItemDigest", fields: [digestId], references: [id], onDelete: Cascade)
+  // SetNull: an item whose owner's account is gone is still an item, under the spoken name.
+  owner  User?         @relation("MeetingDigestActionItemOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+
+  @@index([digestId])
+  @@index([ownerId])
+  @@map("meeting_digest_action_items")
+}
+
+/// One thing the meeting decided.
+model MeetingDigestDecision {
+  id       String @id @default(uuid()) @db.Uuid
+  digestId String @map("digest_id") @db.Uuid
+
+  position    Int
+  description String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  digest MeetingDigest @relation("MeetingDigestDecisionDigest", fields: [digestId], references: [id], onDelete: Cascade)
+
+  @@index([digestId])
+  @@map("meeting_digest_decisions")
+}
+
+/// A recording whose transcript the stored content was generated from. What the read compares
+/// with the recordings transcribed now: content is returned only while every source is still
+/// one of them, and is out of date when one of them is not a source.
+model MeetingDigestSource {
+  id            String @id @default(uuid()) @db.Uuid
+  digestId      String @map("digest_id") @db.Uuid
+  meetingFileId String @map("meeting_file_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  digest MeetingDigest @relation("MeetingDigestSourceDigest", fields: [digestId], references: [id], onDelete: Cascade)
+  // Restrict, as everything that references a file is: a file is soft-deleted and purged,
+  // never removed, so this never fires — and the day a row is removed it should say so.
+  file   MeetingFile   @relation("MeetingDigestSourceFile", fields: [meetingFileId], references: [id], onDelete: Restrict)
+
+  @@unique([digestId, meetingFileId])
+  @@index([digestId])
+  @@index([meetingFileId])
+  @@map("meeting_digest_sources")
 }

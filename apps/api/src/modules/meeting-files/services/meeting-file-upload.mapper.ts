@@ -20,6 +20,17 @@ export interface MeetingFileUploadRecord {
   purgedAt: Date | null;
 }
 
+/** What creating a session writes. Everything else takes its default. */
+export interface NewMeetingFileUpload {
+  meetingId: string;
+  uploaderId: string;
+  name: string;
+  size: number;
+  chunkSize: number;
+  chunkCount: number;
+  expiresAt: Date;
+}
+
 /**
  * Row → wire shape. Omits what the module owns: `uploaderId` (the session is only ever read
  * by its owner, so it would say nothing), `attempts`, `leasedUntil`, and `purgedAt`.

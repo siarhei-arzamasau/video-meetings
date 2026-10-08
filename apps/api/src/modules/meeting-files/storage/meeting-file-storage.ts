@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
-import { open, mkdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { open, mkdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
@@ -133,6 +133,14 @@ export class MeetingFileStorage implements OnModuleInit {
 
       throw error;
     }
+  }
+
+  /**
+   * The text `writeText` stored, whole and in memory. For a caller that has already bounded
+   * what it is about to load — `stat` says how many bytes — because nothing here does.
+   */
+  async readText(key: string): Promise<string> {
+    return readFile(this.pathOf(key), 'utf8');
   }
 
   openRead(key: string): fs.ReadStream {

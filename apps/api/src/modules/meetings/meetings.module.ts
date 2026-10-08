@@ -4,6 +4,7 @@ import { CqrsModule } from '@nestjs/cqrs';
 import { AuthModule } from '../auth/auth.module';
 import { CreateMeetingHandler } from './commands/handlers/create-meeting.handler';
 import { MeetingsController } from './meetings.controller';
+import { FindMeetingMemberIdsHandler } from './queries/handlers/find-meeting-member-ids.handler';
 import { FindVisibleMeetingHandler } from './queries/handlers/find-visible-meeting.handler';
 import { MeetingsService } from './services/meetings.service';
 
@@ -14,8 +15,14 @@ import { MeetingsService } from './services/meetings.service';
   controllers: [MeetingsController],
   // `@CommandHandler` registers nothing on its own: a handler missing from this array
   // compiles and only throws when the route is first hit.
-  // `FindVisibleMeetingHandler` answers the one read that crosses out of this module — the
-  // meeting-files module dispatches it instead of importing this one.
-  providers: [CreateMeetingHandler, FindVisibleMeetingHandler, MeetingsService],
+  // The two query handlers answer the reads that cross out of this module: whether a user
+  // can see a meeting, which every file and digest route dispatches instead of importing
+  // this module, and who is in one, which the digest worker asks with no user at all.
+  providers: [
+    CreateMeetingHandler,
+    FindVisibleMeetingHandler,
+    FindMeetingMemberIdsHandler,
+    MeetingsService,
+  ],
 })
 export class MeetingsModule {}

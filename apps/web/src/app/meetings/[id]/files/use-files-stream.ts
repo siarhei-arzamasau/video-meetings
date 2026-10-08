@@ -1,6 +1,6 @@
 'use client';
 
-import type { MeetingFile } from '@repo/shared';
+import type { MeetingDigest, MeetingFile } from '@repo/shared';
 import type { Dispatch, SetStateAction } from 'react';
 import { useEffect, useState } from 'react';
 
@@ -22,9 +22,14 @@ export const STREAM_RETRY_MS = 60_000;
 interface FilesStream {
   token: string;
   meetingId: string;
-  /** Refetches the list: an open stream, or one given up on, each needs a list of its own. */
+  /**
+   * Refetches what the stream keeps current — the list, and the digest when the page follows
+   * one: an open stream, or one given up on, each needs a fetch of its own.
+   */
   refresh(): void;
   onFile(file: MeetingFile): void;
+  /** The meeting's digest, which rides this stream. Absent where only the files are followed. */
+  onDigest?: ((digest: MeetingDigest) => void) | undefined;
   onUnauthorized(): void;
 }
 
@@ -48,7 +53,7 @@ function useStreamRetry(
 
 /**
  * Holds the meeting's event stream open, and answers whether there is one to rely on — which
- * is the fallback poll's condition.
+ * is the fallback poll's condition, for the files and for the digest alike.
  *
  * `watchMeetingFiles` reopens a dropped stream with a backoff and after three drops inside a
  * minute gives up; `STREAM_RETRY_MS` later the stream is tried again. An API restart produces
@@ -59,6 +64,7 @@ export function useFilesStream({
   meetingId,
   refresh,
   onFile,
+  onDigest,
   onUnauthorized,
 }: FilesStream): boolean {
   // Flipped off by three drops inside a minute, and back on by the retry. The poll's condition.
@@ -80,6 +86,7 @@ export function useFilesStream({
       // trusted to hold whatever no event will repeat.
       onOpen: refresh,
       onFile,
+      ...(onDigest === undefined ? {} : { onDigest }),
       onUnauthorized,
       // The last stream missed things between its drop and now, and the poll only runs while
       // something is processing — so one fetch now, then the poll, then a retry in a minute.
@@ -94,7 +101,7 @@ export function useFilesStream({
     return () => {
       controller.abort();
     };
-  }, [token, meetingId, streamAvailable, onFile, refresh, onUnauthorized]);
+  }, [token, meetingId, streamAvailable, onFile, onDigest, refresh, onUnauthorized]);
 
   useStreamRetry(streamAvailable, setStreamAvailable);
 

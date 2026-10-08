@@ -38,7 +38,7 @@ indistinguishable from a skipped one.
 ```
 src/
   app/            App Router: layout, page, error, not-found, providers, globals.css
-    meetings/[id] The meeting page; files/ under it is the files section
+    meetings/[id] The meeting page; files/ under it is the files section, digest/ the digest
     profile/      The account, with edit/ under it (see The profile)
   components/     Shared React components
   lib/            Non-React helpers, including the API client and the signed-in gate
@@ -64,6 +64,25 @@ aliases in sync if either changes.
   paint light-theme grey onto a dark page. Dark's own `--muted` is 7.72:1 and is left alone.
   Measure before changing either: the numbers above are from a real browser, and HeroUI
   bumping its palette is what would silently undo this.
+- **Error text is `text-danger-soft-foreground`, never `text-danger`.** `--danger` is a fill:
+  the colour of a danger button, chosen to sit under `--danger-foreground`, and as 14px text
+  it measures 3.57:1 on a card in the light theme and 3.97:1 in the dark — under the 4.5:1
+  WCAG AA needs. `--danger-soft-foreground` is the token HeroUI itself writes danger text in
+  (its soft chips and alerts): the same red mixed towards `--foreground`, 6.74:1 on a light
+  card and 6.30:1 on a dark one, measured in Chromium. Every inline `role="alert"` on the
+  meeting page uses it — a row's download, retry and transcript errors, an upload that failed,
+  the digest's request. It is a class at each call site rather than an override of
+  `--danger` in `globals.css`, because darkening the token would darken every danger button
+  with it.
+  **HeroUI's own form text gets the same colour from `globals.css`, not from a class**: a
+  field's error message (12px), the label of an invalid field, and a required field's
+  asterisk are all written in `--danger` by HeroUI's stylesheet, where no call site can
+  reach. The rule there redefines `--danger` as `--danger-soft-foreground` inside `.label`
+  and `.field-error` only — two components that draw nothing but text — which reaches all
+  three whatever selector paints them, and leaves every danger button and the token itself
+  alone. Measured on the sign-in and registration forms: 6.70:1 on a light card, 6.30:1 on
+  a dark one. **A HeroUI component adopted later that writes text in `--danger`** — a
+  danger menu or list-box item does — **is added to that rule**, after measuring it.
 - **`globals.css` also gives dark-mode form fields their edge back and their hover state, and
   the two values are one decision.** HeroUI paints a field the same colour as the card in _both_
   themes — white on white in light, `oklch(21.03%)` on itself in dark — with `--field-border`
@@ -224,7 +243,9 @@ aliases in sync if either changes.
 ### The files stream
 
 The meeting page follows its files over SSE: `useMeetingFiles` opens
-`GET /meetings/:id/files/events` at mount beside the first list fetch, and `applyFileEvent`
+`GET /meetings/:id/files/events` at mount beside the first list fetch — **called by the page,
+not by `FilesSection`**, which is handed the result, because the stream is the meeting's and
+carries its digest too (_The digest_, below) — and `applyFileEvent`
 replaces a known id **where it is**, re-sorts an unknown one in, and removes a `deleted` one,
 so the Processing chip goes the moment the worker finishes. A transcription moving on is the
 same event — the whole file, with a new `transcriptionStatus` — so the row follows it with no
@@ -287,14 +308,141 @@ each of which was a bug once:
   text.** A retry that fails again produces the same sentence twice running; as a bare string
   in state the second is a no-op, the DOM does not change, and a screen reader says nothing.
 
+### The digest
+
+The meeting's digest — a summary, action items, and decisions, written by Claude from the
+transcripts of its recordings — is the second thing the meeting page follows without a
+reload. `DigestSection` (`meetings/[id]/digest/`) draws it, with one control for the two
+kinds of member who may ask for one: "Generate digest" or "Retry". What its API promises is in
+[the API guide](../api/AGENTS.md#meeting-digests-srcmodulesmeeting-digests); what a reader
+of this side would get wrong:
+
+- **One stream, two consumers, and the page holds it.** The API sends the digest on the files
+  stream, under `event: digest`. `useMeetingUpdates` (`meetings/[id]/`) is the one call the
+  page makes: `useMeetingDigest` holds the digest and no connection, and is handed to
+  `useMeetingFiles` as the stream's second consumer — refetched at every open, as the list
+  is, and given each `digest` event. **Do not open a second stream for it**: every open page
+  would hold two long-lived connections of the six a browser allows one origin.
+  `deliverStreamEvent` (`src/lib/meeting-stream-events.ts`) is where an event's name picks
+  its consumer, and an event that fits neither — or whose payload its reader cannot make
+  sense of — is passed over rather than thrown.
+- **The higher version is kept, and that is the whole of how a fetch is put in order against
+  an event** — `laterDigest` in `src/lib/meeting-digest.ts`. A digest carries a `version`
+  the API moves with every change, which a file does not; so there is no replay buffer
+  here, no hand-over, and a fetch still in flight when another is asked for is simply let go.
+  **Of two with the same version, a fetch wins and an event does not.** Two changes reach the
+  API's answer under an unchanged version — a linked owner's new display name, and an
+  `availableAction` that left with the meeting's last recording — and nothing announces
+  either, so only a fetch can bring them; an event of a version already held is the same
+  digest announced twice. Collapse the two cases into one comparison and either a rename
+  never shows, or a duplicate event costs a render.
+- **A status and content are two things, drawn side by side** — `digestPresentation`, a pure
+  function, decides what each combination shows. The status is where the latest generation
+  stands; the content is what the last successful one stored. That is how an out-of-date
+  digest stays readable beside "Generating digest…", and beside "Digest failed" when its
+  replacement could not be made. **`ready` has no chip**: it is said by showing the digest.
+- **No status, no content, and no control is no section** — not an empty card. A meeting
+  with no transcribed recording, a digest withdrawn with a recording, and a page the API has
+  not answered yet all draw nothing for a reader who can do nothing about it.
+  `digestPresentation` is what a digest says to anybody; `digestSectionView`
+  (`src/lib/meeting-digest-action.ts`) adds what this reader may do, and is what the section
+  draws. The two states only a person can end — recordings transcribed while the setting
+  was off, and a digest withheld by a delete nothing reacted to — are drawn for their
+  control alone, with one sentence where a digest would be. `DigestAnnouncement`, the section's polite status region,
+  therefore sits **outside** the card: one of the things it says is that the digest was
+  removed, which a region that went with the section could not. It announces the ends only —
+  ready, updated, failed, removed — and never the page's opening state, the way the files'
+  region does (`digestAnnouncement`).
+- **Who is offered the control is decided in one place: `offeredDigestAction`**
+  (`src/lib/meeting-digest-action.ts`), called by `useDigestAction` from `MeetingSections`
+  — there rather than in the section because it reads both halves of the page. Three things
+  must hold. The digest carries `availableAction`, which says what may be asked for and says
+  it to every reader alike. The reader is the host, or the uploader of a recording the
+  page's own list shows as transcribed — the people the API would not answer 404. **And the
+  list holds a transcribed recording at all, which binds the host too.** That third one
+  looks like a restatement of the API's rule and is the repair of a gap in it: when a
+  meeting's last transcribed recording is deleted, `availableAction` leaves the digest
+  _without its version moving_, so a page that keeps the higher version goes on holding
+  `generate`. The deleted recording leaves the list by the same stream. A list that is
+  loading or failed offers nothing, rather than a control drawn on a guess.
+- **The request's answer is put on the page, which is the opposite of the row's Retry, and
+  the version is why.** A row refetches its list and never writes a retry's answer over
+  itself, because a file has nothing to order that answer against the stream by. A digest
+  does: `useMeetingDigest`'s `accept` takes the answer as a fetch is taken — kept unless
+  something later is already held — so a request overtaken by a claim and a second failure
+  leaves the failure and its Retry on the page, and one that was not shows "Digest queued"
+  with no fetch at all. Without a stream that `queued` is also what arms the fallback poll.
+  `meeting-sections.digest-request.test.tsx` pins the order that would break — events
+  first, answer last. **A 409 is never shown**: it says only that there is nothing to ask
+  for any more, so the digest is fetched again and the page shows that. Anything else is
+  inline, with Dismiss, as a row's is. **An error is shown only beside the control that was pressed**: while that
+  control is offered and the digest held is still the version it was pressed on. Kept any
+  longer it comes back beside the next Retry, which nobody has pressed. `useDigestAction`
+  works that out on every render rather than clearing the error when it sees the control
+  go, because the page does not always see it go: a failure can land after the stream has
+  already taken the control away — the request was taken and its answer lost on the way
+  back — and one chunk of the stream can hold a request, a claim and a second failure,
+  which is one render with a Retry on it before and after.
+  `meeting-sections.digest-error.test.tsx` pins both orders.
+- **A press moves focus to the section's heading before it sends anything.** The control
+  is disabled while its request is on its way and gone once it is taken, and a button
+  removed while it holds focus drops a keyboard reader at the top of the page. The heading
+  is where the status they asked for appears; if the request fails instead, the control is
+  the next tab stop. That is why the `h2` has `tabIndex={-1}` and a focus ring.
+- **The control is `secondary`.** The page has its one primary action, "Add file", and a
+  digest is a consequence of the files rather than the reason the page is open.
+- **It is drawn under the files, on purpose.** It appears, grows from a chip to three lists,
+  and disappears with no action from the reader, usually while they are in the files above
+  it. Above the files it would push the list they are using down the page each time.
+- **Every string of a digest is rendered as a text child, and that is the whole defence.**
+  It is a model's writing about what somebody said in a recording. Nothing in
+  `digest-content.tsx` may turn one into markup; a Vitest and a Playwright spec both put an
+  `<img onerror>` through it. The same text gets `overflow-wrap: anywhere` — a transcript
+  can hold a URL, a digest quotes it, and one unbroken token is wider than a phone — and an
+  owner's chip is allowed to wrap, since a display name may be eighty characters.
+- **An owner is one of three, told apart by more than a colour**: a member of the meeting
+  (accent chip with the person glyph), a name as it was spoken (plain chip), or
+  "Unassigned" (muted text). The API decides which; the page never matches a name itself.
+- **The fallback poll has a second trigger, because a digest with no status gives a poll
+  nothing to run on.** Without a stream, `useDigestFallbackPoll` asks again every three
+  seconds while the digest is queued or generating, armed by `settled` exactly as the files'
+  poll is. But what _starts_ a digest is a recording being transcribed, and what withdraws
+  one is such a recording being deleted; so it also asks whenever the list's set of
+  transcribed recordings changes. Drop that and a page that cannot hold a stream watches its
+  recording reach "Open transcript" and never learns a digest was queued. **That trigger
+  runs beside an open stream too, and there it is a safeguard rather than a duplicate.** The
+  digest's own event is sent by the API's reaction to the change, and a reaction that fails
+  is logged and sends nothing — while the file's `deleted` event has already reached the
+  page. Gated on the stream, a digest built from a deleted recording stayed on screen until
+  the stream next reconnected, minutes later; the API withholds it from the moment the
+  delete commits, so one fetch takes it off. It is also how a page learns Generate is on
+  offer for a recording whose request could not be queued. **That change is
+  asked about twice — at once, and one interval later — and the second is not redundant.**
+  The API answers a delete, and reports a transcript, before it has decided what either does
+  to the digest, so the first answer can be the digest as it was: nothing queued, nothing to
+  poll on, and the replacement then generated unseen. It is one more fetch and not a poll,
+  because with the setting off the answer never changes.
+- **A fetch that fails shows nothing, and is asked for again whether or not there is a
+  stream.** There is no error state for the digest: nobody asked for it, and the files
+  section beside it already says when the API cannot be reached. What was held stays, and
+  the same hook retries until a fetch lands: after three seconds, then twice as long each
+  time, up to a minute (`digestRetryDelayMs`) — an API that is restarting is caught up with
+  at once, and one that stays down is not asked every three seconds by every open page.
+  **A fetch the API refused is not retried at all**: a 403 or a 404 is its answer about this
+  meeting, and `failedFetches` counts only what the next try might not get again — a request
+  that never arrived, a server error, a 408 or a 429. The stream is no substitute
+  for that, which is why this half is not gated on it as the poll is: an event says a digest
+  _changed_, and a digest that is simply there never does — a page whose fetch was lost
+  would show none until the stream next reconnected, minutes later.
+
 ## API access
 
 All calls to the backend go through `src/lib/api-client/` — the single boundary between the
 web app and the API, imported as `@/lib/api-client` whichever file inside it a wrapper lives
 in. `core.ts` holds the transport every wrapper shares (`apiFetch`, `ApiError`, the bearer
-header, `sendWithProgress`); `auth.ts`, `user.ts`, `meetings.ts`, `meeting-files.ts` and
-`uploads.ts` group the wrappers by the part of the API they call, and `index.ts` re-exports
-all of them. `auth.ts` and `user.ts` split where the API splits — credentials and tokens
+header, `sendWithProgress`); `auth.ts`, `user.ts`, `meetings.ts`, `meeting-files.ts`,
+`meeting-digests.ts` and `uploads.ts` group the wrappers by the part of the API they call,
+and `index.ts` re-exports all of them. `auth.ts` and `user.ts` split where the API splits — credentials and tokens
 against the account record — which is why `getMe` sits in `auth.ts` under `/auth/me` while
 `updateDisplayName` sits in `user.ts` under `/users/me`.
 **Only `index.ts` is imported from outside** — a component reaching for `api-client/core`
@@ -489,10 +637,13 @@ The browser suite below is still the stronger check, and the one a flow belongs 
 
 `pnpm --filter=@repo/web test:e2e` runs Playwright (Chromium only) over `e2e/*.spec.ts`.
 `playwright.config.ts` starts three servers itself — the API through its `start:e2e-web` script
-on **3101** (worker on, fast poll, temp storage, transcription on, and an auth rate limit no run
-can reach: every spec registers through the UI and several sign in again, well past a
+on **3101** (worker on, fast poll, temp storage, transcription on, and an auth rate limit no
+run can reach: every spec registers through the UI and several sign in again, well past a
 deployment's ten a minute), this app on **3100**, and a fake Whisper on **3102** — with
-`reuseExistingServer` off, one worker, and no retries. It needs `docker compose up -d postgres`,
+`reuseExistingServer` off, one worker, and no retries. **That API is not `src/main.ts`**: it
+is `apps/api/test/e2e-web/main.ts`, the same application with the meeting digest on and a
+scripted Claude bound inside it, which also listens on loopback **3103** for a spec's orders
+(below). It needs `docker compose up -d postgres`,
 a migrated schema, and `pnpm exec playwright install chromium` once. `E2E_SERVER_TIMEOUT_MS`
 raises the two-minute wait per server; a wait that times out even at several minutes is the
 corrupt-cache symptom above, not a slow machine. Its `globalTeardown` truncates `users`, so **it
@@ -538,9 +689,49 @@ existing spec. **A reply can be registered again for the same recording**, and t
 "Whisper came back" is: the retry spec tells the fake to fail a recording, then to hold or
 answer it, and the next request for those bytes — the one Retry causes — gets the new reply.
 
+**The Claude the suite talks to is inside the API, and a spec scripts it through the
+transcript.** The Claude Agent SDK has no HTTP seam to stand a fake behind, so
+`start:e2e-web` boots a test entry point that binds `ScriptedClaudeAgent` over
+`ClaudeAgentService` — the prompt builder, the answer's guard, the owner match, and the worker
+all still run, and no spec needs a token or the network. What a digest holds is decided by
+directives in the recording's transcript, which a spec already sets through the fake
+transcriber: `digestTranscript` in `e2e/digest.ts` writes them, and the table in
+`apps/api/test/e2e-web/digest-script.ts` is what they mean. Directives are read from every
+recording of the prompt, so the digest of two recordings holds what both asked for and the
+one that follows a delete holds only what is left. What to know before writing a spec:
+
+- **A recording nothing was scripted for still gets a digest** — a one-line summary and two
+  empty lists — so every spec that transcribes a recording now has a Digest section on its
+  page. Scope a locator to the files list or to `digestSection`, not to the page.
+- **An absence is asserted on a page that has loaded** — `openMeetingPage`, which waits for
+  the files and for the digest's answer. `goto` resolves before the page has asked the API
+  for anything, and `toHaveCount(0)` straight after it is true of every page.
+- **The API generates one digest at a time**, as it transcribes one recording at a time. The
+  only way to see "Digest queued" for longer than a 250 ms poll is another meeting's
+  generation held ahead of it, which is what `meeting-digest.spec.ts` does.
+- **A hold is a key, held by the spec, and not a directive alone.** A transcript names a key
+  (`holdKey`); the generation waits only while the spec is holding that key (`claude.hold`,
+  `claude.release`) on the control port. That is the transcriber's rule for the
+  transcriber's reason: a generation held by its transcript alone would outlive a test that
+  failed half-way and stop every digest after it, so `claude.reset()` at both ends of each
+  test releases every key, and a key nobody holds delays nothing. A key can be written into
+  a transcript long before it is held — that is how a spec holds the digest that _follows_
+  a delete rather than the one before it.
+- **A failure that ends is a key as well** (`failsWhile`): the generation fails while the
+  spec holds the key and is answered once it lets go, so the Retry a spec then presses sends
+  the same transcripts and ends in a digest. `fails: true` is the failure nothing gets past.
+- **The setting is switched on the same port, because a spec cannot restart the API.**
+  `claude.setting('off')` is `MEETING_DIGEST_ENABLED=false` in the running process: a
+  recording transcribed then asks for no digest, which is the only way to reach the state
+  "Generate digest" exists for. **Nothing tells an open page the setting changed** — in a
+  deployment it is a restart, which ends every stream — so a spec opens its pages after
+  switching. `claude.reset()` switches it back on as well as releasing every key, for the
+  reason it releases them: a test that failed with it off would otherwise leave the API
+  generating nothing for every spec after it.
+
 The house convention it sets: **a new page starts as a red Playwright spec**, written against
 the routes, copy, and roles the page will have, run and seen failing, then made green by the
-implementation. The two specs here were written that way.
+implementation. The specs here were written that way.
 
 Test user, created if it does not exist: `test@example.com` / `test@example.com`.
 

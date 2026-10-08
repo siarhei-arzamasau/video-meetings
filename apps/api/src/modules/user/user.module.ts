@@ -10,6 +10,7 @@ import { UploadAvatarHandler } from './commands/handlers/upload-avatar.handler';
 import { FindUserByIdHandler } from './queries/handlers/find-user-by-id.handler';
 import { FindUserCredentialsByEmailHandler } from './queries/handlers/find-user-credentials-by-email.handler';
 import { FindUserCredentialsByIdHandler } from './queries/handlers/find-user-credentials-by-id.handler';
+import { FindUsersByIdsHandler } from './queries/handlers/find-users-by-ids.handler';
 import { AvatarImage } from './services/avatar-image';
 import { AvatarService } from './services/avatar.service';
 import { AvatarStorage } from './storage/avatar-storage';
@@ -43,6 +44,7 @@ import { UserController } from './user.controller';
     FindUserByIdHandler,
     FindUserCredentialsByEmailHandler,
     FindUserCredentialsByIdHandler,
+    FindUsersByIdsHandler,
     // Not handlers: the avatar's collaborators. `AvatarStorage` creates and probes its
     // directory at boot, and `AvatarUploadInterceptor` is a provider rather than a decorator
     // because it needs that storage injected.

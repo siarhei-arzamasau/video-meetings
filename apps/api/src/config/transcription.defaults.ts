@@ -4,7 +4,7 @@
  * a spec's bare config falls back to is the value a deployment boots with.
  *
  * `apps/api/.env.example` and `docker-compose.yml` restate it, because neither can import.
- * The model has no default at all: see `TRANSCRIPTION_MODEL` in `env.validation.ts`.
+ * The model has no default at all: see `TRANSCRIPTION_MODEL` in `env.validation.transcription.ts`.
  */
 
 /**
