@@ -1,6 +1,6 @@
 'use client';
 
-import { Button, Chip, Spinner, Tooltip } from '@heroui/react';
+import { Button, Chip, Spinner } from '@heroui/react';
 import type { MeetingFile } from '@repo/shared';
 import { useState } from 'react';
 
@@ -97,10 +97,12 @@ export function FileRow({
           {' · '}
           <time dateTime={file.createdAt}>{formatRelativeTime(file.createdAt)}</time>
         </span>
+        {/* Why it failed, written out under the name for either failure and never kept in a
+            chip's tooltip: a tooltip opens on hover or keyboard focus, and a touch screen has
+            neither. For the transcription with no Retry, the sentence is also the only thing
+            on the row that says what would help. */}
+        {status.kind === 'failed' && <span className="text-muted text-sm">{status.reason}</span>}
         {transcription.kind === 'failed' && (
-          // Written out, not kept in the chip's tooltip: a tooltip opens on hover or keyboard
-          // focus, and a touch screen has neither. For the failure with no Retry, this
-          // sentence is also the only thing on the row that says what would help.
           <span className="text-muted text-sm">{transcription.reason}</span>
         )}
         {downloadError !== null && (
@@ -127,21 +129,10 @@ export function FileRow({
         </Chip>
       )}
       {status.kind === 'failed' && (
-        <Tooltip delay={0}>
-          <Tooltip.Trigger
-            tabIndex={0}
-            className="focus-visible:ring-focus rounded-full outline-none focus-visible:ring-2"
-          >
-            <Chip color="warning" variant="soft" size="sm">
-              <WarningIcon />
-              <Chip.Label>Processing failed</Chip.Label>
-            </Chip>
-          </Tooltip.Trigger>
-          <Tooltip.Content>
-            <Tooltip.Arrow />
-            {status.reason}
-          </Tooltip.Content>
-        </Tooltip>
+        <Chip color="warning" variant="soft" size="sm">
+          <WarningIcon />
+          <Chip.Label>Processing failed</Chip.Label>
+        </Chip>
       )}
 
       {/* Beside the file's own status, never instead of it: a recording is ready, and can be
