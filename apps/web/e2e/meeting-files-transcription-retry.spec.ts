@@ -182,12 +182,13 @@ test.describe('retrying a failed transcription', () => {
     expect(await retryTranscriptionStatusViaApi(other.token, meeting.id, file?.id ?? '')).toBe(404);
 
     // The host may retry a participant's recording, the same rule as Delete — here from the
-    // keyboard: the chip is focusable so its reason can be read, and Retry is the next stop.
+    // keyboard: Retry is the row's first stop, the one before Download. The chip is not one,
+    // since its reason is written on the row.
     const hostRow = rowFor(host.page, 'standup.mp3');
     await expect(failedChip(hostRow)).toBeVisible();
     await transcriber.answer(standup, SENTENCE);
-    await hostRow.locator('[tabindex="0"]').first().focus();
-    await host.page.keyboard.press('Tab');
+    await hostRow.getByRole('button', { name: 'Download' }).focus();
+    await host.page.keyboard.press('Shift+Tab');
     await expect(retryButton(hostRow)).toBeFocused();
     await host.page.keyboard.press('Enter');
 
