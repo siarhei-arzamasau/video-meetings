@@ -20,6 +20,13 @@ type TranscriptionWrite = Omit<TranscriptionPatch, 'transcriptionAttempts'> & {
   transcriptionAttempts?: number | { decrement: number };
 };
 
+/** A recording whose transcript is stored, as much of it as a reader across the module needs. */
+export interface TranscribedRecordingRecord {
+  id: string;
+  uploaderId: string;
+  transcriptKey: string;
+}
+
 /** A row the transcription worker now owns, with the status it had before the claim. */
 export interface ClaimedTranscription extends MeetingFileRecord {
   /** `QUEUED`, or `TRANSCRIBING` when this claim took over one whose lease had lapsed. */
@@ -159,6 +166,25 @@ export class MeetingFileTranscriptionRepository {
       TranscriptionStatus.QUEUED,
       { transcriptionAttempts: { decrement: 1 } },
       lease,
+    );
+  }
+
+  /**
+   * A meeting's transcribed recordings, in upload order: `ready`, `TRANSCRIBED`, and so not
+   * deleted. The order is the list's own (`created_at`, then `id`), because a reader that
+   * numbers the recordings must number them as the page shows them.
+   */
+  async findTranscribedOf(meetingId: string): Promise<TranscribedRecordingRecord[]> {
+    const rows = await this.prisma.meetingFile.findMany({
+      where: { meetingId, status: 'ready', transcriptionStatus: TranscriptionStatus.TRANSCRIBED },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { id: true, uploaderId: true, transcriptKey: true },
+    });
+
+    // The write that makes a row `TRANSCRIBED` sets the key, so none is null; the type says
+    // it may be, and a row without one has no transcript to be a recording of.
+    return rows.flatMap(({ transcriptKey, ...recording }) =>
+      transcriptKey === null ? [] : [{ ...recording, transcriptKey }],
     );
   }
 

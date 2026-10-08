@@ -11,10 +11,12 @@ export interface LeaseHeartbeat {
 }
 
 export interface LeaseHeartbeatOptions {
-  files: LeaseRenewer;
+  leases: LeaseRenewer;
   logger: Logger;
-  fileId: string;
-  meetingId: string;
+  /** The row the claim is on: what `renewLease` is asked about. */
+  claimId: string;
+  /** What was claimed, as a log line opens: `File <id> of meeting <id>`. */
+  subject: string;
   /** The lease the claim was given. `null` disables renewal, as a lost one does. */
   lease: Date | null;
   leaseSeconds: number;
@@ -89,19 +91,19 @@ class LeaseRenewal {
   }
 
   async renew(): Promise<void> {
-    const { files, logger, fileId, meetingId, leaseSeconds, onLost } = this.options;
+    const { leases, logger, claimId, subject, leaseSeconds, onLost } = this.options;
 
     if (!this.running || this.current === null) {
       return;
     }
 
     try {
-      const renewed = await files.renewLease(fileId, this.current, leaseSeconds);
+      const renewed = await leases.renewLease(claimId, this.current, leaseSeconds);
 
       if (renewed === null) {
         // Deleted, or reclaimed after an expiry this heartbeat did not prevent. Stop
         // renewing; the result will be discarded when the step finishes.
-        logger.warn(`File ${fileId} of meeting ${meetingId}: lease lost mid-run`);
+        logger.warn(`${subject}: lease lost mid-run`);
         this.current = null;
         onLost?.();
 
@@ -113,7 +115,7 @@ class LeaseRenewal {
       // A failed renewal is not a lost lease: the next beat tries again, and the transition
       // at the end is the real check.
       logger.error(
-        `File ${fileId}: renewing the lease failed`,
+        `${subject}: renewing the lease failed`,
         error instanceof Error ? error.stack : String(error),
       );
     }

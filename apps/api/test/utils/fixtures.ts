@@ -65,6 +65,10 @@ export function meetingFileThumbnailUrl(meetingId: string, fileId: string): stri
   return `${meetingFileUrl(meetingId, fileId)}/thumbnail`;
 }
 
+export function meetingDigestUrl(meetingId: string): string {
+  return `${MEETINGS_URL}/${meetingId}/digest`;
+}
+
 export function meetingFileUploadsUrl(meetingId: string): string {
   return `${meetingFilesUrl(meetingId)}/uploads`;
 }
@@ -86,6 +90,12 @@ export const MEETING_FILE_WORKER_TOKEN = 'MEETING_FILE_WORKER';
 
 /** The transcription worker's token, for the same reason: its `drain()` is a second handle. */
 export const MEETING_FILE_TRANSCRIPTION_WORKER_TOKEN = 'MEETING_FILE_TRANSCRIPTION_WORKER';
+
+/** The digest worker's token: a third `drain()`, after the file's and the transcription's. */
+export const MEETING_DIGEST_WORKER_TOKEN = 'MEETING_DIGEST_WORKER';
+
+/** What knows when a transcribed recording's request for a digest has been written. */
+export const PENDING_DIGEST_REQUESTS_TOKEN = 'PENDING_DIGEST_REQUESTS';
 
 export const EMAIL = 'ada@example.com';
 export const PASSWORD = 'correct-horse-battery-42';

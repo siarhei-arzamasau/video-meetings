@@ -1,4 +1,5 @@
 import type { Meeting } from './meeting';
+import { describeTimeLimit } from './time-limit';
 import type { User } from './user';
 
 export const MEETING_FILE_STATUSES = [
@@ -80,8 +81,6 @@ export const MEETING_FILE_TRANSCRIPTION_FAILED_MESSAGE = 'The recording could no
 export const MEETING_FILE_TRANSCRIPTION_REPEATED_FAILURE_MESSAGE =
   'Transcription failed after repeated attempts.';
 
-const SECONDS_PER_MINUTE = 60;
-
 /** How the time limit's reason opens, whatever the limit was: what recognises it below. */
 const TIME_LIMIT_REASON_OPENING = 'Transcription took longer than the ';
 const TIME_LIMIT_REASON_ADVICE =
@@ -93,12 +92,7 @@ const TIME_LIMIT_REASON_ADVICE =
  * also says why the row offers no Retry — see `isMeetingFileTranscriptionTimeLimitReason`.
  */
 export function meetingFileTranscriptionTimeLimitMessage(limitSeconds: number): string {
-  const limit =
-    limitSeconds % SECONDS_PER_MINUTE === 0
-      ? `${String(limitSeconds / SECONDS_PER_MINUTE)}-minute`
-      : `${String(limitSeconds)}-second`;
-
-  return `${TIME_LIMIT_REASON_OPENING}${limit} limit. ${TIME_LIMIT_REASON_ADVICE}`;
+  return `${TIME_LIMIT_REASON_OPENING}${describeTimeLimit(limitSeconds)} limit. ${TIME_LIMIT_REASON_ADVICE}`;
 }
 
 /**

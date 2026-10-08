@@ -92,6 +92,18 @@ describe('MeetingFileStorage', () => {
     );
   });
 
+  it('readText gives back what writeText stored, and rejects for a key with nothing under it', async () => {
+    await storage.writeText(`${key}.transcript.txt`, 'Привет, коллеги. Good morning.');
+
+    await expect(storage.readText(`${key}.transcript.txt`)).resolves.toBe(
+      'Привет, коллеги. Good morning.',
+    );
+    await expect(
+      storage.readText(`${randomUUID()}/${randomUUID()}.transcript.txt`),
+    ).rejects.toThrow(/ENOENT/);
+    await expect(storage.readText('../escape.txt')).rejects.toThrow(/Invalid storage key/);
+  });
+
   it('writeText overwrites rather than appending, so a retry leaves one transcript', async () => {
     await storage.writeText(`${key}.transcript.txt`, 'first pass');
     await storage.writeText(`${key}.transcript.txt`, 'second');

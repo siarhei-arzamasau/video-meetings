@@ -143,6 +143,39 @@ Under `docker compose` the `api` service finds Whisper by itself: set
 `MEETING_FILES_TRANSCRIPTION_ENABLED=true` in the root `.env` and bring the stack up with
 `--profile transcription`.
 
+### Meeting digest (optional, and it sends transcripts to Anthropic)
+
+A meeting can have a digest — a summary, the action items with whoever was named for each,
+and the decisions — written by Claude from the transcripts of its recordings. It is **off by
+default, because switching it on sends meeting content to a third party**: with
+`MEETING_DIGEST_ENABLED=true`, the text of every transcribed recording of a meeting is sent
+to Anthropic each time one of that meeting's recordings is transcribed. The transcripts are
+all that is sent — no recording, file name, email address, user id, or storage path — and with
+the setting off nothing is sent at all.
+
+```bash
+# apps/api/.env
+MEETING_DIGEST_ENABLED=true
+ANTHROPIC_AUTH_TOKEN=...          # required with the flag on: the API refuses to boot without it
+```
+
+Restart the API afterwards. A new transcript needs transcription on as well (above). The
+digest is generated with no request from anyone and read with
+`GET /api/meetings/:id/digest`, by the meeting's host and participants: a `status` — `queued`,
+`generating`, then `ready` or `failed` with a `failureReason` — and, once one has been stored,
+the `content`. The meeting page does not show it yet.
+
+- **Every generation is a paid request**, typically under a cent and a few seconds; the API
+  log has each one's duration, model, and cost, and no response carries them.
+- **A digest that fails is not retried**, and fails nothing else: the recordings stay ready
+  and their transcripts still open. `MEETING_DIGEST_TIMEOUT_SECONDS` (default 240) bounds one
+  generation, and a meeting whose transcripts are together past about 1.7 million characters
+  — some thirty hours of speech — fails as too long rather than being digested in part.
+- **Setting the flag back to `false`** sends nothing more and keeps every digest already
+  stored readable. Recordings transcribed while it was off get no digest when it comes back.
+- **`docker compose` does not pass these two variables to its `api` service**: the digest is
+  set up for an API run with `pnpm dev`.
+
 ## Scripts
 
 Run from the repository root:

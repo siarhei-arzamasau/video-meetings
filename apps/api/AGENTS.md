@@ -27,21 +27,24 @@ src/
   configure-app.ts      Every global that shapes request handling
   app.module.ts         Root module — register new feature modules here
   config/               Environment contract
-  common/               Cross-cutting filters and interceptors, and shutdown/ for what
-                        the process does with its connections when it is stopped
+  common/               Cross-cutting filters and interceptors, shutdown/ for what the
+                        process does with its connections when it is stopped, and
+                        processing/ for what every polling worker shares
   modules/<feature>/    One directory per feature: module, controller, specs, and
                         commands/ — a command class plus its handler per write operation.
-                        queries/ mirrors it where a read crosses a module boundary.
+                        queries/ mirrors it where a read crosses a module boundary,
+                        events/ where a module publishes an event or handles one.
                         services/ holds collaborators the handlers share.
                         storage/ and processing/ appear where a module owns bytes on disk
-                        or a background worker (meeting-files is the one that does).
+                        or a background worker (meeting-files has both, meeting-digests
+                        a worker).
   generated/prisma/     Prisma client output — generated, gitignored, never edit
 prisma/
   schema.prisma         Datasource, generator, and models
   migrations/           Applied migrations — never edit one that has shipped
 ```
 
-Four worked examples, in the order worth reading them:
+Five worked examples, in the order worth reading them:
 
 - **`auth`** — the shape to copy for a new feature module. CQRS, one command class and one
   handler per write, and that is the house style for anything new, not an exception.
@@ -52,6 +55,10 @@ Four worked examples, in the order worth reading them:
 - **`meeting-files`** — the largest: two commands, a read service, a storage service over
   `fs`, and two polling workers. It has its own section below because most of what it does
   right is invisible in the code.
+
+- **`meeting-digests`** — read after `meeting-files`, whose worker it copies. It is also the
+  one module that reaches three others and imports none of them: two queries, one event, and
+  the visibility read. It has a section of its own below.
 
 `health` still shows the minimum a module needs when it changes no state and reaches no
 database; a module with nothing to write needs no commands.
@@ -67,8 +74,10 @@ straight from a controller and a service is not a violation of the house style �
 `MeetingsService` is the example, and routing its two lookups through a `QueryBus` for
 symmetry with `POST /meetings` would be ceremony. The test is whether the read crosses a
 boundary, not whether it sits next to a write. **Nothing else from `@nestjs/cqrs` is used**:
-no sagas, and no events beyond the one in-process `EventBus` the file worker publishes on
-(see _Events and the SSE stream_). `CqrsModule` is imported per feature module, never
+no sagas, and one event — `MeetingFileChangedEvent`, on the in-process `EventBus` (see
+_Events and the SSE stream_). The files stream subscribes to the bus by hand; the digest's
+`RequestDigestWhenTranscribedHandler` is the one `@EventsHandler`, and like a command handler
+it does nothing until it is in its module's `providers`. `CqrsModule` is imported per feature module, never
 globally, so a module's dependencies stay readable from its own `imports` array; the buses
 still behave globally at runtime, which is what lets two modules share one without depending
 on each other.
@@ -369,6 +378,24 @@ only for a field a file route actually decides with. `MeetingFilesModule` does n
 `MeetingsModule`, and `MeetingsController.findOne` still reads from `MeetingsService` — two
 reads sharing one `visibleTo` is the accepted price of the in-module read staying off the bus.
 
+### The third boundary — what meeting-digests asks of the other two
+
+`meeting-files` answers two queries for whatever describes a meeting as a whole:
+`FindTranscribedRecordingsQuery(meetingId)` — which recordings are transcribed, id and
+uploader — and `FindMeetingTranscriptsQuery(meetingId, maxCharacters)` — what was said in
+them, in upload order. Three things about them:
+
+- **Neither carries a user or checks visibility.** Who may ask about the meeting is the
+  caller's to have decided, as it is for `FindUserByIdQuery`; a route that dispatches one
+  without `FindVisibleMeetingQuery` first has published a meeting's transcripts.
+- **A storage key never crosses.** The handlers answer ids and text; a path under
+  `MEETING_FILES_DIR` is this module's business.
+- **The transcripts query stops at `maxCharacters` instead of loading past it**, and answers
+  `withinLimit: false` with no text at all rather than part of it. A transcript is checked by
+  its size on disk before it is read — UTF-8 never spends more than three bytes on what a
+  string's `length` counts as one — so memory is bounded by the limit, not by a meeting of
+  fifty one-gigabyte recordings.
+
 ## Meeting files (`src/modules/meeting-files`)
 
 What the code cannot say for itself. The PRD is `docs/specs/2026-09-19-meeting-file-upload-prd.md`
@@ -444,13 +471,14 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   status at `processing` and status alone cannot tell the current holder from the one it
   replaced. A caller that gets `false` has lost a race and discards its result rather than
   overwriting — including removing the thumbnail it wrote, which nothing else would find.
-- **A slow claim keeps its lease with a heartbeat.** `startLeaseHeartbeat` renews the lease
-  every `lease / 3` seconds through the repository's `renewLease` — raw as well, because it
+- **A slow claim keeps its lease with a heartbeat.** `startLeaseHeartbeat` — in
+  `src/common/processing`, beside `PollingLoop`, because the digest worker in another module
+  uses both — renews the lease every `lease / 3` seconds through the repository's `renewLease` — raw as well, because it
   returns the lease the row now holds, and the final conditional write is on the value the
   _last renewal_ set, not the one the claim did. A renewal updating zero rows means the row is
   no longer ours — the heartbeat reports `null`, the conditional writes miss on purpose, and the
   result and its bytes are discarded. Renewals never overlap and `stop()` waits for the one in
-  flight, since each is conditional on the lease the previous one set. Both workers use it. No
+  flight, since each is conditional on the lease the previous one set. Both workers here use it. No
   file step outlasts the 60 second lease today; a transcription always does, and passes an
   `onLost` so its request is hung up the moment the claim is gone rather than minutes later.
 - **`attempts` counts claims, not failures.** A row claimed a fourth time is failed unrun; a
@@ -762,7 +790,8 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
 `ClaudeAgentService` is Claude through the Claude Agent SDK, two ways: `runPrompt(prompt, model)`
 is a prompt in and text out, and `runStructuredPrompt(request, signal)` is a system prompt, a
 prompt, and a JSON schema in and an object bound to that schema out, with its model, cost, and
-token counts. No route reaches either; a feature that wants Claude imports `ClaudeAgentModule`.
+token counts. No route reaches either; a feature that wants Claude imports `ClaudeAgentModule`,
+and the meeting digest is the one that does.
 
 - **The SDK is Claude Code as a library, not an HTTP client.** Each call starts a Claude Code
   process — a native binary of about 220 MB, installed as a per-platform optional dependency —
@@ -777,8 +806,8 @@ token counts. No route reaches either; a feature that wants Claude imports `Clau
   started it, which would point the SDK, configured token and all, at that session's endpoint.
   A variable the process really needs, a proxy for one, is added to that list.
 - **`ANTHROPIC_AUTH_TOKEN` is the only credential, and its absence is an error, not a
-  fallback.** It is optional at boot, since nothing in a request path needs it yet. Without the
-  check in `requireAuthToken` the process would authenticate with whatever the host has — on a
+  fallback.** It is optional at boot while `MEETING_DIGEST_ENABLED` is off, since nothing then
+  needs it, and required with it on. Without the check in `requireAuthToken` the process would authenticate with whatever the host has — on a
   developer's machine, their own Claude login — and the call would succeed on the wrong account.
 - **Never import the SDK at the top of a file.** It is ESM-only. Node 24 loads it from this
   CommonJS build regardless, but Jest fails on it with `Cannot use import statement outside a
@@ -826,8 +855,9 @@ module` unless Node runs with `--experimental-vm-modules`, and `ClaudeAgentModul
   marks the prompt for Anthropic's prompt cache, and a one-turn call never reads it back.
   The measurements are in `src/config/meeting-digest.defaults.ts`.
 
-Its first caller is `MeetingDigestGenerator` (`src/modules/meeting-digests`): transcripts in, a
-validated digest out, one request and no state — nothing calls it yet. The PRD is
+Its one caller is `MeetingDigestGenerator` (`src/modules/meeting-digests`): transcripts in, a
+validated digest out, one request and no state. What calls the generator, and what is done
+with its answer, is the next section. The PRD is
 [`docs/prd-meeting-digest-summary-action-items-decisions.md`](../../docs/prd-meeting-digest-summary-action-items-decisions.md)
 and the decisions under it are in
 [its plan](../../docs/plan-meeting-digest-summary-action-items-decisions.md). Six things about
@@ -869,6 +899,128 @@ the instructions do**, since they are part of every prompt: `MEETING_DIGEST_MEAS
 `MEETING_DIGEST_MEASURE_RUSSIAN_CHARACTERS`, and `MEETING_DIGEST_MEASURE_OUTCOMES` switch on
 the runs of `test:live` that are too expensive to be on by default
 (`test/meeting-digest-measure.live-spec.ts`, which says what each costs).
+
+## Meeting digests (`src/modules/meeting-digests`)
+
+A meeting's summary, action items, and decisions, generated from the transcripts of its
+recordings, stored, and served at `GET /api/meetings/:id/digest`. The contract is
+[the PRD](../../docs/prd-meeting-digest-summary-action-items-decisions.md); every decision
+under it, and the phases, are in
+[its plan](../../docs/plan-meeting-digest-summary-action-items-decisions.md). **Phases 1 and 2
+of 7 are built**: a recording that reaches Transcribed gives its meeting a digest, and anyone
+who can see the meeting can read it. Not yet: an event on the files stream and a reaction to
+a deleted recording (phase 3), an owner linked to a participant (4), and a request to
+generate or retry (5). What a reader of the code would get wrong:
+
+**What leaves, and when**
+
+- **Switched on, it sends transcript text to Anthropic — which the transcription PRD ruled
+  out, and is why `MEETING_DIGEST_ENABLED` ships off.** What is sent is what was said, under
+  an ordinal: no file name, id, email address, display name, or storage path, and an e2e
+  spec reads the captured prompt to hold it to that. Give the prompt a field only together
+  with a decision about that field leaving the deployment.
+- **The setting stops new work and nothing else**, as the transcription's does. Off, a newly
+  transcribed recording asks for nothing, the worker claims nothing, and a `QUEUED` row
+  waits; a stored digest is still served, and both rules about recordings still apply to it,
+  because the read applies them. The handler and the worker ask `ConfigService` when they
+  run, so the e2e suite flips it between tests. **Nothing is generated when it comes back**
+  for a recording transcribed while it was off: nothing revisits a transcribed recording.
+- **With it on, a missing `ANTHROPIC_AUTH_TOKEN` stops the boot** — its presence, never
+  whether Anthropic accepts it. A refused token fails a digest, not the process that serves
+  every upload.
+
+**The row**
+
+- **One row per meeting, and its status and its content are two things.** `status` is where
+  the _latest_ generation stands; the summary and the three child tables are what the last
+  _successful_ one stored. A generation that fails leaves the content where it was, so a
+  digest can be `failed` and readable at once — the PRD's "if that replacement fails, it
+  stays, with the failure". The edges, and what takes each, are the table in
+  `services/meeting-digest-status.ts`.
+- **`requested_revision` is the whole of a request.** `MeetingDigestRepository.request` is one
+  upsert that bumps it. A claim remembers the revision it took, and the write that ends it is
+  `READY`, `FAILED`, or no status only if the revision has not moved — `QUEUED` otherwise.
+  All three go through `settle`, so a fourth way to end a claim gets the condition by being
+  written there. That is all of
+  "never two generations at once, and one more after a change": a request made while a
+  generation is out changes no status, takes no lock, and tells the worker nothing.
+- **Every fresh request resets the claim count, and so does a requeue.** `attempts` bounds
+  the crashes of one generation, not the life of a row: three recordings arriving one behind
+  another are three generations, and counting them as claims would fail the fourth unrun.
+- **Content is stored even when the row goes back to `QUEUED`.** An answer that arrives after
+  another request is still a whole digest of the recordings it names as its sources. The
+  read marks it out of date until its replacement lands.
+- **`version` rises with every write a client is shown, and a lease renewal is not one.** It
+  is what will order an event against a fetch (phase 3); nothing reads it yet.
+- **The raw statements set `id` and `updated_at` themselves.** `@default(uuid())` and
+  `@updatedAt` are the Prisma client's, and the request and the claim do not go through it —
+  hence `gen_random_uuid()`, `now()`, and a database default on `updated_at`.
+- **`@@index([meetingId])` beside `@unique` is deliberate**: `.claude/rules/prisma.md` asks
+  for an index on every foreign key by that name. The unique constraint is what `ON CONFLICT`
+  names.
+
+**The read**
+
+- **Both of the PRD's rules about recordings are derived on every read**, in
+  `toMeetingDigest`, from the digest's sources against the recordings transcribed now:
+  content is returned only while every source is still one of them, and is `outOfDate` when
+  one of them is not a source. So they hold with the setting off, before anything has reacted
+  to a delete, and in whatever order events arrive. Do not replace them with a column
+  somebody has to keep true.
+- **The digest row is read before the recordings**, and the order is the point: a recording
+  deleted between the two reads is already missing from the second, so its words are
+  withheld. The other way round, that delete would be served.
+- **The row and its three tables are read in one `REPEATABLE READ` transaction.** They are
+  four statements, and at the default isolation each sees what had committed when it began:
+  a generation landing between two of them gave a read the earlier summary over the later
+  action items. `complete`'s transaction is only half of "never half a digest"; this is the
+  other half. They are four awaited reads rather than one `include` because Prisma sends an
+  include's statements to a transaction's one connection together, which `pg` deprecates.
+- **A meeting with no digest is a 200 with `version: 0`**, not a 404 — the 404 is "you cannot
+  see this meeting", and one shape is all a client has to read.
+
+**The trigger and the worker**
+
+- **The trigger is the file event, not the transcription's transaction.**
+  `RequestDigestWhenTranscribedHandler` asks for a digest when a file is announced `ready` and
+  `transcribed` — the one event a file in that state is ever announced with. The request is a
+  second write, after the first committed, so a process killed between them leaves a
+  transcribed recording with nothing queued: exactly the state of one transcribed with the
+  setting off. A request that fails is logged and not retried, for the same reason. Closing
+  the window would mean `meeting-files` writing this module's table.
+- **`PendingDigestRequests` exists because the bus does not wait for a handler.** It holds
+  the requests in flight, for shutdown — which must not close the connection under one — and
+  for `drain()`, which waits for them before it looks for work. The handler registers its
+  request before its first `await`, and that has to stay so: the bus calls it inside
+  `publish`, which is what makes "the transcription worker has drained" imply "the request is
+  one `settled()` waits for".
+- **The worker is the transcription worker's shape, on this module's row**: a polling loop of
+  its own where `MEETING_FILES_WORKER_ENABLED` is on, one `SKIP LOCKED` claim, the heartbeat,
+  a fourth claim failed unrun, a shutdown that hands the claim back uncounted from
+  `onModuleDestroy`, and `drain()` under the string token `MEETING_DIGEST_WORKER`. It runs
+  under the files worker's `MEETING_FILES_LEASE_SECONDS` and `MEETING_FILES_POLL_MS`: a
+  second pair of variables would only ever be set to the same values.
+- **What hung up on a generation is read from the signal's reason, not from two flags.** The
+  SDK's rejection trails an abort by up to two seconds, so by the time it arrives both the
+  time limit and a shutdown may have fired; an `AbortSignal.any` carries the reason of the
+  first, and that one ended the call. Two flags would hand a generation that timed out back
+  to the queue whenever a deploy landed in those two seconds, to time out again.
+- **A claim that finds no transcribed recording clears the status** — no call, no failure,
+  no retry: the meeting has no digest. **Unless a request was made since the claim**, which
+  leaves the row `QUEUED` instead: a recording transcribed after the worker looked asked
+  while the row was `GENERATING`, and its request changed nothing but the revision. A claim
+  that finds the transcripts past the cap fails as too long with nothing sent.
+- **Failures store copy, never causes**, as everywhere: four sentences from `@repo/shared` —
+  generic, the time limit, too long, repeated attempts — chosen in
+  `processing/meeting-digest-failure.ts` from what ended the generation. The SDK's and
+  Anthropic's words stay in the log. **There is no automatic retry**: every generation is a
+  paid request, and the first error ends it. That includes an answer the database will
+  not store — a NUL in its text is enough: `DigestOutcomeRecorder.complete` records the
+  generic failure rather than let the claim lapse and the meeting be sent, and paid for,
+  twice more.
+- **The log is the only place a generation's cost is kept.** Every one — stored, failed, or
+  discarded with a lost claim — is logged with its duration, its model, and what the SDK
+  says it cost. No row holds a cost and no response carries one.
 
 ## Bootstrap behaviour (`src/configure-app.ts`)
 
@@ -928,6 +1080,20 @@ to the in-network name (`whisper:8000`), and takes the flag from the root `.env`
 time limit is stated once for code, in `src/config/transcription.defaults.ts`, and restated
 in those two files because neither can import — change all three together. The model has no
 default in code at all: those two files are the only places the local one is named.
+
+**The digest's two variables are in the first two and not the third.** `MEETING_DIGEST_ENABLED`
+and `MEETING_DIGEST_TIMEOUT_SECONDS` are in the contract and `apps/api/.env.example`, with
+`ANTHROPIC_AUTH_TOKEN` required whenever the flag is on. `docker-compose.yml` hands its `api`
+service none of the three, so the digest is off there whatever the root `.env` says: nobody
+has yet checked that the image, which is Alpine, carries a Claude Code binary the SDK can
+start. Adding them to Compose goes with that check. The time limit's default is stated once
+for code, in `src/config/meeting-digest.defaults.ts`, with its measurements.
+
+**The contract is two classes, and `validate` checks them as one.** The transcription
+settings are `TranscriptionEnvironmentVariables` in `env.validation.transcription.ts`, which
+`EnvironmentVariables` extends — class-validator and class-transformer both inherit a
+parent's decorators. That is a file-size split, not a second contract: a new variable goes
+where its feature's are, and a third feature's would extend the chain.
 
 **A rule the contract cannot express with a type is still the contract's job.** `JWT_SECRET`
 is rejected when it is one of the placeholders this repository has published, not only when it
@@ -1033,7 +1199,7 @@ test inherits another's rows (which is also what makes a repeated run independen
 `afterAll` so the final test's fixtures are not stranded. **The web app's Playwright suite
 truncates the same table, so the two must never run at the same time.**
 
-Seven things about that setup are easy to get wrong:
+Nine things about that setup are easy to get wrong:
 
 - **Environment must be set in `test/setup-env.ts`, not in a helper.** `ConfigModule.forRoot()`
   is evaluated when `app.module.ts` is _imported_ and prefers `process.env`, so anything
@@ -1041,14 +1207,22 @@ Seven things about that setup are easy to get wrong:
   app signs tokens with the developer's local `JWT_SECRET` while the specs verify with the test
   one. The failure looks like broken signing code, not configuration. Jest `setupFiles` runs
   early enough. The same file points `MEETING_FILES_DIR` at a per-run temp directory and sets
-  `MEETING_FILES_WORKER_ENABLED=false`.
+  `MEETING_FILES_WORKER_ENABLED=false`. **It also sets `MEETING_DIGEST_ENABLED=false`**,
+  which looks redundant beside a default of off and is not: the env files are still read,
+  so a developer's `.env` with the digest on would otherwise switch it on for every spec —
+  the real `ClaudeAgentService` wherever the fake is not bound — and a run with
+  `ANTHROPIC_AUTH_TOKEN` exported empty would not boot.
 - **`start:e2e-web` must stay in step with it**: the same temp-dir idea, but the worker **on**
   with a fast poll, because the web app's browser suite watches the Processing chip disappear —
   and the same out-of-reach auth rate limit, because that suite registers through the UI in
   every spec and would meet a deployment's ten a minute part-way through a run. It also
   switches transcription **on** and names `127.0.0.1:3102`, where that suite starts a fake of
   its own (`apps/web/e2e/fake-transcriber.mjs`); here the setting stays off except under
-  `useTranscriptionSuite`.
+  `useTranscriptionSuite`. **And it sets `MEETING_DIGEST_ENABLED=false`**, for a sharper
+  reason than `setup-env.ts`'s: that API holds the real `ClaudeAgentService`, its worker
+  polls, and the browser specs transcribe recordings — so with a developer's `.env` left to
+  decide, every one of them would be a paid request to Anthropic. Do not switch it on there
+  until that suite has a fake Claude of its own inside the API.
 - **`maxWorkers: 1` is load-bearing**, for the same reason: Jest parallelises across spec
   files, and in parallel they delete each other's fixtures and a seeded `register` starts
   returning 409. Remove it only alongside per-worker database isolation.
@@ -1056,8 +1230,9 @@ Seven things about that setup are easy to get wrong:
   table and column names directly. A response is not evidence about what was written: asserting
   through the API would reuse the same `include` the implementation does, so a row the code
   never meant to write — the host landing in `meeting_participants` — would be invisible.
-  `truncateUsers` cascades to `meetings`, `meeting_files`, and `meeting_file_uploads`, which is
-  why the file specs need no cleanup of their own and why there is deliberately no second
+  `truncateUsers` cascades to `meetings`, `meeting_files`, `meeting_file_uploads`, and the
+  four `meeting_digest*` tables, which is why the file and digest specs need no cleanup of
+  their own and why there is deliberately no second
   truncation helper to disagree with it about what "clean" means. The files' helpers also seed
   states a route cannot produce on demand (`leased_until`, `attempts`, `purged_at`, a past
   `expires_at`, a transcription claim whose worker died).
@@ -1073,6 +1248,22 @@ Seven things about that setup are easy to get wrong:
   request the worker aborts really is hung up on (`hangUps`). `useTranscriptionSuite` starts
   it, points the application at it, and switches the setting on before each test; every other
   spec file runs with transcription off, which is why none of them had to change.
+- **`test/utils/fake-claude-agent.ts` is the Claude the digest specs talk to**, bound over
+  `ClaudeAgentService` itself through `useApiSuite({ overrides: [claude.override()] })` — not
+  over the SDK loader, and not over the generator. So the prompt builder, the answer's guard,
+  and the worker all run for real, `calls` holds the exact text that would have left for
+  Anthropic, and no spec needs a token or the network. Its default answer is `digestOf` the
+  prompt — one decision per recording, quoting its transcript — which is what lets a spec
+  assert "the digest covers all three" without a model's wording. `useDigestSuite` resets it
+  and switches the setting on before each test; its `transcribe` takes a recording all the
+  way to Transcribed through the fake Whisper, and returns once the request that made has
+  been written. Every other spec file runs with the digest off.
+- **An environment the contract refuses does not throw when `AppModule` is imported.**
+  `ConfigModule.forRoot` is `async`, so the refusal is a rejected promise inside the module's
+  `imports` that nothing awaits until Nest compiles it — and an `expect(import(…))` passes
+  while the rejection surfaces in whichever test runs next. `meeting-digest-setting`'s boot
+  cases therefore compile the module, in `jest.isolateModulesAsync`, with `@nestjs/testing`
+  imported inside the isolate too so the two agree on what a module is.
 - **`test/utils/jwt.ts` verifies tokens with `node:crypto` alone**, never the library the API
   signs with, so a token only `@nestjs/jwt` can read fails the assertion. It is checked against
   a signature produced by `openssl dgst -sha256 -hmac`. Do not "simplify" it into `JwtService`.
@@ -1084,6 +1275,7 @@ Update it in the same commit as the change;
 one owns what is specific to `@repo/api`. The sections above each name what would invalidate
 them — a global added to `configure-app.ts`, a Prisma upgrade that moves the constraint `meta`
 shape, a fourth message on the auth/user boundary, a new exemplar module replacing one of the
-four, the first event or saga, a change to the `apps/api/**` lint overrides. Adding a feature
+five, a second event or the first saga, a later phase of the meeting digest, a change to the
+`apps/api/**` lint overrides. Adding a feature
 module that follows the existing shape needs no update: document the shape, not each module
 that uses it.

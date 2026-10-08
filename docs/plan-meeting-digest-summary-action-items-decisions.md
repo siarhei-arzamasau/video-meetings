@@ -53,6 +53,12 @@ build it into the API; phases 6–7 put it on the page.
    Every request for a generation bumps `requested_revision`. A claim remembers the revision it
    took; the write that ends it is `ready` (or `failed`) only if the revision is unchanged, and
    `queued` otherwise. That is all of "never two at once, and one more after a change".
+   **Two things phase 2 settled about that write.** The claim count goes back to 0 with every
+   request that queues a row and with every requeue: it bounds the crashes of one generation,
+   and three recordings arriving one behind another would otherwise be failed unrun as a
+   fourth claim. And an answer whose row is queued again is still stored — it is a whole
+   digest of the recordings it names, and the read marks it out of date — while the reason of
+   a failure that is being replaced is dropped.
 7. **The trigger is the file event, not the transcription's transaction.** A recording that
    reaches Transcribed with the setting on asks for a generation. A process killed between the
    transcription's commit and that request leaves a transcribed recording with nothing queued —
@@ -80,6 +86,11 @@ build it into the API; phases 6–7 put it on the page.
     `MEETING_FILES_WORKER_ENABLED` is on; a `FOR UPDATE SKIP LOCKED` claim; the lease heartbeat;
     a fourth claim failed unrun; a graceful shutdown that hands the claim back uncounted; no
     automatic retry; fixed failure copy from `@repo/shared`, with the cause in the log.
+    It runs under the files worker's `MEETING_FILES_LEASE_SECONDS` and `MEETING_FILES_POLL_MS`
+    rather than a pair of its own (phase 2). One thing is not the transcription worker's:
+    which of the time limit and a shutdown hung up is read from the abort signal's reason,
+    the first to fire, because the SDK's rejection trails an abort by up to two seconds and
+    both may have fired by then.
 12. **`MEETING_DIGEST_ENABLED`, off by default, and a restart to change.** On, a missing
     `ANTHROPIC_AUTH_TOKEN` stops the boot. Off, the worker is idle, a transcribed recording
     asks for nothing, the request route answers 409, and a row left `queued` waits.
@@ -123,14 +134,15 @@ export interface MeetingDigest {
 }
 ```
 
-| Edge                                   | Taken by                                                                               |
-| -------------------------------------- | -------------------------------------------------------------------------------------- |
-| _(none)_, `ready`, `failed` → `queued` | A recording reaching Transcribed, setting on; a deleted source, others left; phase 5   |
-| `queued` → `generating`                | A claim; also re-claims `generating` past its lease                                    |
-| `generating` → `ready`                 | The answer stored, lease held, revision unchanged                                      |
-| `generating` → `failed`                | Provider error, bad shape, time limit, too long, a fourth claim; revision unchanged    |
-| `generating` → `queued`                | Revision changed meanwhile; an answer discarded for a deleted source; shutdown release |
-| any → _(none)_                         | The meeting's last transcribed recording deleted                                       |
+| Edge                                   | Taken by                                                                                |
+| -------------------------------------- | --------------------------------------------------------------------------------------- |
+| _(none)_, `ready`, `failed` → `queued` | A recording reaching Transcribed, setting on; a deleted source, others left; phase 5    |
+| `queued` → `generating`                | A claim; also re-claims `generating` past its lease                                     |
+| `generating` → `ready`                 | The answer stored, lease held, revision unchanged                                       |
+| `generating` → `failed`                | Provider error, bad shape, time limit, too long, a fourth claim; revision unchanged     |
+| `generating` → `queued`                | Revision changed meanwhile; an answer discarded for a deleted source; shutdown release  |
+| `generating` → _(none)_                | The claim found no transcribed recording to generate from; revision unchanged (phase 2) |
+| any → _(none)_                         | The meeting's last transcribed recording deleted (phase 3)                              |
 
 Routes: phase 2 adds `GET /api/meetings/:id/digest` — `200 MeetingDigest` for anyone who can
 see the meeting, `404 Meeting not found` otherwise. Phase 3 adds `event: digest` to the files
@@ -193,26 +205,26 @@ with no request from anyone, readable by everyone who can see the meeting, survi
 
 **Tasks:**
 
-- [ ] Make room first, as pure moves with both suites green before and after:
+- [x] Make room first, as pure moves with both suites green before and after:
       `env.validation.ts` is at the 250-line limit, so its transcription settings move to a
       file of their own; `PollingLoop` and the lease heartbeat move from `meeting-files` to
       `src/common/processing`, the heartbeat losing its file-specific option names.
-- [ ] Schema, contract, setting: the `MeetingDigestStatus` enum and `meeting_digests` (one per
+- [x] Schema, contract, setting: the `MeetingDigestStatus` enum and `meeting_digests` (one per
       meeting; status, failure reason, lease, claim count, requested revision, version,
       summary), `meeting_digest_action_items` (owner name, owner id), `meeting_digest_decisions`,
       `meeting_digest_sources` — per `.claude/rules/prisma.md`, migration `add_meeting_digests`.
       The shared vocabulary, types, and failure copy (generic, time limit, too long, repeated
       attempts). `MEETING_DIGEST_ENABLED`, `MEETING_DIGEST_TIMEOUT_SECONDS`, the token required
       when on, `.env.example`. Mapper spec and `env.validation.spec.ts`.
-- [ ] Reading: two queries answered by `meeting-files` — a meeting's transcribed recordings
+- [x] Reading: two queries answered by `meeting-files` — a meeting's transcribed recordings
       (id and uploader), and their transcripts in upload order, which stops at the cap rather
       than load unbounded text. `GET /api/meetings/:id/digest` through `FindVisibleMeetingQuery`,
       applying decision 8's two rules. Handler specs.
-- [ ] Writing: `MeetingDigestRepository` — the request upsert, `claimNext`, `renewLease`, the
+- [x] Writing: `MeetingDigestRepository` — the request upsert, `claimNext`, `renewLease`, the
       completion that replaces content and sources in one transaction, fail, and release — with
       a spec for the edge table. The `MeetingFileChangedEvent` handler that requests a
       generation for a newly transcribed recording while the setting is on.
-- [ ] `MeetingDigestWorker`: idle while the setting is off; claim, heartbeat, transcripts,
+- [x] `MeetingDigestWorker`: idle while the setting is off; claim, heartbeat, transcripts,
       generator under the time limit, then the conditional write; a fourth claim fails unrun;
       shutdown releases; every generation logs its duration, model, and cost; `drain()` under a
       string token. Unit spec. Then e2e, red first, with a fake `ClaudeAgentService`. Flow: an
@@ -226,6 +238,43 @@ with no request from anyone, readable by everyone who can see the meeting, survi
       app over the same database serves the digest with no call. Setting: off queues nothing
       and still serves; on with no token does not boot. The captured prompt holds no email, id,
       or storage path, and no response holds a cost.
+
+_As built:_
+
+- **The contract is two classes.** The transcription settings are a class `EnvironmentVariables`
+  extends, in `env.validation.transcription.ts`; the heartbeat's options are `leases`,
+  `claimId`, and `subject`, the last being how its log lines open.
+- **The row has one column the list above does not name**, `generated_at`, for the
+  contract's `generatedAt`; and its `status` is nullable, so that phase 3's "no digest" keeps
+  the row and its rising `version`. Action items and decisions carry a `position`; `owner_id`
+  is a foreign key to `users` that phase 4 fills.
+- **The repository is two classes**, for the 250-line limit: `MeetingDigestRepository` (the
+  request and the read) and `MeetingDigestClaimRepository` (every write under a lease). The
+  edge table is specced twice: against a stubbed client beside the code, and against the
+  database in `meeting-digest-claims` and `meeting-digest-claim-writes`.
+- **The worker clears the status when a claim finds no transcribed recording** — the last one
+  deleted after its request — rather than send nothing or fail. Phase 3 does the same eagerly,
+  on the delete. **That write is conditional on the revision like the other two**, and leaves
+  the row `queued` when a request moved it: a recording transcribed after the claim read the
+  transcripts asked while the row was `generating`, which changes only the revision, and a
+  clear that ignored it left that recording with nothing queued. Found in review.
+- **The read is one snapshot.** The row and its three child tables are four statements, and a
+  generation committing between two of them gave a read the earlier summary over the later
+  lists. `findOf` runs them in a `REPEATABLE READ` transaction; `meeting-digest-read` holds a
+  write half-way through a read to show it. Found in review.
+- **Both e2e environments pin the setting off** — `test/setup-env.ts` and `start:e2e-web` —
+  so neither takes it, or the token, from a developer's `apps/api/.env`. The digest specs
+  switch it on per test. The browser suite therefore generates no digest until it boots the
+  API from the test entry point decision 13 describes.
+- **`PendingDigestRequests`**, which the tasks do not name: the event bus does not wait for a
+  handler, so the requests in flight are tracked for shutdown and for `drain()`.
+- **The Compose `api` service is not handed the setting.** Nobody has checked that its image
+  can start the SDK's Claude Code binary; the digest is documented for an API run on the host.
+- **The e2e specs were written after the worker, not before it.** They were then run against
+  a module with the worker and the event handler taken out, and failed there for the reason
+  expected, before being run against the whole.
+- **The manual run was not done**: the real Whisper and a token outside `test:live` were
+  both out of reach where this phase was built. It is still owed.
 
 **Done when:** those specs are green with every earlier e2e spec; a manual run with the real
 Whisper and the real model is in the commit body — the reference recording uploaded and its

@@ -10,16 +10,16 @@ import { ConfigService } from '@nestjs/config';
 import { EventBus } from '@nestjs/cqrs';
 import { MEETING_FILE_PROCESSING_FAILED_MESSAGE } from '@repo/shared';
 
+import { startLeaseHeartbeat } from '../../../common/processing/lease-heartbeat';
+import { PollingLoop } from '../../../common/processing/polling-loop';
 import { MeetingFileHandOvers } from '../services/meeting-file-hand-overs';
 import { MeetingFileUploadRepository } from '../services/meeting-file-upload.repository';
 import { MeetingFileRepository } from '../services/meeting-file.repository';
 import type { ClaimedFile } from '../services/meeting-file.repository';
 import { MeetingFileStorage } from '../storage/meeting-file-storage';
 import { FileOutcomeRecorder } from './file-outcome-recorder';
-import { startLeaseHeartbeat } from './lease-heartbeat';
 import { MeetingFilePurger } from './meeting-file-purger';
 import { PIPELINE } from './pipeline';
-import { PollingLoop } from './polling-loop';
 import type { ProcessingStep, StepContext, StepPatch } from './step';
 import { runSteps } from './step-failure';
 
@@ -220,10 +220,10 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     lease: Date | null,
   ): Promise<{ held: Date | null; outcome: { patch: StepPatch } | { error: unknown } }> {
     const heartbeat = startLeaseHeartbeat({
-      files: this.files,
+      leases: this.files,
       logger: this.logger,
-      fileId: claimed.id,
-      meetingId: claimed.meetingId,
+      claimId: claimed.id,
+      subject: `File ${claimed.id} of meeting ${claimed.meetingId}`,
       lease,
       leaseSeconds: this.leaseSeconds,
     });

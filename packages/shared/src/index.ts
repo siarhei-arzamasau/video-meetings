@@ -66,3 +66,16 @@ export {
   MEETING_FILE_CHUNKED_SIZE_MESSAGE,
   MEETING_FILE_CHUNK_SIZE_BYTES,
 } from './types/meeting-file-upload';
+export type {
+  MeetingDigest,
+  MeetingDigestContent,
+  MeetingDigestOwner,
+  MeetingDigestStatus,
+} from './types/meeting-digest';
+export {
+  MEETING_DIGEST_FAILED_MESSAGE,
+  MEETING_DIGEST_REPEATED_FAILURE_MESSAGE,
+  MEETING_DIGEST_STATUSES,
+  MEETING_DIGEST_TOO_LONG_MESSAGE,
+  meetingDigestTimeLimitMessage,
+} from './types/meeting-digest';

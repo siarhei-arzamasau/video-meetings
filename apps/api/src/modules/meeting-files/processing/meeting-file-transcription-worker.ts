@@ -13,12 +13,12 @@ import {
   meetingFileTranscriptionTimeLimitMessage,
 } from '@repo/shared';
 
+import { PollingLoop } from '../../../common/processing/polling-loop';
 import { DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS } from '../../../config/transcription.defaults';
 import { MeetingFileHandOvers } from '../services/meeting-file-hand-overs';
 import { MeetingFileTranscriptionRepository } from '../services/meeting-file-transcription.repository';
 import type { ClaimedTranscription } from '../services/meeting-file-transcription.repository';
 import { MeetingFileStorage } from '../storage/meeting-file-storage';
-import { PollingLoop } from './polling-loop';
 import { TranscriptionOutcomeRecorder } from './transcription/transcription-outcome-recorder';
 import { TRANSCRIPTION_PROVIDER } from './transcription/transcription-provider';
 import type { TranscriptionProvider } from './transcription/transcription-provider';

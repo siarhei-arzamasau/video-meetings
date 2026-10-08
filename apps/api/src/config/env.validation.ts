@@ -5,9 +5,7 @@ import {
   IsEnum,
   IsInt,
   IsNotIn,
-  IsOptional,
   IsString,
-  IsUrl,
   Matches,
   Max,
   Min,
@@ -24,13 +22,18 @@ import {
   corsOriginsOf,
   parseBoolean,
 } from './env-values';
-import { DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS } from './transcription.defaults';
+import { TranscriptionEnvironmentVariables } from './env.validation.transcription';
+import { DEFAULT_MEETING_DIGEST_TIMEOUT_SECONDS } from './meeting-digest.defaults';
 
 /**
  * Environment contract for the API. Anything the app cannot start without belongs here,
  * so misconfiguration fails at boot rather than at the first request that needs it.
+ *
+ * The transcription settings are the class this one extends, in a file of their own: they
+ * are one feature's, they are validated together, and this file was at its size limit.
+ * Decorators are inherited, so `validate` below checks both as one contract.
  */
-export class EnvironmentVariables {
+export class EnvironmentVariables extends TranscriptionEnvironmentVariables {
   @IsEnum(NodeEnv)
   NODE_ENV: NodeEnv = NodeEnv.Development;
 
@@ -167,62 +170,37 @@ export class EnvironmentVariables {
   MEETING_FILE_UPLOAD_TTL_HOURS: number = 24;
 
   /**
-   * Whether an audio or video file is queued for transcription when it becomes `ready`, and
-   * whether the transcription worker claims anything. Off by default: it needs a second service.
-   * Switching it off keeps every stored status and leaves a queued recording waiting for it to
-   * come back. Parsed like the worker flag, for the same reason. The URL below is validated
-   * whenever this is on — its shape, never the server behind it: a Whisper that is down fails a
-   * transcription, not the boot of what serves every upload.
+   * Whether a recording that reaches Transcribed asks for its meeting's digest, and whether
+   * the digest worker claims anything. **Off by default, because switching it on sends
+   * transcript text to Anthropic** — the first thing in this API to send meeting content to a
+   * third party. Off, a digest already stored is still served and a queued one waits for the
+   * setting to come back. Parsed like the worker flag, for the same reason.
    */
   @Transform(({ obj, key }) => parseBoolean((obj as Record<string, unknown>)[key]))
   @IsBoolean()
-  MEETING_FILES_TRANSCRIPTION_ENABLED: boolean = false;
+  MEETING_DIGEST_ENABLED: boolean = false;
 
   /**
-   * An OpenAI-compatible `audio/transcriptions` endpoint: the `whisper` Compose service, at
-   * `http://localhost:8000/v1/audio/transcriptions` from the host and `http://whisper:8000/…`
-   * from the `api` container. Required when the flag is on, and unvalidated when it is off so
-   * a deployment that does not transcribe needs no placeholder.
-   */
-  @ValidateIf((env: EnvironmentVariables) => env.MEETING_FILES_TRANSCRIPTION_ENABLED)
-  @IsUrl({ require_tld: false, require_protocol: true, protocols: ['http', 'https'] })
-  TRANSCRIPTION_API_URL: string = '';
-
-  /** Sent as a bearer token when set. Optional: a server on a private network may want none. */
-  @IsOptional()
-  @IsString()
-  TRANSCRIPTION_API_KEY?: string;
-
-  /**
-   * The `model` field of the request. Required when the flag is on and **never defaulted**: no
-   * one name is right everywhere — the local service answers 404 for a model it has not
-   * downloaded, a hosted endpoint for one it does not have — so a default fails every
-   * recording somewhere, one at a time and long after boot. `.env.example` and Compose name
-   * Whisper `small` as the local service knows it (its `WHISPER_MODEL`).
-   */
-  @ValidateIf((env: EnvironmentVariables) => env.MEETING_FILES_TRANSCRIPTION_ENABLED)
-  @MinLength(1, {
-    message: 'TRANSCRIPTION_MODEL must be set when MEETING_FILES_TRANSCRIPTION_ENABLED is on.',
-  })
-  TRANSCRIPTION_MODEL: string = '';
-
-  /**
-   * How long one transcription may take before it is aborted and ends Failed with a reason naming
-   * this limit — the file stays `ready` — rather than hanging on a lease that keeps being renewed.
-   * Twelve minutes by default: a one-hour recording at twice the rate measured beside the constant.
-   * At least thirty seconds: a bound shorter than the request it bounds only fails transcriptions.
+   * How long one generation may take before it is hung up on and the digest ends Failed with
+   * a reason naming this limit. Four minutes by default: twice the slowest generation the
+   * measurements beside the constant predict. At least thirty seconds: a bound shorter than
+   * the request it bounds only fails digests.
    */
   @IsInt()
   @Min(30)
-  TRANSCRIPTION_TIMEOUT_SECONDS: number = DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS;
+  MEETING_DIGEST_TIMEOUT_SECONDS: number = DEFAULT_MEETING_DIGEST_TIMEOUT_SECONDS;
 
   /**
-   * What the Claude Agent SDK authenticates with, sent to Anthropic as a bearer token.
-   * Optional, because nothing at boot needs it: `ClaudeAgentService` refuses a prompt without
-   * it instead, rather than let the SDK fall back to a credential it finds on the host.
+   * What the Claude Agent SDK authenticates with, sent to Anthropic as a bearer token, and
+   * the only credential there is: `ClaudeAgentService` refuses a prompt without it rather
+   * than let the SDK fall back to one it finds on the host.
+   *
+   * **Required while the digest is on, and unvalidated while it is off** — the transcription
+   * endpoint's rule. Its presence is all that is checked: no request leaves at boot, so a
+   * token Anthropic refuses fails a digest, never the process that serves every upload.
    */
-  @IsOptional()
-  @IsString()
+  @ValidateIf((env: EnvironmentVariables) => env.MEETING_DIGEST_ENABLED)
+  @Matches(/\S/, { message: 'ANTHROPIC_AUTH_TOKEN must be set when MEETING_DIGEST_ENABLED is on.' })
   ANTHROPIC_AUTH_TOKEN?: string;
 }
 
