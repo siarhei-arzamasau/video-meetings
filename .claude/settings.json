@@ -7,7 +7,8 @@
       "Bash(pnpm *)",
       "Bash(git *)",
       "Bash(gh *)",
-      "Bash(npx prisma *)"
+      "Bash(npx prisma *)",
+      "Workflow"
     ]
   },
   "env": {
