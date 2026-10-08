@@ -8,22 +8,19 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventBus } from '@nestjs/cqrs';
-import type { MeetingFileStatus } from '@repo/shared';
 import { MEETING_FILE_PROCESSING_FAILED_MESSAGE } from '@repo/shared';
 
-import { MeetingFileChangedEvent } from '../events/meeting-file-changed.event';
 import { MeetingFileUploadRepository } from '../services/meeting-file-upload.repository';
-import { toMeetingFile } from '../services/meeting-file.mapper';
 import { MeetingFileRepository } from '../services/meeting-file.repository';
-import type { ClaimedFile, TransitionPatch } from '../services/meeting-file.repository';
+import type { ClaimedFile } from '../services/meeting-file.repository';
 import { MeetingFileStorage } from '../storage/meeting-file-storage';
+import { FileOutcomeRecorder } from './file-outcome-recorder';
 import { startLeaseHeartbeat } from './lease-heartbeat';
 import { MeetingFilePurger } from './meeting-file-purger';
 import { PIPELINE } from './pipeline';
 import { PollingLoop } from './polling-loop';
-import { StepError } from './step';
-import type { ProcessingStep, StepPatch } from './step';
-import { StepFailure, patchBefore } from './step-failure';
+import type { ProcessingStep, StepContext, StepPatch } from './step';
+import { runSteps } from './step-failure';
 
 /** The string token the worker is also registered under, so an e2e spec can reach `drain()`. */
 export const MEETING_FILE_WORKER = 'MEETING_FILE_WORKER';
@@ -50,7 +47,8 @@ export const MAX_ATTEMPTS = 3;
  * to `ready` or `failed` with a conditional transition on both the status and the lease this
  * claim was given, so a row that was deleted mid-run — or whose lease expired and went to
  * another worker — is left alone, the patch discarded, and the thumbnail it may have written
- * removed.
+ * removed. Those writes, and every announcement, are `FileOutcomeRecorder`'s; what stays here
+ * is the loop, the claim, and the steps run under its lease.
  *
  * Behind `MEETING_FILES_WORKER_ENABLED`: `pnpm dev` runs one API process, and a second entry
  * point would be a second thing to start everywhere for a pipeline whose steps take
@@ -68,6 +66,7 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
   private readonly loop: PollingLoop;
   /** Aborted on shutdown; every step receives its signal, and a step waiting on a third party lets go. */
   private readonly shutdown = new AbortController();
+  private readonly recorder: FileOutcomeRecorder;
   private readonly purger: MeetingFilePurger;
 
   constructor(
@@ -83,6 +82,13 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     this.pollMs = config.get<number>('MEETING_FILES_POLL_MS', 1000);
     this.steps = steps ?? PIPELINE;
     this.loop = new PollingLoop(() => this.tick(), this.pollMs, this.logger);
+    this.recorder = new FileOutcomeRecorder(
+      this.files,
+      this.storage,
+      this.events,
+      this.logger,
+      this.shutdown.signal,
+    );
     this.purger = new MeetingFilePurger(
       this.files,
       this.uploads,
@@ -90,7 +96,7 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
       this.logger,
       MAX_ATTEMPTS,
       (claimed) => {
-        this.publish(claimed, 'deleted');
+        this.recorder.purged(claimed);
       },
     );
   }
@@ -170,15 +176,13 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
 
     const lease = claimed.leasedUntil;
 
-    this.logTransition(claimed, claimed.previousStatus, 'processing', startedAt);
-    // `claimNext` committed this one; the claim returning a row is its "one row changed".
-    this.publish(claimed, 'processing');
+    this.recorder.claimed(claimed, startedAt);
 
     if (claimed.attempts > MAX_ATTEMPTS) {
       this.logger.error(
         `File ${claimed.id} claimed ${String(claimed.attempts)} times; failing it unrun`,
       );
-      await this.fail(claimed, lease, REPEATED_FAILURE, startedAt);
+      await this.recorder.fail(claimed, lease, REPEATED_FAILURE, startedAt);
 
       return;
     }
@@ -186,12 +190,12 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     const { held, outcome } = await this.runUnderLease(claimed, lease);
 
     if ('error' in outcome) {
-      await this.recordFailure(claimed, held, outcome.error, startedAt);
+      await this.recorder.failed(claimed, held, outcome.error, startedAt);
 
       return;
     }
 
-    await this.recordReady(claimed, held, outcome.patch, startedAt);
+    await this.recorder.ready(claimed, held, outcome.patch, startedAt);
   }
 
   /**
@@ -220,7 +224,7 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     let outcome: { patch: StepPatch } | { error: unknown };
 
     try {
-      outcome = { patch: await this.runSteps(claimed) };
+      outcome = { patch: await runSteps(this.steps, this.stepContext(claimed)) };
     } catch (error) {
       outcome = { error };
     }
@@ -228,169 +232,7 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     return { held: await heartbeat.stop(), outcome };
   }
 
-  /**
-   * A step threw. Shutdown is not the file's fault — the step let go because it was told to —
-   * so the row is released for the next claim instead of recording a failure the user would
-   * have to retry. Any other cause is the file's: only a `StepError`'s copy reaches
-   * `failureReason`, and whatever the earlier steps produced is kept, since a checksum from
-   * verify is still true of the bytes even when preview could not read them.
-   */
-  private async recordFailure(
-    claimed: ClaimedFile,
-    held: Date | null,
-    error: unknown,
-    startedAt: number,
-  ): Promise<void> {
-    if (this.shutdown.signal.aborted) {
-      await this.release(claimed, held, startedAt, patchBefore(error));
-
-      return;
-    }
-
-    const cause = error instanceof StepFailure ? error.cause : error;
-    const reason = cause instanceof StepError ? cause.userMessage : GENERIC_FAILURE;
-
-    this.logger.error(
-      `File ${claimed.id} of meeting ${claimed.meetingId}: step failed (${reason})`,
-      cause instanceof Error ? cause.stack : String(cause),
-    );
-    await this.fail(claimed, held, reason, startedAt, patchBefore(error));
-  }
-
-  /** Every step ran: the patch they accumulated, conditional on the lease the last renewal set. */
-  private async recordReady(
-    claimed: ClaimedFile,
-    held: Date | null,
-    patch: StepPatch,
-    startedAt: number,
-  ): Promise<void> {
-    const ready = { ...patch, processedAt: new Date(), leasedUntil: null };
-    const changed = await this.files.transition(claimed.id, 'processing', 'ready', ready, held);
-
-    if (changed) {
-      this.logTransition(claimed, 'processing', 'ready', startedAt);
-      this.publish(claimed, 'ready', ready);
-    } else {
-      this.logLost(claimed, 'ready');
-      await this.discard(patch);
-    }
-  }
-
-  /**
-   * A result nobody will record must not leave bytes behind: a thumbnail written for a row
-   * that was deleted mid-run would otherwise outlive the purge, which ran before it existed.
-   */
-  private async discard(patch: StepPatch): Promise<void> {
-    if (patch.thumbnailKey !== undefined) {
-      await this.storage.remove(patch.thumbnailKey);
-    }
-  }
-
-  /**
-   * The way out for a step cut short by shutdown: the row goes back to `uploaded` — the
-   * lease-expiry edge, taken early and on purpose — for the next worker to claim afresh, and
-   * whatever the earlier steps wrote is removed so that claim starts clean. The claim count
-   * stays as it is: a deploy that keeps landing on the same file is still a file that keeps
-   * not finishing.
-   */
-  private async release(
-    claimed: ClaimedFile,
-    lease: Date | null,
-    startedAt: number,
-    patch: StepPatch,
-  ): Promise<void> {
-    const changed = await this.files.transition(
-      claimed.id,
-      'processing',
-      'uploaded',
-      { leasedUntil: null },
-      lease,
-    );
-
-    if (changed) {
-      this.logTransition(claimed, 'processing', 'uploaded', startedAt);
-      this.publish(claimed, 'uploaded', { leasedUntil: null });
-    } else {
-      this.logLost(claimed, 'uploaded');
-    }
-
-    await this.discard(patch);
-  }
-
-  /**
-   * Runs the steps in order, accumulating the patch. A throw carries the patch so far on it,
-   * so a later failure does not discard an earlier step's result.
-   */
-  private async runSteps(record: ClaimedFile): Promise<StepPatch> {
-    const context = {
-      record,
-      storage: this.storage,
-      logger: this.logger,
-      signal: this.shutdown.signal,
-    };
-
-    return this.steps.reduce<Promise<StepPatch>>(async (previous, step) => {
-      const patch = await previous;
-
-      try {
-        return { ...patch, ...(await step.run(context)) };
-      } catch (error) {
-        throw new StepFailure(step.name, patch, error);
-      }
-    }, Promise.resolve({}));
-  }
-
-  private async fail(
-    claimed: ClaimedFile,
-    lease: Date | null,
-    failureReason: string,
-    startedAt: number,
-    patch: StepPatch = {},
-  ): Promise<void> {
-    const failed = { ...patch, failureReason, leasedUntil: null };
-    const changed = await this.files.transition(claimed.id, 'processing', 'failed', failed, lease);
-
-    if (changed) {
-      this.logTransition(claimed, 'processing', 'failed', startedAt);
-      this.publish(claimed, 'failed', failed);
-    } else {
-      this.logLost(claimed, 'failed');
-      await this.discard(patch);
-    }
-  }
-
-  /**
-   * The one place the worker announces a change, and never before the write that made it has
-   * committed: every caller above publishes on the `true` branch of its conditional update.
-   * A transition that lost its race changed nothing, so there is nothing to announce — and
-   * publishing there would tell a watching page the opposite of what the row says.
-   *
-   * The row is reconstructed from the claim plus the patch just written rather than re-read:
-   * a re-read costs a query per transition and would answer with whatever a later writer has
-   * done since, which is not what this event is about.
-   */
-  private publish(
-    claimed: ClaimedFile,
-    status: MeetingFileStatus,
-    patch: TransitionPatch = {},
-  ): void {
-    this.events.publish(
-      new MeetingFileChangedEvent(
-        claimed.meetingId,
-        toMeetingFile({ ...claimed, ...patch, status }),
-      ),
-    );
-  }
-
-  private logTransition(claimed: ClaimedFile, from: string, to: string, startedAt: number): void {
-    this.logger.log(
-      `File ${claimed.id} of meeting ${claimed.meetingId}: ${from} -> ${to} in ${String(Date.now() - startedAt)}ms`,
-    );
-  }
-
-  private logLost(claimed: ClaimedFile, to: string): void {
-    this.logger.warn(
-      `File ${claimed.id} of meeting ${claimed.meetingId}: not moved to ${to} — the row was deleted or its lease expired and was reclaimed mid-run; result discarded`,
-    );
+  private stepContext(record: ClaimedFile): StepContext {
+    return { record, storage: this.storage, logger: this.logger, signal: this.shutdown.signal };
   }
 }
