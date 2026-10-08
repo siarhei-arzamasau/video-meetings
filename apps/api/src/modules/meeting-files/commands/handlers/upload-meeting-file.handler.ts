@@ -18,6 +18,7 @@ import {
 
 import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
 import { ContentSniffer } from '../../services/content-sniffer';
+import { MeetingFileHandOvers } from '../../services/meeting-file-hand-overs';
 import { MeetingFileRepository } from '../../services/meeting-file.repository';
 import type { NewMeetingFile } from '../../services/meeting-file.repository';
 import { normaliseFileName, storageKeyOf, toMeetingFile } from '../../services/meeting-file.mapper';
@@ -53,6 +54,7 @@ export class UploadMeetingFileHandler implements ICommandHandler<
     private readonly storage: MeetingFileStorage,
     private readonly sniffer: ContentSniffer,
     private readonly events: EventBus,
+    private readonly handOvers: MeetingFileHandOvers,
   ) {}
 
   async execute(command: UploadMeetingFileCommand): Promise<MeetingFile> {
@@ -96,18 +98,22 @@ export class UploadMeetingFileHandler implements ICommandHandler<
 
     await this.storage.put(storageKey, tempPath);
 
-    const file = await this.insert(
-      { id: fileId, meetingId, uploaderId: userId, name, contentType, size, storageKey },
-      contentType,
-      size,
-    );
+    // A hand-over: the insert is what lets the worker claim the file, and that claim must not
+    // be announced before this is. See `MeetingFileHandOvers`.
+    return this.handOvers.run(fileId, async () => {
+      const file = await this.insert(
+        { id: fileId, meetingId, uploaderId: userId, name, contentType, size, storageKey },
+        contentType,
+        size,
+      );
 
-    // Outside the insert's own try, and after it: a subscriber that throws must not be
-    // mistaken for a failed insert and take the bytes of a committed record with it.
-    // A chunked upload arrives here too, which is why completion needs no publisher.
-    this.events.publish(new MeetingFileChangedEvent(meetingId, file));
+      // Outside the insert's own try, and after it: a subscriber that throws must not be
+      // mistaken for a failed insert and take the bytes of a committed record with it.
+      // A chunked upload arrives here too, which is why completion needs no publisher.
+      this.events.publish(new MeetingFileChangedEvent(meetingId, file));
 
-    return file;
+      return file;
+    });
   }
 
   /** The record, or nothing at all: a failed insert takes the bytes it would have described. */

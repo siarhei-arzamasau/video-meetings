@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { EventBus } from '@nestjs/cqrs';
 import { MEETING_FILE_PROCESSING_FAILED_MESSAGE } from '@repo/shared';
 
+import { MeetingFileHandOvers } from '../services/meeting-file-hand-overs';
 import { MeetingFileUploadRepository } from '../services/meeting-file-upload.repository';
 import { MeetingFileRepository } from '../services/meeting-file.repository';
 import type { ClaimedFile } from '../services/meeting-file.repository';
@@ -76,6 +77,10 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
     private readonly storage: MeetingFileStorage,
     private readonly events: EventBus,
     @Optional() @Inject(PIPELINE_STEPS) steps?: ReadonlyArray<ProcessingStep>,
+    // Optional for the reason the step list is: the unit spec builds the worker from a handful
+    // of fakes. The application always has one — the handlers beside this require it, so a
+    // module that does not provide it does not boot.
+    @Optional() handOvers?: MeetingFileHandOvers,
   ) {
     this.enabled = config.get<boolean>('MEETING_FILES_WORKER_ENABLED', true);
     this.leaseSeconds = config.get<number>('MEETING_FILES_LEASE_SECONDS', 60);
@@ -88,6 +93,7 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
       this.events,
       this.logger,
       this.shutdown.signal,
+      handOvers ?? new MeetingFileHandOvers(),
     );
     this.purger = new MeetingFilePurger(
       this.files,
@@ -176,7 +182,7 @@ export class MeetingFileWorker implements OnApplicationBootstrap, OnApplicationS
 
     const lease = claimed.leasedUntil;
 
-    this.recorder.claimed(claimed, startedAt);
+    await this.recorder.claimed(claimed, startedAt);
 
     if (claimed.attempts > MAX_ATTEMPTS) {
       this.logger.error(

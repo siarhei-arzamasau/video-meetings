@@ -3,6 +3,7 @@ import { CommandHandler, EventBus, ICommandHandler, QueryBus } from '@nestjs/cqr
 import type { MeetingFile } from '@repo/shared';
 
 import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
+import { MeetingFileHandOvers } from '../../services/meeting-file-hand-overs';
 import { MeetingFileRepository } from '../../services/meeting-file.repository';
 import { toMeetingFile } from '../../services/meeting-file.mapper';
 import { FILE_NOT_FOUND, requireVisibleMeeting } from '../../services/visible-meeting';
@@ -33,6 +34,7 @@ export class RetryMeetingFileHandler implements ICommandHandler<
     private readonly queryBus: QueryBus,
     private readonly files: MeetingFileRepository,
     private readonly events: EventBus,
+    private readonly handOvers: MeetingFileHandOvers,
   ) {}
 
   async execute({ userId, meetingId, fileId }: RetryMeetingFileCommand): Promise<MeetingFile> {
@@ -57,23 +59,27 @@ export class RetryMeetingFileHandler implements ICommandHandler<
       leasedUntil: null,
     };
 
-    if (!(await this.files.transition(fileId, 'failed', 'uploaded', patch))) {
-      throw new ConflictException(NOT_FAILED_MESSAGE);
-    }
+    // A hand-over: the write is what lets the worker claim the file again, and that claim
+    // must not be announced before this is. See `MeetingFileHandOvers`.
+    return this.handOvers.run(fileId, async () => {
+      if (!(await this.files.transition(fileId, 'failed', 'uploaded', patch))) {
+        throw new ConflictException(NOT_FAILED_MESSAGE);
+      }
 
-    this.logger.log(
-      `File ${fileId} of meeting ${meetingId}: failed -> uploaded in ${String(Date.now() - startedAt)}ms (retry)`,
-    );
+      this.logger.log(
+        `File ${fileId} of meeting ${meetingId}: failed -> uploaded in ${String(Date.now() - startedAt)}ms (retry)`,
+      );
 
-    // The row as the transition just left it, rather than a re-read: a worker may claim it
-    // the same millisecond, and answering `processing` would tell the client its retry did
-    // something other than what it did.
-    const retried = toMeetingFile({ ...file, status: 'uploaded', ...patch });
+      // The row as the transition just left it, rather than a re-read: a worker may claim it
+      // the same millisecond, and answering `processing` would tell the client its retry did
+      // something other than what it did.
+      const retried = toMeetingFile({ ...file, status: 'uploaded', ...patch });
 
-    // After the transition reported its one row, never before it: the 409 branch above
-    // changed nothing and must announce nothing.
-    this.events.publish(new MeetingFileChangedEvent(meetingId, retried));
+      // After the transition reported its one row, never before it: the 409 branch above
+      // changed nothing and must announce nothing.
+      this.events.publish(new MeetingFileChangedEvent(meetingId, retried));
 
-    return retried;
+      return retried;
+    });
   }
 }

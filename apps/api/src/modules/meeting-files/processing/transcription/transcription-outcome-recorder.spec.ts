@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import type { EventBus } from '@nestjs/cqrs';
 
 import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
+import { MeetingFileHandOvers } from '../../services/meeting-file-hand-overs';
 import { TranscriptionStatus } from '../../services/meeting-file-transcription-status';
 import type {
   ClaimedTranscription,
@@ -49,6 +50,7 @@ describe('TranscriptionOutcomeRecorder', () => {
     { writeText, remove } as unknown as MeetingFileStorage,
     { publish } as unknown as EventBus,
     new Logger('test'),
+    new MeetingFileHandOvers(),
   );
 
   /** The files announced, in order, as the stream would carry them. */
@@ -64,8 +66,8 @@ describe('TranscriptionOutcomeRecorder', () => {
     publish.mockReset();
   });
 
-  it('announces a claim as transcribing, on the meeting it belongs to, with no write of its own', () => {
-    recorder.claimed(CLAIMED, STARTED_AT);
+  it('announces a claim as transcribing, on the meeting it belongs to, with no write of its own', async () => {
+    await recorder.claimed(CLAIMED, STARTED_AT);
 
     expect(publish.mock.calls[0]?.[0]).toBeInstanceOf(MeetingFileChangedEvent);
     expect(publish.mock.calls[0]?.[0]).toMatchObject({ meetingId: MEETING_ID });

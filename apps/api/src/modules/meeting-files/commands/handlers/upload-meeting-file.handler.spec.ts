@@ -12,6 +12,7 @@ import { Test } from '@nestjs/testing';
 
 import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
 import { ContentSniffer } from '../../services/content-sniffer';
+import { MeetingFileHandOvers } from '../../services/meeting-file-hand-overs';
 import { buildMeetingFileRecord } from '../../services/meeting-file-record.fixture';
 import { MeetingFileRepository } from '../../services/meeting-file.repository';
 import type { MeetingFileRecord } from '../../services/meeting-file.mapper';
@@ -76,6 +77,7 @@ describe('UploadMeetingFileHandler', () => {
         { provide: MeetingFileStorage, useValue: { put, remove } },
         { provide: ContentSniffer, useValue: { sniff } },
         { provide: EventBus, useValue: { publish } },
+        MeetingFileHandOvers,
       ],
     }).compile();
 

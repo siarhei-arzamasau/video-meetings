@@ -3,6 +3,7 @@ import type { EventBus } from '@nestjs/cqrs';
 import { MEETING_FILE_TRANSCRIPTION_FAILED_MESSAGE } from '@repo/shared';
 
 import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
+import type { MeetingFileHandOvers } from '../../services/meeting-file-hand-overs';
 import { TranscriptionStatus } from '../../services/meeting-file-transcription-status';
 import type {
   ClaimedTranscription,
@@ -32,10 +33,19 @@ export class TranscriptionOutcomeRecorder {
     private readonly storage: MeetingFileStorage,
     private readonly events: EventBus,
     private readonly logger: Logger,
+    private readonly handOvers: MeetingFileHandOvers,
   ) {}
 
-  /** `claimNext` committed this edge itself; the claim returning a row is its "one row changed". */
-  claimed(claimed: ClaimedTranscription, startedAt: number): void {
+  /**
+   * `claimNext` committed this edge itself; the claim returning a row is its "one row changed".
+   *
+   * Announced only once the write that queued the recording has been: the file worker's
+   * `ready`, or a retry, whose own announcement may still be on its way — and "queued"
+   * arriving after "transcribing" is what a page would then show for the whole transcription.
+   * See `MeetingFileHandOvers`.
+   */
+  async claimed(claimed: ClaimedTranscription, startedAt: number): Promise<void> {
+    await this.handOvers.announced(claimed.id);
     this.announce(claimed, claimed.previousTranscriptionStatus, TRANSCRIBING, {}, startedAt);
   }
 

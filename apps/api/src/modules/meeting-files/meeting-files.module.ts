@@ -27,6 +27,7 @@ import { HttpTranscriptionProvider } from './processing/transcription/http-trans
 import { TRANSCRIPTION_PROVIDER } from './processing/transcription/transcription-provider';
 import { ContentSniffer } from './services/content-sniffer';
 import { MeetingFileEventsService } from './services/meeting-file-events.service';
+import { MeetingFileHandOvers } from './services/meeting-file-hand-overs';
 import { MeetingFileTranscriptionRepository } from './services/meeting-file-transcription.repository';
 import { MeetingFileUploadRepository } from './services/meeting-file-upload.repository';
 import { MeetingFileUploadsService } from './services/meeting-file-uploads.service';
@@ -65,6 +66,9 @@ import { VisibleMeetingGuard } from './visible-meeting.guard';
     AbortUploadHandler,
     MeetingFilesService,
     MeetingFileEventsService,
+    // One instance for the module: the handlers and the file worker register their hand-overs
+    // in it, and both workers ask it before announcing a claim.
+    MeetingFileHandOvers,
     MeetingFileUploadsService,
     MeetingFileRepository,
     MeetingFileTranscriptionRepository,

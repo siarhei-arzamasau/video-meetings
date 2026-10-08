@@ -4,6 +4,7 @@ import type { MeetingFileStatus } from '@repo/shared';
 import { MEETING_FILE_PROCESSING_FAILED_MESSAGE } from '@repo/shared';
 
 import { MeetingFileChangedEvent } from '../events/meeting-file-changed.event';
+import type { MeetingFileHandOvers } from '../services/meeting-file-hand-overs';
 import { toMeetingFile } from '../services/meeting-file.mapper';
 import type {
   ClaimedFile,
@@ -34,10 +35,17 @@ export class FileOutcomeRecorder {
     private readonly logger: Logger,
     /** The worker's shutdown signal: what tells a step that was cut short from one that failed. */
     private readonly shutdown: AbortSignal,
+    private readonly handOvers: MeetingFileHandOvers,
   ) {}
 
-  /** `claimNext` committed this edge itself; the claim returning a row is its "one row changed". */
-  claimed(claimed: ClaimedFile, startedAt: number): void {
+  /**
+   * `claimNext` committed this edge itself; the claim returning a row is its "one row changed".
+   *
+   * Announced only once the write that handed the row over has been: the upload, or the retry,
+   * whose own announcement may still be on its way. See `MeetingFileHandOvers`.
+   */
+  async claimed(claimed: ClaimedFile, startedAt: number): Promise<void> {
+    await this.handOvers.announced(claimed.id);
     this.logTransition(claimed, claimed.previousStatus, 'processing', startedAt);
     this.publish(claimed, 'processing');
   }
@@ -55,12 +63,20 @@ export class FileOutcomeRecorder {
     startedAt: number,
   ): Promise<void> {
     const ready = { ...patch, processedAt: new Date(), leasedUntil: null };
-    const changed = await this.files.transition(claimed.id, 'processing', 'ready', ready, held);
+    // A hand-over: for a recording this is the write that queues it, which is what lets the
+    // transcription worker claim it, and that claim must not be announced before this is.
+    const changed = await this.handOvers.run(claimed.id, async () => {
+      const moved = await this.files.transition(claimed.id, 'processing', 'ready', ready, held);
 
-    if (changed) {
-      this.logTransition(claimed, 'processing', 'ready', startedAt);
-      this.publish(claimed, 'ready', ready);
-    } else {
+      if (moved) {
+        this.logTransition(claimed, 'processing', 'ready', startedAt);
+        this.publish(claimed, 'ready', ready);
+      }
+
+      return moved;
+    });
+
+    if (!changed) {
       this.logLost(claimed, 'ready');
       await this.discard(patch);
     }

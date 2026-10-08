@@ -4,6 +4,7 @@ import type { MeetingFile } from '@repo/shared';
 import { isMeetingFileTranscriptionTimeLimitReason } from '@repo/shared';
 
 import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
+import { MeetingFileHandOvers } from '../../services/meeting-file-hand-overs';
 import { TranscriptionStatus } from '../../services/meeting-file-transcription-status';
 import { MeetingFileTranscriptionRepository } from '../../services/meeting-file-transcription.repository';
 import { MeetingFileRepository } from '../../services/meeting-file.repository';
@@ -47,6 +48,7 @@ export class RetryMeetingFileTranscriptionHandler implements ICommandHandler<
     private readonly files: MeetingFileRepository,
     private readonly transcriptions: MeetingFileTranscriptionRepository,
     private readonly events: EventBus,
+    private readonly handOvers: MeetingFileHandOvers,
   ) {}
 
   async execute({
@@ -63,30 +65,34 @@ export class RetryMeetingFileTranscriptionHandler implements ICommandHandler<
     const startedAt = Date.now();
     const patch = { transcriptionAttempts: 0, transcriptionFailureReason: null };
 
-    // The lease is `null`: a failed transcription holds none, and the write matches on that.
-    if (!(await this.transcriptions.transition(fileId, FAILED, QUEUED, patch, null))) {
-      throw new ConflictException(TRANSCRIPTION_NOT_FAILED_MESSAGE);
-    }
+    // A hand-over: the write is what lets the worker claim the recording again, and that
+    // claim must not be announced before this is. See `MeetingFileHandOvers`.
+    return this.handOvers.run(fileId, async () => {
+      // The lease is `null`: a failed transcription holds none, and the write matches on that.
+      if (!(await this.transcriptions.transition(fileId, FAILED, QUEUED, patch, null))) {
+        throw new ConflictException(TRANSCRIPTION_NOT_FAILED_MESSAGE);
+      }
 
-    this.logger.log(
-      `File ${fileId} of meeting ${meetingId}: transcription ${FAILED} -> ${QUEUED} in ${String(Date.now() - startedAt)}ms (retry)`,
-    );
+      this.logger.log(
+        `File ${fileId} of meeting ${meetingId}: transcription ${FAILED} -> ${QUEUED} in ${String(Date.now() - startedAt)}ms (retry)`,
+      );
 
-    // The row as the write just left it, rather than a re-read: the worker may claim it the
-    // same millisecond, and answering `transcribing` would tell the client its retry did
-    // something other than what it did.
-    const retried = toMeetingFile({
-      ...file,
-      ...patch,
-      transcriptionStatus: QUEUED,
-      transcriptionLeasedUntil: null,
+      // The row as the write just left it, rather than a re-read: the worker may claim it the
+      // same millisecond, and answering `transcribing` would tell the client its retry did
+      // something other than what it did.
+      const retried = toMeetingFile({
+        ...file,
+        ...patch,
+        transcriptionStatus: QUEUED,
+        transcriptionLeasedUntil: null,
+      });
+
+      // After the write reported its one row, never before it: the 409 branch above changed
+      // nothing and must announce nothing.
+      this.events.publish(new MeetingFileChangedEvent(meetingId, retried));
+
+      return retried;
     });
-
-    // After the write reported its one row, never before it: the 409 branch above changed
-    // nothing and must announce nothing.
-    this.events.publish(new MeetingFileChangedEvent(meetingId, retried));
-
-    return retried;
   }
 
   /**

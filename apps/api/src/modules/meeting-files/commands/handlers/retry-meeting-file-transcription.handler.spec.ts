@@ -4,6 +4,8 @@ import { Test } from '@nestjs/testing';
 import { meetingFileTranscriptionTimeLimitMessage } from '@repo/shared';
 
 import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
+import { holdWrite, nextTurn } from '../../services/held-write.fixture';
+import { MeetingFileHandOvers } from '../../services/meeting-file-hand-overs';
 import { buildMeetingFileRecord } from '../../services/meeting-file-record.fixture';
 import { TranscriptionStatus } from '../../services/meeting-file-transcription-status';
 import { MeetingFileTranscriptionRepository } from '../../services/meeting-file-transcription.repository';
@@ -45,6 +47,7 @@ describe('RetryMeetingFileTranscriptionHandler', () => {
   const transition = jest.fn();
   const publish = jest.fn();
   let handler: RetryMeetingFileTranscriptionHandler;
+  let handOvers: MeetingFileHandOvers;
 
   const retryAs = (userId: string) =>
     handler.execute(new RetryMeetingFileTranscriptionCommand(userId, MEETING_ID, FILE_ID));
@@ -62,10 +65,12 @@ describe('RetryMeetingFileTranscriptionHandler', () => {
         { provide: MeetingFileRepository, useValue: { findOneOf } },
         { provide: MeetingFileTranscriptionRepository, useValue: { transition } },
         { provide: EventBus, useValue: { publish } },
+        MeetingFileHandOvers,
       ],
     }).compile();
 
     handler = moduleRef.get(RetryMeetingFileTranscriptionHandler);
+    handOvers = moduleRef.get(MeetingFileHandOvers);
   });
 
   it.each([
@@ -175,5 +180,32 @@ describe('RetryMeetingFileTranscriptionHandler', () => {
     });
 
     await expect(retryAs(HOST_ID)).resolves.toMatchObject({ transcriptionStatus: 'queued' });
+  });
+
+  it('is a hand-over: a claim that comes back mid-retry is announced after it, not before', async () => {
+    const write = holdWrite<boolean>();
+    const order: string[] = [];
+    transition.mockReturnValue(write.answered);
+    publish.mockImplementation(() => order.push('queued'));
+
+    const retried = retryAs(HOST_ID);
+    await nextTurn();
+    // The worker's side: its claim of this recording came back while the write was still out.
+    const claimed = handOvers.announced(FILE_ID).then(() => order.push('transcribing'));
+    await nextTurn();
+    expect(order).toEqual([]);
+
+    write.answer(true);
+    await Promise.all([retried, claimed]);
+
+    expect(order).toEqual(['queued', 'transcribing']);
+  });
+
+  it('holds no claim back once it has refused', async () => {
+    transition.mockResolvedValue(false);
+
+    await expect(retryAs(HOST_ID)).rejects.toThrow(ConflictException);
+
+    await expect(handOvers.announced(FILE_ID)).resolves.toBeUndefined();
   });
 });

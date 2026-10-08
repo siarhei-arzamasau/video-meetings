@@ -11,6 +11,7 @@ import {
 } from '@repo/shared';
 
 import { MeetingFileChangedEvent } from '../events/meeting-file-changed.event';
+import { MeetingFileHandOvers } from '../services/meeting-file-hand-overs';
 import { TranscriptionStatus } from '../services/meeting-file-transcription-status';
 import { MeetingFileTranscriptionRepository } from '../services/meeting-file-transcription.repository';
 import type { ClaimedTranscription } from '../services/meeting-file-transcription.repository';
@@ -95,6 +96,7 @@ describe('MeetingFileTranscriptionWorker: one claim, start to finish', () => {
         { provide: MeetingFileStorage, useValue: { openRead, writeText } },
         { provide: EventBus, useValue: { publish } },
         { provide: TRANSCRIPTION_PROVIDER, useValue: { transcribe } },
+        MeetingFileHandOvers,
       ],
     }).compile();
 

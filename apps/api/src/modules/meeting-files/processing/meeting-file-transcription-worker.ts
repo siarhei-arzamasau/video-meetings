@@ -14,6 +14,7 @@ import {
 } from '@repo/shared';
 
 import { DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS } from '../../../config/transcription.defaults';
+import { MeetingFileHandOvers } from '../services/meeting-file-hand-overs';
 import { MeetingFileTranscriptionRepository } from '../services/meeting-file-transcription.repository';
 import type { ClaimedTranscription } from '../services/meeting-file-transcription.repository';
 import { MeetingFileStorage } from '../storage/meeting-file-storage';
@@ -63,11 +64,18 @@ export class MeetingFileTranscriptionWorker implements OnApplicationBootstrap, O
     private readonly storage: MeetingFileStorage,
     events: EventBus,
     @Inject(TRANSCRIPTION_PROVIDER) private readonly provider: TranscriptionProvider,
+    handOvers: MeetingFileHandOvers,
   ) {
     this.leaseSeconds = config.get<number>('MEETING_FILES_LEASE_SECONDS', 60);
     this.pollMs = config.get<number>('MEETING_FILES_POLL_MS', 1000);
     this.loop = new PollingLoop(() => this.tick(), this.pollMs, this.logger);
-    this.recorder = new TranscriptionOutcomeRecorder(transcriptions, storage, events, this.logger);
+    this.recorder = new TranscriptionOutcomeRecorder(
+      transcriptions,
+      storage,
+      events,
+      this.logger,
+      handOvers,
+    );
   }
 
   /** Polls only where the file worker does, and only while there is something to poll for. */
@@ -139,7 +147,7 @@ export class MeetingFileTranscriptionWorker implements OnApplicationBootstrap, O
   private async handle(claimed: ClaimedTranscription): Promise<void> {
     const startedAt = Date.now();
 
-    this.recorder.claimed(claimed, startedAt);
+    await this.recorder.claimed(claimed, startedAt);
 
     if (claimed.transcriptionAttempts > MAX_TRANSCRIPTION_CLAIMS) {
       this.logger.error(

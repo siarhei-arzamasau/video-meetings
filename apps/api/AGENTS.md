@@ -606,19 +606,23 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   `UploadMeetingFileCommand`. The event carries the whole `MeetingFile`, not a diff: the contract
   has no version field, so a subscriber replaces the row by id and a missed event is repaired by
   the next full list.
-  **Two publishers can announce one row out of commit order, and nothing here prevents it.**
-  The write that hands a row to a worker and that worker's claim are announced by different
-  actors, each when its own write returns, and Node does not always resume them in the order
-  PostgreSQL committed them. Measured on 2026-10-08 with the real repositories against the
-  Compose Postgres: with the claim issued continuously against the write that queues a
-  recording, the claim resumed first in 16 of 1,800 runs. At one poll a second that is rare,
-  and what it costs is a page reading "Queued for transcription" under a running transcription
-  until the next full list — the stream's TTL reopen at the latest — or until the
-  transcription ends. A retry and its claim, and an upload and the file worker's claim, are
-  the same shape. Closing it takes a row version in the contract for a subscriber to compare,
-  or one in-process step around each hand-over's write and announcement that the claim's
-  announcement waits for. Neither is built, so do not read "never before it commits" as an
-  ordering guarantee between publishers.
+- **A worker's claim is never announced before the write that handed it the row** — that is
+  `MeetingFileHandOvers` (`services/meeting-file-hand-overs.ts`). The two are announced by
+  different actors, each when its own write returns, and Node does not always resume them in
+  the order PostgreSQL committed them. Measured on 2026-10-08 with the retry handler against
+  the transcription worker, the claim issued continuously: "transcribing" was announced before
+  "queued" in 8 of 3,200 runs, and since a subscriber replaces a row by id, the page kept
+  "Queued for transcription" under a running transcription until its next full list. So a
+  hand-over — the upload, either retry, and the file worker's `ready`, which is the write that
+  queues a recording — runs its write and its announcement as one registered step, and each
+  worker waits for the steps in flight for a file before it announces a claim of it. After
+  that, 0 of 6,400. **A new write that makes a row claimable has to run through it too.**
+  **Only claims wait, and only for hand-overs**, because a claim is the one thing that proves
+  an order: the row was not claimable until its hand-over committed. Two writes that do not
+  depend on each other — a delete beside a retry — are still announced as each returns, and
+  making one wait for the other would misorder them as often as not. It is in-process, like
+  the fan-out below, and `LISTEN/NOTIFY` issued inside the writing transaction would replace
+  it, since PostgreSQL delivers notifications in commit order.
 - **Fan-out is in-process, and that fixes a single API instance.** `MeetingFileEventsService`
   subscribes once per process and keeps a `Subject` per watched meeting; `GET :id/files/events`
   is a `@Sse` route merging that with a heartbeat, ended by `MEETING_FILES_STREAM_TTL_SECONDS`.
