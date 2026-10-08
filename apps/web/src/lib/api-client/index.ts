@@ -22,6 +22,7 @@ export {
   listMeetingFiles,
   openMeetingFileEvents,
   retryMeetingFile,
+  retryMeetingFileTranscription,
   uploadMeetingFile,
 } from './meeting-files';
 export { abortUpload, completeUpload, createUpload, getUpload, putChunk } from './uploads';

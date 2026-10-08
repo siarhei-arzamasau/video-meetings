@@ -145,18 +145,30 @@ aliases in sync if either changes.
   (`files/thumbnail.tsx`) fetches it with the bearer header, turns the blob into
   `URL.createObjectURL`, and revokes it on unmount. Downloads and transcripts work the same
   way. All three collapse into plain URLs once the token is an `HttpOnly` cookie.
-- **Retry on a failed row is gated exactly like Delete.** `FileRow` takes one `canManage` flag —
-  uploader or host — because the API applies one rule to both and two flags could only disagree
-  with it. The retry needs no local state machine: the API answers with the file as `uploaded`,
-  and the list already polls while anything is. A 409 means someone else got there first, so the
-  list is refetched rather than second-guessed; anything else shows inline with Dismiss.
+- **A row has one Retry, for whichever of the two failed, and it is gated exactly like Delete.**
+  `FileRow` takes one `canManage` flag — uploader or host — because the API applies one rule to
+  Delete, to the file's retry, and to the transcription's, and a second flag could only disagree
+  with it. Which retry the button sends is `retryTargetOf` (`src/lib/meeting-file-retry.ts`):
+  the file, back through the pipeline, or only a ready recording's transcription, back to the
+  queue. **Never both** — a file that failed its checks was never queued for transcription, so
+  the API writes no row that is both, and the file is asked about first so the page could not
+  draw two buttons of one name even if one arrived. `useRetry` is the one set of outcomes the
+  two share, and it needs no local state machine. **The API's answer is never put on the row:
+  a 200 refetches the list, exactly as a 409 does.** The answer is the file as the retry left
+  it — `uploaded`, or `ready` with its transcription `queued` — and written over the row it
+  can be the oldest thing on the page; the files stream section below has why. The refetch is
+  also what starts the fallback poll, which runs for exactly those two states, when there is
+  no stream. A 409 means someone else got there first, so the list is asked rather than
+  second-guessed; anything else shows inline with Dismiss. A second hook for the
+  transcription's retry would be a second copy of those answers, free to drift from the first.
 - **A recording's transcription is a second status on the row, beside the file's own and never
   instead of it.** `transcriptionPresentation` sits next to `statusPresentation` in
   `src/lib/meeting-files.ts` and `TranscriptionStatus` draws it in the same slot, in the row's
   own idiom: a chip for "Queued for transcription" and "Transcribing…", an "Open transcript"
-  link, and for "Transcription failed" the warning chip whose tooltip carries the reason. A
-  file with no `transcriptionStatus` draws nothing, and that one rule is all of "a PDF shows no
-  status" and "a deployment with transcription off shows none". Nothing about Download reads
+  link, and for "Transcription failed" the warning chip whose tooltip carries the reason — the
+  Retry that goes with it is the row's own, in the entry above, not a control of this element.
+  A file with no `transcriptionStatus` draws nothing, and that one rule is all of "a PDF shows
+  no status" and "a deployment with transcription off shows none". Nothing about Download reads
   it: a recording is `ready` before its transcription starts and stays `ready` if it fails.
 - **"Open transcript" is a link with no `href`, and its tab is opened before the text is
   fetched.** The transcript route needs the bearer header, so the text comes back through
@@ -202,13 +214,26 @@ The meeting page follows its files over SSE: `useMeetingFiles` opens
 replaces a known id **where it is**, re-sorts an unknown one in, and removes a `deleted` one,
 so the Processing chip goes the moment the worker finishes. A transcription moving on is the
 same event — the whole file, with a new `transcriptionStatus` — so the row follows it with no
-code of its own. Four rules, each of which was a bug once:
+code of its own. The hook is three composed, each the one place its concern lives:
+`useFilesSnapshot` holds the list and puts a fetch and an event in order, `useFilesStream`
+holds the connection and gives up on it, and `useFallbackPoll` runs when it has. Five rules,
+each of which was a bug once:
 
 - **The list is refetched every time a stream opens, and events arriving during a fetch are
   replayed on top of the snapshot.** An event says what a row is now; a list says what every
   row was when the server ran the query; the client cannot order the two. Only a list
   requested after the server subscribed this connection holds what no event will repeat, and
   the replay is what stops a slow refetch putting a settled row back to Processing.
+- **A retry's answer is not an event, and `useMeetingFiles` has no way to write one over a
+  row.** The retry routes answer with the file as the retry left it, on a connection of their
+  own, while the stream reports that same state and everything after it on another — and with
+  Whisper still down "everything after" is a claim and a second failure, a fraction of a
+  second later. When the answer landed last the row went back to "Queued for transcription"
+  with no Retry on it, and stayed there: no event follows a failure, and the poll does not
+  run beside a stream. So `FilesSection` hands `refresh` to both of the row's outcomes. A list
+  requested after the retry is covered by the rule above; a lone answer has nothing to be
+  ordered by, because `MeetingFile` carries no version. `files-section.retry.test.tsx` pins
+  the order that broke — events first, answer last — for both retries.
 - **`EventSource` is not used, and cannot be while the token is in `localStorage`**: it sends
   no `Authorization` header, and a token in the URL is logged by every proxy. The stream is
   opened with `fetch` and parsed by `src/lib/sse.ts` — a file the cookie migration deletes.
@@ -452,6 +477,15 @@ to get a signal out of a loaded machine, never to quiet a red suite**: a wait th
 at a high scale has found something. Add a new wait through `scaled()` rather than a literal,
 or it will be the one that cannot be stretched with the others.
 
+**A spec does not wait for a state a worker ends within one poll.** After a Retry of a file
+that is still broken, the Processing chip is on the page for less than the 250 ms the worker
+polls at — for a few tens of milliseconds, when that poll happens to follow the retry closely
+— while Playwright's looks at the page back off from 20 ms apart to 500. `toBeVisible()` on it
+failed about one run in eight with the page entirely right, and no scale helps a state that
+has already gone. Assert what caused it instead: `meeting-files-retry.spec.ts` waits for the
+retry's own answer through `page.waitForResponse`, then for the API to list the state the
+worker settled on, then for the page to show that.
+
 **The Whisper the suite talks to is `e2e/fake-transcriber.mjs`, and a reply belongs to a
 recording, not to "the next request".** It is an OpenAI-shaped endpoint in plain Node that a
 spec tells to hold a recording's answer open, fail it, or answer it with a sentence, through
@@ -464,7 +498,9 @@ worth knowing before writing a spec: **the API transcribes one recording at a ti
 held one keeps every later one at "Queued" (the only way to see that state for longer than a
 250 ms poll, and the reason each test resets the fake at both ends); and a recording nothing
 was registered for is answered at once, which is why switching transcription on changed no
-existing spec.
+existing spec. **A reply can be registered again for the same recording**, and that is all
+"Whisper came back" is: the retry spec tells the fake to fail a recording, then to hold or
+answer it, and the next request for those bytes — the one Retry causes — gets the new reply.
 
 The house convention it sets: **a new page starts as a red Playwright spec**, written against
 the routes, copy, and roles the page will have, run and seen failing, then made green by the

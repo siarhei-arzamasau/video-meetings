@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { Locator, Page } from '@playwright/test';
+import type { Locator, Page, Response } from '@playwright/test';
 import { expect } from '@playwright/test';
 
 import { API_URL } from './fixtures';
@@ -95,6 +95,8 @@ export const transcribingChip = (row: Locator): Locator => row.getByText('Transc
 export const failedChip = (row: Locator): Locator => row.getByText('Transcription failed');
 export const transcriptLink = (row: Locator): Locator =>
   row.getByRole('link', { name: 'Open transcript' });
+/** The row's one Retry. On a recording that is ready, it is the transcription's. */
+export const retryButton = (row: Locator): Locator => row.getByRole('button', { name: 'Retry' });
 
 export const pickRecordings = (page: Page, recordings: Recording[]): Promise<void> =>
   page.locator('input[type="file"]').setInputFiles(recordings.map(({ file }) => file));
@@ -119,6 +121,38 @@ export async function openTranscript(page: Page, row: Locator): Promise<Page> {
   await expect(tab).toHaveURL(/^blob:/);
 
   return tab;
+}
+
+/** The answer to the transcription retry route, as the page that pressed Retry receives it. */
+export const isTranscriptionRetry = (response: Response): boolean =>
+  response.request().method() === 'POST' && response.url().endsWith('/transcription/retry');
+
+/** A recording's transcription status as the API lists it now, whatever any page is showing. */
+export async function transcriptionStatusViaApi(
+  token: string,
+  meetingId: string,
+  fileId: string,
+): Promise<string | undefined> {
+  const response = await fetch(`${API_URL}/meetings/${meetingId}/files`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  const files = (await response.json()) as Array<{ id: string; transcriptionStatus?: string }>;
+
+  return files.find(({ id }) => id === fileId)?.transcriptionStatus;
+}
+
+/** The transcription retry route's status for one file, asked as the signed-in user would. */
+export async function retryTranscriptionStatusViaApi(
+  token: string,
+  meetingId: string,
+  fileId: string,
+): Promise<number> {
+  const response = await fetch(
+    `${API_URL}/meetings/${meetingId}/files/${fileId}/transcription/retry`,
+    { method: 'POST', headers: { authorization: `Bearer ${token}` } },
+  );
+
+  return response.status;
 }
 
 /** The transcript route's status for one file, asked as the signed-in user would. */

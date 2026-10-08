@@ -38,11 +38,7 @@ interface FilesSectionProps {
  * rejection even while the list behind it is still loading or failed to load.
  */
 export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSectionProps) {
-  const { list, refresh, add, replace, remove } = useMeetingFiles(
-    token,
-    meeting.id,
-    onUnauthorized,
-  );
+  const { list, refresh, add, remove } = useMeetingFiles(token, meeting.id, onUnauthorized);
   const { uploads, enqueue, cancel, dismiss, retry } = useUploadQueue({
     token,
     meetingId: meeting.id,
@@ -168,7 +164,9 @@ export function FilesSection({ token, meeting, user, onUnauthorized }: FilesSect
                 isMine={file.uploaderId === user.id}
                 canManage={file.uploaderId === user.id || meeting.hostId === user.id}
                 onDelete={setDeleting}
-                onRetried={replace}
+                // Both refetch. A retry's answer cannot be put in order against the stream,
+                // and a list can: see `useRetry`.
+                onRetried={refresh}
                 onStale={refresh}
                 onUnauthorized={onUnauthorized}
               />

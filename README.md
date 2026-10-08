@@ -108,8 +108,9 @@ then `transcribed` or `failed` with a `transcriptionFailureReason` — and the t
 `GET /api/meetings/:id/files/:fileId/transcript`. A PDF or an image has no such status. The
 meeting page shows it on the recording's row, changing without a reload: "Queued for
 transcription", "Transcribing…", then an "Open transcript" link that opens the text in a new
-tab, or "Transcription failed" with the reason. The API log names the model on every
-transcription (`Model Systran/faster-whisper-small transcribed audio/mpeg`).
+tab, or "Transcription failed" with the reason — and, for the uploader and the meeting's host,
+a Retry button. The API log names the model on every transcription
+(`Model Systran/faster-whisper-small transcribed audio/mpeg`).
 
 What it costs:
 
@@ -129,9 +130,10 @@ Port 8000 taken? Set `WHISPER_PORT` in the root `.env` and the same port in
 service and keeps the model. The API boots and serves uploads and downloads whether or not
 Whisper is running: a recording uploaded while it is stopped is still ready and downloadable,
 and only its transcription is marked failed. Once Whisper is back, the uploader or the
-meeting's host queues it again with
-`POST /api/meetings/:id/files/:fileId/transcription/retry`. Restarting the API in the middle of
-a transcription fails nothing — the recording goes back to `queued` and is picked up again.
+meeting's host queues it again with Retry on the recording's row, which sends
+`POST /api/meetings/:id/files/:fileId/transcription/retry`; other participants see the failure
+without the button. Restarting the API in the middle of a transcription fails nothing — the
+recording goes back to `queued` and is picked up again.
 Setting the flag back to `false` stops new transcriptions and keeps every status and
 transcript already stored.
 

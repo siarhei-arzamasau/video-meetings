@@ -82,6 +82,23 @@ export function retryMeetingFile(
   });
 }
 
+/**
+ * Sends a `failed` transcription back to the queue — the recording itself is `ready` before
+ * and after, which is why this is not `retryMeetingFile`. The answer is the file with its
+ * transcription `queued` and no reason. A 409 means the transcription is no longer failed —
+ * someone else retried it — and a 404 means the caller is neither uploader nor host.
+ */
+export function retryMeetingFileTranscription(
+  token: string,
+  meetingId: string,
+  fileId: string,
+): Promise<MeetingFile> {
+  return apiFetch<MeetingFile>(`/meetings/${meetingId}/files/${fileId}/transcription/retry`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+}
+
 /** Soft delete. A 404 means the file is gone, or the caller is neither uploader nor host. */
 export function deleteMeetingFile(token: string, meetingId: string, fileId: string): Promise<void> {
   return apiFetch<void>(`/meetings/${meetingId}/files/${fileId}`, {

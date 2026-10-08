@@ -59,11 +59,20 @@ test.describe('retrying a failed file', () => {
     await failedChip(row).hover();
     await expect(page.getByText('The image could not be read')).toBeVisible();
 
-    // First retry: the bytes are still unreadable, so the row goes back to Processing and
-    // comes back failed. That is what proves the file really re-ran the pipeline.
+    // First retry: the bytes are still unreadable, so the file goes back through the pipeline
+    // and comes back failed. The API's own word is what proves the round trip: `uploaded` in
+    // its answer is a file handed back to the worker, and `failed` after that is the worker
+    // having run it again. The Processing chip in between is not waited for — it lasts less
+    // than one worker poll, and can come and go between two looks at the page.
+    const retried = retriedStatus(page);
     await row.getByRole('button', { name: 'Retry' }).click();
-    await expect(processingChip(row)).toBeVisible();
+    expect(await retried).toBe('uploaded');
+    await expect
+      .poll(() => statusViaApi(host.token, meeting.id), { timeout: scaled(15_000) })
+      .toBe('failed');
+    // And the page that pressed ends where the API did: failed, with nothing still spinning.
     await expect(failedChip(row)).toBeVisible({ timeout: scaled(15_000) });
+    await expect(processingChip(row)).toBeHidden();
 
     // Repair the object, then retry again: no chip at all, and a thumbnail the preview step
     // could only have written from readable bytes.
@@ -94,13 +103,15 @@ test.describe('retrying a failed file', () => {
     const retry = row.getByRole('button', { name: 'Retry' });
 
     // The warning chip is focusable so its tooltip can be read without a pointer; Retry is
-    // the next stop, and Enter presses it.
+    // the next stop, and Enter presses it. That it did is the API's to say, as in the test
+    // above: the Processing chip it causes is gone again within one worker poll.
     await row.locator('[tabindex="0"]').first().focus();
     await page.keyboard.press('Tab');
     await expect(retry).toBeFocused();
+    const retried = retriedStatus(page);
     await page.keyboard.press('Enter');
 
-    await expect(processingChip(row)).toBeVisible();
+    expect(await retried).toBe('uploaded');
 
     await host.context.close();
   });
@@ -137,3 +148,25 @@ test.describe('retrying a failed file', () => {
     await Promise.all([host.context.close(), guest.context.close(), other.context.close()]);
   });
 });
+
+/**
+ * The status in the API's answer to the page's next file retry, which must be a 200. Called
+ * before the press, so the answer cannot be missed.
+ */
+async function retriedStatus(page: Page): Promise<string> {
+  // The transcription's route ends in `/transcription/retry`, which this does not match.
+  const answer = await page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' && /\/files\/[^/]+\/retry$/.test(response.url()),
+  );
+  expect(answer.status()).toBe(200);
+
+  return ((await answer.json()) as { status: string }).status;
+}
+
+/** The meeting's one file as the API lists it now, whatever the page is showing. */
+async function statusViaApi(token: string, meetingId: string): Promise<string | undefined> {
+  const [file] = await listMeetingFilesViaApi(token, meetingId);
+
+  return file?.status;
+}
