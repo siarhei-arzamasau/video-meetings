@@ -56,9 +56,23 @@ export class TranscriptionOutcomeRecorder {
       );
       this.announce(claimed, TRANSCRIBING, TRANSCRIBED, patch, startedAt);
     } else {
-      // Deleted, or reclaimed, between the last renewal and this write. The purge may already
-      // have run, so the transcript just written is one nothing else would ever remove.
       this.lost(claimed, 'recorded as transcribed');
+      await this.removeUnlessReclaimed(claimed.id, transcriptKey);
+    }
+  }
+
+  /**
+   * What to do with a transcript whose row could not be written, which depends on why.
+   *
+   * **The file was deleted:** the purge may already have run, so the transcript just written
+   * is one nothing else would ever remove. **The claim was taken over** — the lease lapsed and
+   * another worker claimed the recording — and the file is still `ready`: the key is one per
+   * recording, not one per claim, so by now it may hold what that worker recorded, and
+   * removing it would leave a row that says transcribed pointing at nothing. It is left where
+   * it is: that claim overwrites it, a retry does, or the purge removes it with the file.
+   */
+  private async removeUnlessReclaimed(fileId: string, transcriptKey: string): Promise<void> {
+    if (!(await this.transcriptions.isFileReady(fileId))) {
       await this.storage.remove(transcriptKey);
     }
   }

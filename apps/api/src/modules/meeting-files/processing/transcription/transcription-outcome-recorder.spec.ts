@@ -47,11 +47,12 @@ const CLAIMED: ClaimedTranscription = {
 describe('TranscriptionOutcomeRecorder', () => {
   const transition = jest.fn();
   const release = jest.fn();
+  const isFileReady = jest.fn();
   const writeText = jest.fn();
   const remove = jest.fn();
   const publish = jest.fn();
   const recorder = new TranscriptionOutcomeRecorder(
-    { transition, release } as unknown as MeetingFileTranscriptionRepository,
+    { transition, release, isFileReady } as unknown as MeetingFileTranscriptionRepository,
     { writeText, remove } as unknown as MeetingFileStorage,
     { publish } as unknown as EventBus,
     new Logger('test'),
@@ -64,6 +65,7 @@ describe('TranscriptionOutcomeRecorder', () => {
   beforeEach(() => {
     transition.mockReset().mockResolvedValue(true);
     release.mockReset().mockResolvedValue(true);
+    isFileReady.mockReset().mockResolvedValue(false);
     writeText.mockReset().mockResolvedValue(undefined);
     remove.mockReset().mockResolvedValue(undefined);
     publish.mockReset();
@@ -117,13 +119,27 @@ describe('TranscriptionOutcomeRecorder', () => {
       ]);
     });
 
-    it('removes the transcript it wrote, and announces nothing, when the row was no longer its own', async () => {
-      // Zero rows: the file was deleted mid-run, or the lease lapsed and another worker took it.
+    it('removes the transcript it wrote, and announces nothing, when the file was deleted mid-run', async () => {
+      // Zero rows, and the file is no longer `ready`: the purge may already have been and gone.
       transition.mockResolvedValue(false);
+      isFileReady.mockResolvedValue(false);
 
       await recorder.complete(CLAIMED, LEASE, 'Good morning, everyone.', STARTED_AT);
 
+      expect(isFileReady).toHaveBeenCalledWith(FILE_ID);
       expect(remove).toHaveBeenCalledWith(TRANSCRIPT_KEY);
+      expect(publish).not.toHaveBeenCalled();
+    });
+
+    it('leaves the transcript alone when another worker has taken the claim over', async () => {
+      // Zero rows, with the file still `ready`: the lease lapsed and the recording was claimed
+      // again. The key is one per recording, so it may already hold what that claim recorded.
+      transition.mockResolvedValue(false);
+      isFileReady.mockResolvedValue(true);
+
+      await recorder.complete(CLAIMED, LEASE, 'Good morning, everyone.', STARTED_AT);
+
+      expect(remove).not.toHaveBeenCalled();
       expect(publish).not.toHaveBeenCalled();
     });
   });

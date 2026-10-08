@@ -162,6 +162,17 @@ export class MeetingFileTranscriptionRepository {
     );
   }
 
+  /**
+   * Whether the file is still there to have a transcript: `false` once it has been deleted.
+   * What a worker asks after a write of its own has missed, to tell the two reasons apart —
+   * the file gone, or the claim taken over by another worker, with the file still `ready`.
+   */
+  async isFileReady(fileId: string): Promise<boolean> {
+    const ready = await this.prisma.meetingFile.count({ where: { id: fileId, status: 'ready' } });
+
+    return ready === 1;
+  }
+
   private async write(
     id: string,
     from: TranscriptionStatus,

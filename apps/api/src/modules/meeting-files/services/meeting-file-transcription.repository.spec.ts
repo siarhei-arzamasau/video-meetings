@@ -14,14 +14,16 @@ const { QUEUED, TRANSCRIBING, TRANSCRIBED, FAILED } = TranscriptionStatus;
  */
 describe('MeetingFileTranscriptionRepository', () => {
   const updateMany = jest.fn();
+  const count = jest.fn();
   const queryRaw = jest.fn();
   const repository = new MeetingFileTranscriptionRepository({
-    meetingFile: { updateMany },
+    meetingFile: { updateMany, count },
     $queryRaw: queryRaw,
   } as unknown as PrismaService);
 
   beforeEach(() => {
     updateMany.mockReset().mockResolvedValue({ count: 1 });
+    count.mockReset().mockResolvedValue(1);
     queryRaw.mockReset().mockResolvedValue([]);
   });
 
@@ -147,6 +149,20 @@ describe('MeetingFileTranscriptionRepository', () => {
       updateMany.mockResolvedValue({ count: 0 });
 
       await expect(repository.release(FILE_ID, LEASE)).resolves.toBe(false);
+    });
+  });
+
+  describe('isFileReady', () => {
+    it('says a file that is still ready is, whatever its transcription has become', async () => {
+      await expect(repository.isFileReady(FILE_ID)).resolves.toBe(true);
+
+      expect(count).toHaveBeenCalledWith({ where: { id: FILE_ID, status: 'ready' } });
+    });
+
+    it('says a file that was deleted is not', async () => {
+      count.mockResolvedValue(0);
+
+      await expect(repository.isFileReady(FILE_ID)).resolves.toBe(false);
     });
   });
 

@@ -482,7 +482,10 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
     and the lease. That one condition is all of "deleted while transcribing": the delete handler
     knows nothing about transcription, the row simply stops being `ready`, the next renewal
     finds nothing and hangs up, and a transcript that was already written is removed by the
-    write that then misses.
+    write that then misses. **That write removes it only when the file has gone.** A write
+    that misses with the file still `ready` lost its claim to another worker instead, and the
+    transcript's key is one per recording, not one per claim: by then it may hold what that
+    worker recorded, so it is left alone.
   - **A graceful shutdown hands the claim back uncounted.** `release` is `TRANSCRIBING → QUEUED`
     with `transcription_attempts - 1`, and `transition` refuses that edge so nothing takes it
     without the decrement. A deploy is expected to land on work that runs for minutes, so no
