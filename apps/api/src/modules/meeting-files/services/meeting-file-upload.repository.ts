@@ -1,19 +1,8 @@
 import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
-import type { MeetingFileUploadRecord } from './meeting-file-upload.mapper';
+import type { MeetingFileUploadRecord, NewMeetingFileUpload } from './meeting-file-upload.mapper';
 import { UploadCapReached, type UploadCaps } from './meeting-file-upload-caps';
-
-/** What creating a session writes. Everything else takes its default. */
-export interface NewMeetingFileUpload {
-  meetingId: string;
-  uploaderId: string;
-  name: string;
-  size: number;
-  chunkSize: number;
-  chunkCount: number;
-  expiresAt: Date;
-}
 
 /**
  * Every read and write of `meeting_file_uploads`, so the raw SQL lives in one place — the
@@ -97,12 +86,21 @@ export class MeetingFileUploadRepository {
   /**
    * Brings a live session's expiry forward to now, which is the whole of abort. Returns
    * whether this call was the one that did it, so a second abort can answer 404.
+   *
+   * "Now" is the earlier of this process's clock and the database's. `findOwned` compares the
+   * expiry with the one and every claim here with the other, and they are never quite one
+   * clock — the database's is a VM's — so an expiry stamped by either alone is still ahead of
+   * the other for as long as they differ: a session ended, and not yet the worker's to
+   * collect, or still open to a completion. The database's is cut to the column's
+   * milliseconds first, since storing it would otherwise round it up into its own future.
    */
   async expire(id: string): Promise<boolean> {
-    const { count } = await this.prisma.meetingFileUpload.updateMany({
-      where: { id, purgedAt: null, expiresAt: { gt: new Date() } },
-      data: { expiresAt: new Date() },
-    });
+    const now = new Date();
+    const count = await this.prisma.$executeRaw`
+      UPDATE "meeting_file_uploads"
+      SET expires_at = LEAST(date_trunc('milliseconds', now()), ${now}::timestamptz)
+      WHERE id = ${id}::uuid AND purged_at IS NULL AND expires_at > ${now}::timestamptz
+    `;
 
     return count === 1;
   }

@@ -607,6 +607,13 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   carries `attempts` and `leased_until` for the same reason `meeting_files` does, and
   `expires_at` is the whole lifecycle — aborting sets it to `now()`, so abort and expiry are one
   path in the worker and the row needs no status column.
+- **That "now" is the earlier of two clocks, and has to be.** `findOwned` compares the expiry
+  with this process's clock and every claim with PostgreSQL's `now()`, and the two are never
+  quite one — the database's is a VM's. Stamped with either alone, a session ended on purpose
+  stayed live to the other for as long as they differed: not yet the worker's to collect, and
+  still open to a completion. That failed `collects an aborted session` once in 500 runs.
+  `expire` writes `LEAST(now(), <this clock>)`, and `meeting-file-upload-expiry.e2e-spec.ts`
+  holds it to that with this process's clock moved five seconds each way.
 - **What bounds the disk is the per-uploader cap, not the file cap.** Since a session counts
   against nothing per meeting, and an uploader need never call `complete`, the file cap alone
   let one account open 1 GiB sessions without limit and fill the volume for a day.
