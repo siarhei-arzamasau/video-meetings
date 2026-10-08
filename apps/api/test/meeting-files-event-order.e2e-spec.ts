@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 
+import { EventBus } from '@nestjs/cqrs';
 import type { MeetingFile } from '@repo/shared';
 
+import { MeetingFileChangedEvent } from '../src/modules/meeting-files/events/meeting-file-changed.event';
 import { holdWrite } from '../src/modules/meeting-files/services/held-write.fixture';
 import { MeetingFileHandOvers } from '../src/modules/meeting-files/services/meeting-file-hand-overs';
 import { useApiSuite } from './utils/api-suite';
@@ -10,6 +12,7 @@ import {
   meetingFileEventsUrl,
   meetingFileRetryUrl,
   meetingFileTranscriptionRetryUrl,
+  meetingFileUrl,
 } from './utils/fixtures';
 import { FAILED, TRANSCRIBING } from './utils/meeting-file-transcription-table';
 import { findMeetingFileRow } from './utils/meeting-files-table';
@@ -33,9 +36,10 @@ const fileOf = async (client: SseClient): Promise<MeetingFile> =>
  *
  * The inversion itself cannot be asked for — it is Node resuming a claim before the write
  * that made the row claimable, a few runs in a thousand. What can be is the moment it
- * happens in: a hand-over held open in the registry while the worker's claim comes back.
+ * happens in: a hand-over held open in the registry while the worker's claim comes back,
+ * and a worker's announcement put on the bus after the delete it should have preceded.
  */
-describe('The order of a hand-over and the claim that follows it', () => {
+describe('The order two publishers’ events reach a stream in', () => {
   const suite = useApiSuite();
   const transcription = useTranscriptionSuite(suite);
   const open: SseClient[] = [];
@@ -163,5 +167,32 @@ describe('The order of a hand-over and the claim that follows it', () => {
     run.mockClear();
     await post(meetingFileRetryUrl(meeting.id, image.id));
     expect(handedOver()).toEqual([image.id]);
+  });
+
+  it('says nothing for a file after its delete, however late a worker’s announcement lands', async () => {
+    const { host, meeting } = await setUp();
+    const file = await transcription.uploadReady(host.token, meeting.id, fixture('sample.mp3'));
+    await transcription.transcriptionWorker().drain();
+    const [transcribed] = await transcription.list(host.token, meeting.id);
+    const client = await watch(meeting.id, host.token);
+
+    await suite
+      .delete(meetingFileUrl(meeting.id, file.id))
+      .set('Authorization', `Bearer ${host.token}`)
+      .expect(204);
+    await expect(fileOf(client)).resolves.toMatchObject({ id: file.id, status: 'deleted' });
+
+    // "Transcribed", as the worker announces it when its write committed just before the
+    // delete and Node resumed the delete first. Passed on, a page would put the row back.
+    expect(transcribed).toMatchObject({ id: file.id, transcriptionStatus: 'transcribed' });
+    suite
+      .app()
+      .get(EventBus)
+      .publish(new MeetingFileChangedEvent(meeting.id, transcribed as MeetingFile));
+    await expect(client.nextOf('file', SILENCE_MS)).rejects.toThrow();
+
+    // The purge repeats the delete, and that still goes out.
+    await transcription.fileWorker().drain();
+    await expect(fileOf(client)).resolves.toMatchObject({ id: file.id, status: 'deleted' });
   });
 });

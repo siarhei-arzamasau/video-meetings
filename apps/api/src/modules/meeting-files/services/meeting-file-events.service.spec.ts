@@ -129,6 +129,28 @@ describe('MeetingFileEventsService', () => {
     });
   });
 
+  it('says nothing more about a file once its delete has gone out, but that it is deleted', () => {
+    const watcher = watch(MEETING_A);
+    const gone = file(MEETING_A, { status: 'deleted' });
+
+    bus.next(new MeetingFileChangedEvent(MEETING_A, gone));
+    // A worker's write that committed before the delete, announced after it.
+    bus.next(new MeetingFileChangedEvent(MEETING_A, file(MEETING_A)));
+    // The purge repeats the delete, and that still goes out.
+    bus.next(new MeetingFileChangedEvent(MEETING_A, gone));
+
+    expect(filesOf(watcher)).toEqual([gone, gone]);
+  });
+
+  it('remembers a delete nobody was watching, for the page that opens before the late event', () => {
+    bus.next(new MeetingFileChangedEvent(MEETING_A, file(MEETING_A, { status: 'deleted' })));
+    const watcher = watch(MEETING_A);
+
+    bus.next(new MeetingFileChangedEvent(MEETING_A, file(MEETING_A)));
+
+    expect(filesOf(watcher)).toEqual([]);
+  });
+
   it('keeps meetings apart: a change to one is not sent to a stream on the other', () => {
     const a = watch(MEETING_A);
     const b = watch(MEETING_B);

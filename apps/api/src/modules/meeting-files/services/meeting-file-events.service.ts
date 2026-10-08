@@ -8,6 +8,7 @@ import type { Subscription } from 'rxjs';
 import { filter, map, startWith, takeUntil } from 'rxjs/operators';
 
 import { MeetingFileChangedEvent } from '../events/meeting-file-changed.event';
+import { AnnouncedDeletes } from './announced-deletes';
 
 /** The `event:` name every file change is sent under. A client filters on it. */
 export const FILE_EVENT = 'file';
@@ -46,6 +47,8 @@ export const HEARTBEAT_INTERVAL_MS = 15_000;
 export class MeetingFileEventsService implements OnModuleInit, BeforeApplicationShutdown {
   private readonly logger = new Logger(MeetingFileEventsService.name);
   private readonly meetings = new Map<string, Subject<MessageEvent>>();
+  /** What makes `deleted` the last thing a stream says about a file. See the class. */
+  private readonly deleted = new AnnouncedDeletes();
   /**
    * Emits once on shutdown; every open stream takes until it. **Replayed, so a stream opened
    * afterwards ends at once.** A client reopens its stream a second after it ended, and a
@@ -75,6 +78,12 @@ export class MeetingFileEventsService implements OnModuleInit, BeforeApplication
         ),
       )
       .subscribe((event) => {
+        // Asked before the lookup, so a delete is remembered whether or not anyone is watching:
+        // the late event it guards against may find a page that opened in between.
+        if (!this.deleted.admits(event.file)) {
+          return;
+        }
+
         // No subject means nobody is watching this meeting. Dropping the event here is the
         // whole reason a missed one has to be harmless: the client's next list is the repair.
         this.meetings.get(event.meetingId)?.next(fileMessage(event.file));

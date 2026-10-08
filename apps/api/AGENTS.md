@@ -623,6 +623,16 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   making one wait for the other would misorder them as often as not. It is in-process, like
   the fan-out below, and `LISTEN/NOTIFY` issued inside the writing transaction would replace
   it, since PostgreSQL delivers notifications in commit order.
+- **Nothing is sent for a file after its `deleted` has been** — `AnnouncedDeletes`, asked by
+  `MeetingFileEventsService` for every event. A delete and a worker's write are the unordered
+  pair above with a lasting effect: the write commits, then the delete, and Node resumes the
+  delete's handler first. A subscriber takes an id it no longer holds for somebody else's
+  upload and puts the row back — a file that is gone, with a transcript link that answers 404
+  — until its next full list. It needs no order to close: `deleted` is terminal and every
+  other write is conditional on the row not being deleted, so anything after it is an older
+  state announced late, and dropping it is right either way. The purge's repeat of `deleted`
+  still goes out. The last 1,024 deletes are remembered, which a late event, trailing its
+  delete by milliseconds, cannot outrun.
 - **Fan-out is in-process, and that fixes a single API instance.** `MeetingFileEventsService`
   subscribes once per process and keeps a `Subject` per watched meeting; `GET :id/files/events`
   is a `@Sse` route merging that with a heartbeat, ended by `MEETING_FILES_STREAM_TTL_SECONDS`.
