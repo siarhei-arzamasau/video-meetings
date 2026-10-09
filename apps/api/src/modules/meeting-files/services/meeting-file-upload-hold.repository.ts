@@ -6,6 +6,12 @@ import { PrismaService } from '../../prisma/prisma.service';
  * How long one hold may last. It lasts as long as a chunk takes to reach the disk — written,
  * `fsync`ed, renamed — so the default five seconds of an interactive transaction is a slow
  * disk away from failing an upload, and a minute is a disk that is not going to answer.
+ *
+ * **The limit ends the hold, not the write.** Past it the transaction is rolled back and the
+ * lock is gone, while the write it was guarding carries on — unheld, which is the state this
+ * class exists to prevent. `whileLive` then rejects, and its caller has to judge what the
+ * write left behind: `StoreChunkHandler` asks `isLive` and removes the tree of a session that
+ * has ended.
  */
 const HOLD_TRANSACTION = { maxWait: 10_000, timeout: 60_000 };
 
@@ -56,5 +62,15 @@ export class MeetingFileUploadHoldRepository {
 
       return true;
     }, HOLD_TRANSACTION);
+  }
+
+  /** Whether the session can still be written into, by the clock `whileLive` reads. */
+  async isLive(uploadId: string): Promise<boolean> {
+    const live = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM "meeting_file_uploads"
+      WHERE id = ${uploadId}::uuid AND purged_at IS NULL AND expires_at > now()
+    `;
+
+    return live.length > 0;
   }
 }

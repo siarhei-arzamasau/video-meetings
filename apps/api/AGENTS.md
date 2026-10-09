@@ -645,6 +645,11 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   the index is recorded after the hold, by the statement that always did, because recording
   it under the hold would have two chunks each waiting for the other's lock.
   `meeting-file-upload-hold.e2e-spec.ts` holds the order against a real Postgres.
+  **The hold has a time limit — a minute — and running out of it ends the lock, not the
+  move.** A move that outlives it finishes unheld, which is the gap the hold exists to close,
+  so `StoreChunkHandler` follows up a hold that failed: it waits for the move to settle, asks
+  whether the session is still live, and removes the tree of one that is not, since the
+  purge may already have been. A live session keeps the chunk, unrecorded, for its own purge.
 - **A chunk's length is derived from the session, never believed from the request.** Every chunk
   but the last must be exactly `chunk_size`, the last is the remainder. That is what makes a
   truncated chunk a 400 instead of a hole only the checksum would catch, and why the client
