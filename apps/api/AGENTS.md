@@ -440,7 +440,8 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   write up to 100 MB for a non-UUID id or an invisible meeting and then reject it. The handler
   checks visibility again — a command has to be safe whatever dispatched it — and that second
   indexed read is the cost of not writing 100 MB. The check is
-  `requireVisibleMeetingBeforeBody`, which the chunk route's interceptor shares.
+  `requireVisibleMeetingBeforeBody`; the chunk route's interceptor makes the same two reads
+  through the same two helpers, and then goes on to the session.
 - **The type is sniffed from the bytes, never the client's header.** `file-type` is pinned to
   **16.5.4** because 17+ is ESM-only: Node 24 would `require()` it, but Jest's loader cannot —
   both suites fail with `Cannot use import statement outside a module` — so moving past it
@@ -639,14 +640,24 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
 - **The chunk body is parsed by `MeetingFileChunkInterceptor`, and must never move back into
   middleware.** Middleware runs before guards, so a parser there buffers up to a whole chunk of
   every `PUT` before `JwtAuthGuard` can answer — when it was middleware, an anonymous caller with
-  a made-up path held 8 MiB of memory per connection. The interceptor answers the 401, 400, and
-  404 first (`requireVisibleMeetingBeforeBody`, shared with the single-request interceptor so the
-  two cannot drift), then parses with a one-chunk limit and inflation off; a body over the limit
-  is the contract's `Chunk length does not match`, since it is the wrong length for every index.
+  a made-up path held 8 MiB of memory per connection. The interceptor answers the 401, the
+  400s, and both 404s first — `requireOwnedUploadBeforeBody`, built from the helpers the
+  single-request interceptor's check uses (`callerOf`, `uuidParamOf`) so the two cannot drift —
+  and the 400 for an index the session has no chunk at. **The session, and not only the
+  meeting**: anyone can create a meeting, so "may see the meeting" is true of every account
+  for one of its own, and until the session was asked about first a signed-in caller with a
+  made-up session id held the same 8 MiB. Only then does it parse, with inflation off and a
+  limit of the length _this_ chunk has to have; a body over that is the contract's
+  `Chunk length does not match`. What is left is what a session entitles its owner to: one
+  chunk of it in memory per connection, for as long as the connection may stall. Closing that
+  means streaming the body to `tmp/` instead of buffering it, and a cap on chunks in flight
+  per account.
   `express` is a direct dependency for `raw`: pnpm's strict layout means an undeclared import
   compiles and fails at boot. The specs pinning this order use `putHeadersOnly`, which declares
   a body and never sends it — supertest always sends one, and a server that rightly answers
-  early fails that upload with `EPIPE`.
+  early fails that upload with `EPIPE`. The cases for a caller the meeting does not know are in
+  `meeting-file-uploads.e2e-spec.ts`; a member naming a session or a chunk that is not theirs
+  is `meeting-file-chunk-before-body.e2e-spec.ts`.
 - **Two things about the chunked routes are not visible in the controller.**
   `MeetingFileUploadsController` is listed **before** `MeetingFilesController`, so
   `files/uploads/…` is never matched as a file id by the routes one segment shorter. And a

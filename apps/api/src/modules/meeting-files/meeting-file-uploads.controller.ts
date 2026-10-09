@@ -23,13 +23,11 @@ import { CreateUploadCommand } from './commands/create-upload.command';
 import { CHUNK_INDEX_MESSAGE } from './commands/handlers/store-chunk.handler';
 import { StoreChunkCommand } from './commands/store-chunk.command';
 import { CreateUploadDto } from './dto/create-upload.dto';
+import { parseChunkIndex } from './services/meeting-file-upload.mapper';
 import { MeetingFileUploadsService } from './services/meeting-file-uploads.service';
 import { MeetingFileChunkInterceptor } from './storage/meeting-file-chunk.interceptor';
 
 const UUID_V4 = new ParseUUIDPipe({ version: '4' });
-
-/** The canonical decimal form, the same one the storage key accepts. */
-const CHUNK_INDEX = /^(0|[1-9]\d{0,8})$/;
 
 /**
  * Chunked upload, for files over the single-request cap. Its own controller rather than more
@@ -70,9 +68,9 @@ export class MeetingFileUploadsController {
   }
 
   /**
-   * One chunk, as a raw body. `MeetingFileChunkInterceptor` has already parsed it into a
-   * `Buffer` with a one-chunk limit — after the guard, never before — so a body larger than
-   * that never reaches here.
+   * One chunk, as a raw body. `MeetingFileChunkInterceptor` has already found the caller's
+   * session and parsed the body into a `Buffer` no longer than this chunk may be — after the
+   * guard, never before — so a body larger than that never reaches here.
    *
    * 204 and no body: the client learns nothing from a chunk it did not already know, and the
    * status route is there for the set. The index is parsed here rather than by `ParseIntPipe`
@@ -89,12 +87,14 @@ export class MeetingFileUploadsController {
     @Param('index') index: string,
     @Body() body: unknown,
   ): Promise<void> {
-    if (!CHUNK_INDEX.test(index)) {
+    const chunkIndex = parseChunkIndex(index);
+
+    if (chunkIndex === null) {
       throw new BadRequestException(CHUNK_INDEX_MESSAGE);
     }
 
     return this.commandBus.execute<StoreChunkCommand, void>(
-      new StoreChunkCommand(user.id, meetingId, uploadId, Number(index), asBuffer(body)),
+      new StoreChunkCommand(user.id, meetingId, uploadId, chunkIndex, asBuffer(body)),
     );
   }
 
