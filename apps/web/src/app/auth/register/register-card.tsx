@@ -11,25 +11,19 @@ import {
   Label,
   Spinner,
   TextField,
-  buttonVariants,
 } from '@heroui/react';
 import { MIN_PASSWORD_LENGTH } from '@repo/shared';
 import Link from 'next/link';
 import { useMemo, useState, type FormEvent } from 'react';
 
-import {
-  CheckIcon,
-  EyeIcon,
-  EyeOffIcon,
-  LockIcon,
-  MailIcon,
-  WarningIcon,
-} from '@/components/icons';
+import { EyeIcon, EyeOffIcon, LockIcon, MailIcon, WarningIcon } from '@/components/icons';
 import { ApiError, register } from '@/lib/api-client';
 import { storeAccessToken } from '@/lib/auth-token';
 import { normaliseEmail, validateEmail, validatePassword } from '@/lib/credentials';
 
 import { CARD_CLASS } from '../card';
+
+import { AccountCreated } from './account-created';
 
 /** The field a failure belongs on, or `null` when it belongs to the form as a whole. */
 type FailedField = 'email' | null;
@@ -230,24 +224,4 @@ function describeFailure(error: unknown): { message: string; field: FailedField 
     message: 'We could not reach the server. Check your connection and try again.',
     field: null,
   };
-}
-
-function AccountCreated({ email }: { email: string }) {
-  return (
-    <div className="flex flex-col items-center gap-4 py-4 text-center">
-      <span className="bg-success/15 text-success flex size-14 items-center justify-center rounded-full">
-        <CheckIcon />
-      </span>
-      <div className="flex flex-col gap-1">
-        <h2 className="text-xl font-semibold">You're all set</h2>
-        <p className="text-muted text-sm">
-          Your account for <span className="text-foreground font-medium">{email}</span> is ready,
-          and you are signed in.
-        </p>
-      </div>
-      <Link href="/" className={buttonVariants({ variant: 'primary', fullWidth: true })}>
-        Continue
-      </Link>
-    </div>
-  );
 }

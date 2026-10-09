@@ -1,7 +1,8 @@
-import { Card, EmptyState, Separator, buttonVariants } from '@heroui/react';
+import { Card, EmptyState, Separator } from '@heroui/react';
 import type { Meeting, User } from '@repo/shared';
 import Link from 'next/link';
 
+import { ButtonLink } from '@/components/button-link';
 import { CalendarIcon, PlusIcon } from '@/components/icons';
 import { MeetingStatusChip } from '@/components/meeting-status-chip';
 import { formatMeetingTime } from '@/lib/date-time';
@@ -61,13 +62,11 @@ export function ReadyDashboard({
             )}
           </div>
 
-          {/* An anchor, not a Button: this navigates, and Next's client-side routing needs a
-              real link to hook. `buttonVariants` keeps it looking like the rest. */}
           {!isEmpty && (
-            <Link href="/meetings/new" className={buttonVariants({ variant: 'primary' })}>
+            <ButtonLink href="/meetings/new">
               <PlusIcon />
               New meeting
-            </Link>
+            </ButtonLink>
           )}
         </div>
 
@@ -129,10 +128,10 @@ function NoMeetings() {
           Schedule your first meeting and it will show up here, with everyone you invited.
         </p>
       </div>
-      <Link href="/meetings/new" className={buttonVariants({ variant: 'primary' })}>
+      <ButtonLink href="/meetings/new">
         <PlusIcon />
         New meeting
-      </Link>
+      </ButtonLink>
     </EmptyState>
   );
 }

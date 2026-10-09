@@ -109,6 +109,14 @@ aliases in sync if either changes.
   checkbox, radio, autocomplete, number field, search field, date input, OTP — and
   `--field-hover` is only ever read inside a `:hover` block, so it changes nothing at rest. Do
   not reach for a per-form class instead.
+- **A link drawn as a button is `ButtonLink` (`src/components/button-link.tsx`), never
+  `buttonVariants` on a `Link`.** HeroUI 3.2.2 attaches a button's focus ring to
+  `:focus-visible:not(:focus)`, which nothing can match, and to `data-focus-visible`, which
+  only React Aria sets — so an anchor wearing the variant classes has the button's
+  `outline-none` and no ring, and tabbing to it shows nothing at all. The component adds
+  `focus-visible:focus-ring`, the utility the button's own rule applies, so the two rings
+  cannot drift. Upstream fixed the selector in 3.2.5; that upgrade moves React Aria to peer
+  dependencies, which is why it was not the fix. Delete the constant with it.
 - **`src/app/providers.tsx`.** HeroUI v3 needs no provider of its own; this file exists for
   next-themes, which must set both `class` and `data-theme` because HeroUI reads the two
   together.
