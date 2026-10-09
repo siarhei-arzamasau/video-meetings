@@ -47,6 +47,58 @@ jobs:
       - name: Test
         run: pnpm test
 
+  api-e2e:
+    name: API end-to-end tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        # The image and credentials docker-compose.yml gives a developer.
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: video_meetings
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d video_meetings"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # The suite never runs against this database: it derives `video_meetings_test` from it,
+      # and creates and migrates that one before the first spec, so no step here prepares a
+      # schema.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/video_meetings
+      # Empty on purpose. No e2e spec may need a token or the network, and the environment
+      # wins over any env file — a spec that reaches for Anthropic fails here rather than
+      # spending a real token somewhere else.
+      ANTHROPIC_AUTH_TOKEN: ''
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The specs import `@repo/shared` from its build output and the Prisma client from
+      # `src/generated`, which is gitignored; the API's build produces both.
+      - name: Build
+        run: pnpm build --filter=@repo/api
+
+      - name: End-to-end tests
+        run: pnpm --filter=@repo/api test:e2e
+
   docker:
     name: Validate compose file
     runs-on: ubuntu-latest

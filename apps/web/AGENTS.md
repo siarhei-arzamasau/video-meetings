@@ -654,9 +654,12 @@ scripted Claude bound inside it, which also listens on loopback **3103** for a s
 (below). It needs `docker compose up -d postgres`,
 a migrated schema, and `pnpm exec playwright install chromium` once. `E2E_SERVER_TIMEOUT_MS`
 raises the two-minute wait per server; a wait that times out even at several minutes is the
-corrupt-cache symptom above, not a slow machine. Its `globalTeardown` truncates `users`, so **it
-must never run alongside the API's e2e suite** — they share the database. A running `next dev`
-from this directory also blocks it, because Next locks `.next`.
+corrupt-cache symptom above, not a slow machine. **Its `globalTeardown` truncates `users` in
+the database `DATABASE_URL` names — by default the development one.** The API's own e2e suite
+has a database to itself since it started deriving one
+([the API guide](../api/AGENTS.md#tests)); this suite does not yet, so point `DATABASE_URL`
+at a scratch database if local rows matter. A running `next dev` from this directory also
+blocks it, because Next locks `.next`.
 
 **Every wait in the suite goes through `e2e/timeouts.ts`, and `E2E_TIMEOUT_SCALE` is the dial
 for a busy machine.** Most specs wait on one chain — upload lands, the worker claims the row

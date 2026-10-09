@@ -1654,9 +1654,10 @@ Jest, configured inline in `package.json` with `rootDir: src` and `testRegex: .*
 unit specs sit beside the code. E2E specs use `test/jest-e2e.json` and Supertest. Not Vitest —
 that's the web app.
 
-**Neither `pnpm test` nor CI runs `test:e2e`** (it is not in `turbo.json`, and CI has no
-Postgres), **so a module whose only coverage is an e2e spec is uncovered as far as CI is
-concerned.** Every command handler, query handler, and read service gets a `*.spec.ts` beside
+**`pnpm test` does not run `test:e2e`** (it is not in `turbo.json`, because it needs
+Postgres), **and so neither does the pre-commit hook: a module whose only coverage is an e2e
+spec is uncovered until CI, whose `api-e2e` job is the one thing that runs the suite
+unasked.** Every command handler, query handler, and read service gets a `*.spec.ts` beside
 it for that reason, not for a coverage number.
 
 **A spec that needs a whole stored row builds it from a `*.fixture.ts` beside the code** and
@@ -1695,15 +1696,31 @@ A mocked SDK would only repeat back what the mock assumed, so the unit specs cov
 decided on this side of it: no token, no call; a call already called off starts nothing; and
 `outcomeOf`'s table of what each result the SDK is known to produce becomes.
 
-E2E specs run against the **real database** `DATABASE_URL` points at — by default your
-development one; point it elsewhere if local rows matter to you. `test/utils/create-test-app.ts`
-boots `AppModule` and `useApiSuite` truncates the tables it touches, so `test:e2e` needs
-`docker compose up -d postgres` and a migrated schema — without them every test fails in
-`beforeEach` with `relation "..." does not exist`, which reads like a broken suite and is
-really a missing database. Cleanup runs at both ends for different reasons: `beforeEach` so no
-test inherits another's rows (which is also what makes a repeated run independent of the last),
-`afterAll` so the final test's fixtures are not stranded. **The web app's Playwright suite
-truncates the same table, so the two must never run at the same time.**
+E2E specs run against a real database, **and never the one `DATABASE_URL` names**: the suite
+uses that database's name with `_test` after it, on the same server (`testDatabaseUrl`, in
+`test/utils/test-database.ts`). `test/utils/create-test-app.ts` boots `AppModule` and
+`useApiSuite` empties `users`, and everything that hangs off it, before every test — against
+the configured database that was a developer's own data gone at the first run. So
+`test:e2e` needs `docker compose up -d postgres` and nothing else: `test/global-setup.ts`
+creates the database when it is missing and runs `prisma migrate deploy` on it before the
+first spec. Three things about it:
+
+- **A name that already ends in `_test` is used as it is.** That is what makes the answer
+  safe to feed back in — `setup-env.ts` writes it to `DATABASE_URL` once per spec file — and
+  it is how to choose a database on purpose: a second session on the same Postgres runs
+  with `DATABASE_URL=…/video_meetings_<name>` and gets `video_meetings_<name>_test`.
+- **`truncateUsers` refuses any other database, in the statement that would empty it.** The
+  environment is what points the suite at a test database; the refusal is what holds if that
+  line is ever lost. `test-database.e2e-spec.ts` pins both.
+- **The web app's Playwright suite is not covered by any of this.** It boots the API on the
+  database `DATABASE_URL` names and its teardown truncates that one — by default the
+  development database. The two suites therefore no longer share a database; giving the
+  browser suite the same isolation means creating its database before `start:e2e-web` boots
+  the API, which Playwright's `globalSetup` runs too late to do.
+
+Cleanup runs at both ends for different reasons: `beforeEach` so no test inherits another's
+rows (which is also what makes a repeated run independent of the last), `afterAll` so the
+final test's fixtures are not stranded.
 
 Nine things about that setup are easy to get wrong:
 

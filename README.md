@@ -225,7 +225,7 @@ Scoping to one package uses Turborepo filters: `pnpm build --filter=@repo/api`.
 Two end-to-end suites are not part of `pnpm test` because they need PostgreSQL running:
 
 ```bash
-pnpm --filter=@repo/api test:e2e        # Jest + Supertest against the real database
+pnpm --filter=@repo/api test:e2e        # Jest + Supertest, on a database of its own (see below)
 pnpm exec playwright install chromium   # once
 pnpm --filter=@repo/web test:e2e        # Playwright; starts the API and the web app on 3101/3100
 ```
@@ -235,8 +235,12 @@ suite needs Whisper running. Its API is booted with the meeting digest on and a 
 stand-in for Claude inside it (listening for the specs on 3103), so neither suite needs an
 Anthropic token or the network either.
 
-Both truncate the `users` table in whatever `DATABASE_URL` points at, and they share it, so run
-one at a time.
+Both empty the `users` table, and everything that hangs off it, as they go — in different
+databases. The API's suite never touches the one `DATABASE_URL` names: it uses that name with
+`_test` after it (`video_meetings_test`), which it creates and migrates on its first run, and
+it refuses to empty a database named any other way. The browser suite still runs against the
+database `DATABASE_URL` names and truncates it when it finishes, so point that variable at a
+scratch database first if your local rows matter.
 
 A third suite sends real requests to Anthropic through the Claude Agent SDK — among them the
 transcripts of a made-up meeting, to check the digest Claude writes from them. It needs no

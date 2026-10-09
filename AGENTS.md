@@ -99,7 +99,8 @@ and removes nothing. Use `pnpm --filter=@repo/web run clean`.
 `.d.ts` files, and Next.js generates `next-env.d.ts` and `.next/types` during its build.
 CI (`.github/workflows/ci.yml`) runs format:check → lint → build → typecheck → test; match
 that order when verifying work locally, and run it once on the finished tree — `build` and
-`typecheck` catch things no test does.
+`typecheck` catch things no test does. A second job runs the API's `test:e2e` against a
+Postgres service.
 
 ## Code rules
 
@@ -187,10 +188,11 @@ the decomposition is step one. Four repository-specific things make that work:
   `--maxWorkers=4` is the way back for a run on a machine that is busy with something else;
   the pre-commit hook runs this suite too. **The e2e suites stay at one worker** — that cap
   is correctness, not speed (see [the API guide](apps/api/AGENTS.md#tests)).
-- **`pnpm test` is not the whole net.** Neither it nor CI runs the two `test:e2e` suites, or
-  the API's `test:live`, which sends real requests to Anthropic;
-  [the API guide](apps/api/AGENTS.md#tests) owns what they need and why the e2e suites must
-  never run at the same time.
+- **`pnpm test` is not the whole net.** It runs neither `test:e2e` suite, nor the API's
+  `test:live`, which sends real requests to Anthropic. CI runs the API's `test:e2e` in a job
+  of its own and nothing runs the other two for you;
+  [the API guide](apps/api/AGENTS.md#tests) owns what each needs and which database each
+  empties.
 - **An adapted test is weaker evidence than an untouched one.** Unit specs change alongside the
   code they mock; what tells you behaviour survived is the suite that passed _unmodified_,
   which for a change behind an unchanged HTTP contract is `test:e2e`. So prefer steps that

@@ -6,7 +6,8 @@ import { config } from 'dotenv';
 import { Client } from 'pg';
 
 /**
- * Leaves the developer database as it was found, mirroring `useApiSuite`'s `afterAll`.
+ * Empties the database the suite ran against — the one `DATABASE_URL` names, which unless it
+ * is pointed elsewhere is the developer's own — mirroring `useApiSuite`'s `afterAll`.
  *
  * The suite runs in a separate process from the API, so it cannot call the API's raw-SQL
  * truncation helper; every test uses unique emails and its own meeting, so nothing here is
