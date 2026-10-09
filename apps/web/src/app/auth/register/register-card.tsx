@@ -11,25 +11,20 @@ import {
   Label,
   Spinner,
   TextField,
-  buttonVariants,
 } from '@heroui/react';
 import { MIN_PASSWORD_LENGTH } from '@repo/shared';
 import Link from 'next/link';
 import { useMemo, useState, type FormEvent } from 'react';
 
-import {
-  CheckIcon,
-  EyeIcon,
-  EyeOffIcon,
-  LockIcon,
-  MailIcon,
-  WarningIcon,
-} from '@/components/icons';
+import { EyeIcon, EyeOffIcon, LockIcon, MailIcon, WarningIcon } from '@/components/icons';
 import { ApiError, register } from '@/lib/api-client';
 import { storeAccessToken } from '@/lib/auth-token';
 import { normaliseEmail, validateEmail, validatePassword } from '@/lib/credentials';
 
 import { CARD_CLASS } from '../card';
+import { renderPageHeading } from '../page-heading';
+
+import { AccountCreated } from './account-created';
 
 /** The field a failure belongs on, or `null` when it belongs to the form as a whole. */
 type FailedField = 'email' | null;
@@ -100,7 +95,9 @@ export function RegisterCard() {
   return (
     <Card className={CARD_CLASS}>
       <Card.Header className="gap-1.5">
-        <Card.Title className="text-2xl leading-8">Create your account</Card.Title>
+        <Card.Title className="text-2xl leading-8" render={renderPageHeading}>
+          Create your account
+        </Card.Title>
         <Card.Description>
           Your email and a password are all it takes. No credit card, no meeting-room hardware.
         </Card.Description>
@@ -188,7 +185,7 @@ export function RegisterCard() {
         <Button type="submit" variant="primary" size="lg" fullWidth isDisabled={isSubmitting}>
           {isSubmitting ? (
             <>
-              <Spinner size="sm" />
+              <Spinner color="current" size="sm" />
               Creating your account…
             </>
           ) : (
@@ -230,24 +227,4 @@ function describeFailure(error: unknown): { message: string; field: FailedField 
     message: 'We could not reach the server. Check your connection and try again.',
     field: null,
   };
-}
-
-function AccountCreated({ email }: { email: string }) {
-  return (
-    <div className="flex flex-col items-center gap-4 py-4 text-center">
-      <span className="bg-success/15 text-success flex size-14 items-center justify-center rounded-full">
-        <CheckIcon />
-      </span>
-      <div className="flex flex-col gap-1">
-        <h2 className="text-xl font-semibold">You're all set</h2>
-        <p className="text-muted text-sm">
-          Your account for <span className="text-foreground font-medium">{email}</span> is ready,
-          and you are signed in.
-        </p>
-      </div>
-      <Link href="/" className={buttonVariants({ variant: 'primary', fullWidth: true })}>
-        Continue
-      </Link>
-    </div>
-  );
 }

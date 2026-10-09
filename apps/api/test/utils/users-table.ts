@@ -1,4 +1,5 @@
 import { PrismaService } from '../../src/modules/prisma/prisma.service';
+import { BROWSER_SUITE_DATABASE_SUFFIX, TEST_DATABASE_SUFFIX } from './test-database';
 
 /**
  * Reads and clears the users table over raw SQL rather than through `prisma.user`.
@@ -43,9 +44,31 @@ const SELECT_COLUMNS = 'id, email, password_hash, display_name, created_at';
  * state. PostgreSQL's `TRUNCATE ... CASCADE` follows referencing foreign keys regardless of
  * their `ON DELETE` action; this deliberately covers meeting and participant tables without
  * coupling the shared test lifecycle to current or future feature-table names.
+ *
+ * **It refuses a database whose name does not end in `_test`**, in the statement that would
+ * empty it. `setup-env.ts` is what points the suite at such a database; this is what holds if
+ * that line is ever lost, or a helper is handed some other connection — the difference
+ * between a failed run and a developer's data. **It refuses the browser suite's `_web_test`
+ * too**, which ends in `_test` and is another suite's to empty.
  */
-export async function truncateUsers(prisma: PrismaService): Promise<void> {
-  await prisma.$executeRawUnsafe('TRUNCATE TABLE "users" RESTART IDENTITY CASCADE');
+export async function truncateUsers(
+  prisma: Pick<PrismaService, '$executeRawUnsafe'>,
+): Promise<void> {
+  await prisma.$executeRawUnsafe(`
+    DO $$
+    BEGIN
+      IF right(current_database(), ${String(TEST_DATABASE_SUFFIX.length)}) <> '${TEST_DATABASE_SUFFIX}' THEN
+        RAISE EXCEPTION 'Refusing to truncate "%": not a test database', current_database();
+      END IF;
+
+      IF right(current_database(), ${String(BROWSER_SUITE_DATABASE_SUFFIX.length)}) = '${BROWSER_SUITE_DATABASE_SUFFIX}' THEN
+        RAISE EXCEPTION 'Refusing to truncate "%": the browser suite''s database', current_database();
+      END IF;
+
+      TRUNCATE TABLE "users" RESTART IDENTITY CASCADE;
+    END
+    $$;
+  `);
 }
 
 /**

@@ -2,6 +2,7 @@ import type { Logger } from '@nestjs/common';
 import type { EventBus } from '@nestjs/cqrs';
 import { MEETING_FILE_TRANSCRIPTION_FAILED_MESSAGE } from '@repo/shared';
 
+import { describeError } from '../../../../common/error-message';
 import { MeetingFileChangedEvent } from '../../events/meeting-file-changed.event';
 import type { MeetingFileHandOvers } from '../../services/meeting-file-hand-overs';
 import { TranscriptionStatus } from '../../services/meeting-file-transcription-status';
@@ -96,7 +97,7 @@ export class TranscriptionOutcomeRecorder {
     } catch (error) {
       this.logger.error(
         `File ${claimed.id} of meeting ${claimed.meetingId}: the transcript could not be stored`,
-        error instanceof Error ? error.stack : String(error),
+        describeError(error),
       );
 
       return false;

@@ -4,7 +4,7 @@ import type { Express } from 'express';
 import helmet from 'helmet';
 
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
-import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { createRequestLogger } from './common/logging/request-logger';
 import { ConnectionDrainService } from './common/shutdown/connection-drain.service';
 
 /**
@@ -60,6 +60,11 @@ export function configureApp(app: INestApplication): void {
     credentials: true,
   });
 
+  // After CORS, which answers a preflight itself, and before everything that can refuse a
+  // request: a guard's 401 and a route nobody declared are lines too. The function says why
+  // this is middleware and not the interceptor it used to be.
+  app.use(createRequestLogger());
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -76,5 +81,4 @@ export function configureApp(app: INestApplication): void {
     }),
   );
   app.useGlobalFilters(new HttpExceptionFilter());
-  app.useGlobalInterceptors(new LoggingInterceptor());
 }

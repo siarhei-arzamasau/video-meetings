@@ -9,6 +9,7 @@ import {
   TEST_JWT_SECRET,
   TEST_WEB_ORIGIN,
 } from './utils/fixtures';
+import { testDatabaseUrl } from './utils/test-database';
 
 /**
  * Jest `setupFiles` entry — this must run before anything imports `AppModule`.
@@ -21,6 +22,13 @@ import {
  */
 process.env['JWT_SECRET'] = TEST_JWT_SECRET;
 process.env['JWT_EXPIRES_IN_SECONDS'] = String(TEST_JWT_EXPIRES_IN_SECONDS);
+
+/**
+ * A database of the suite's own, never the one `DATABASE_URL` names: every test begins by
+ * emptying `users` and all that hangs off it. `global-setup.ts` has already created and
+ * migrated it; `testDatabaseUrl` says how it is named, and how to choose another.
+ */
+process.env['DATABASE_URL'] = testDatabaseUrl();
 
 /**
  * Uploads land in a directory created per run and removed at exit, so `test:e2e` never reads

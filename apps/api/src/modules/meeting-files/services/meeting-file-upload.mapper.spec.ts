@@ -2,6 +2,7 @@ import {
   chunkCountOf,
   chunkKeyOf,
   chunkLengthOf,
+  parseChunkIndex,
   toMeetingFileUpload,
 } from './meeting-file-upload.mapper';
 import type { MeetingFileUploadRecord } from './meeting-file-upload.mapper';
@@ -76,4 +77,21 @@ describe('the chunk plan', () => {
     expect(chunkKeyOf(UPLOAD_ID, 0)).toBe(`uploads/${UPLOAD_ID}/0`);
     expect(chunkKeyOf(UPLOAD_ID, 12)).toBe(`uploads/${UPLOAD_ID}/12`);
   });
+
+  it.each([
+    ['0', 0],
+    ['7', 7],
+    ['127', 127],
+  ])('reads the index %s from a path segment', (segment, index) => {
+    expect(parseChunkIndex(segment)).toBe(index);
+  });
+
+  // One spelling per index, because the segment becomes a storage key: `00` and `0` would
+  // otherwise be two requests for one chunk.
+  it.each(['', 'abc', '-1', '00', '01', '1.5', '1e3', ' 1', '1234567890'])(
+    'reads no index from %p',
+    (segment) => {
+      expect(parseChunkIndex(segment)).toBeNull();
+    },
+  );
 });

@@ -48,7 +48,8 @@ pnpm dev                        # web on :3000, api on :3001
 
 Files uploaded to a meeting are stored under `apps/api/storage/` (gitignored, created at
 boot; set `MEETING_FILES_DIR` to move it). Under `docker compose` the API keeps them on a named
-volume instead. Files up to 100 MB are uploaded in one request; larger ones, up to 1 GB, are
+volume instead, and a one-shot `migrate` service applies the database migrations before the
+API starts. Files up to 100 MB are uploaded in one request; larger ones, up to 1 GB, are
 uploaded in chunks and can be resumed, and an unfinished upload is discarded after
 `MEETING_FILE_UPLOAD_TTL_HOURS` (default 24).
 
@@ -76,8 +77,10 @@ front of the API: left at 0, every client arrives as the proxy and shares one bu
 than the real count, a client can choose its own address and with it a fresh budget.
 
 The host port is 5433 rather than the usual 5432, so the container does not collide with a
-PostgreSQL you already run locally. To use a different one, set `POSTGRES_PORT` in `.env`
-and point `DATABASE_URL` at the same port:
+PostgreSQL you already run locally, and it is published on `127.0.0.1` only: the password in
+`docker-compose.yml` is a development default, and nothing off this machine needs the port.
+To use a different one, set `POSTGRES_PORT` in `.env` and point `DATABASE_URL` at the same
+port:
 
 ```bash
 POSTGRES_PORT=5434
@@ -225,7 +228,7 @@ Scoping to one package uses Turborepo filters: `pnpm build --filter=@repo/api`.
 Two end-to-end suites are not part of `pnpm test` because they need PostgreSQL running:
 
 ```bash
-pnpm --filter=@repo/api test:e2e        # Jest + Supertest against the real database
+pnpm --filter=@repo/api test:e2e        # Jest + Supertest, on a database of its own (see below)
 pnpm exec playwright install chromium   # once
 pnpm --filter=@repo/web test:e2e        # Playwright; starts the API and the web app on 3101/3100
 ```
@@ -235,8 +238,11 @@ suite needs Whisper running. Its API is booted with the meeting digest on and a 
 stand-in for Claude inside it (listening for the specs on 3103), so neither suite needs an
 Anthropic token or the network either.
 
-Both truncate the `users` table in whatever `DATABASE_URL` points at, and they share it, so run
-one at a time.
+Both empty the `users` table, and everything that hangs off it, as they go — each in a
+database of its own, and never the one `DATABASE_URL` names. The API's suite uses that name
+with `_test` after it (`video_meetings_test`) and the browser suite the same with `_web_test`
+(`video_meetings_web_test`). Each creates and migrates its database on its first run, and
+refuses to empty one named any other way.
 
 A third suite sends real requests to Anthropic through the Claude Agent SDK — among them the
 transcripts of a made-up meeting, to check the digest Claude writes from them. It needs no

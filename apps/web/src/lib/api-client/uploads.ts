@@ -1,7 +1,8 @@
 import type { MeetingFile, MeetingFileUpload } from '@repo/shared';
 
-import type { UploadOptions, XhrFactory } from './core';
-import { apiFetch, authHeaders, sendWithProgress } from './core';
+import { apiFetch, authHeaders } from './core';
+import type { UploadOptions, XhrFactory } from './progress-upload';
+import { sendWithProgress } from './progress-upload';
 
 /** The chunked upload's five calls, in the order a client makes them. */
 const uploadsPath = (meetingId: string): string => `/meetings/${meetingId}/files/uploads`;
@@ -18,11 +19,13 @@ export function createUpload(
   token: string,
   meetingId: string,
   file: Pick<File, 'name' | 'size'>,
+  signal?: AbortSignal,
 ): Promise<MeetingFileUpload> {
   return apiFetch<MeetingFileUpload>(uploadsPath(meetingId), {
     method: 'POST',
     headers: authHeaders(token),
     body: JSON.stringify({ name: file.name, size: file.size }),
+    signal,
   });
 }
 
@@ -35,9 +38,11 @@ export function getUpload(
   token: string,
   meetingId: string,
   uploadId: string,
+  signal?: AbortSignal,
 ): Promise<MeetingFileUpload> {
   return apiFetch<MeetingFileUpload>(uploadPath(meetingId, uploadId), {
     headers: authHeaders(token),
+    signal,
   });
 }
 
@@ -73,15 +78,20 @@ export function putChunk(
 /**
  * Assembles the session into a file. Safe to retry: a rejection here leaves every chunk on
  * the server, so a 415 or a dropped connection costs this call again, not the upload.
+ *
+ * Aborting it stops this client waiting, and nothing more: an assembly the server has begun
+ * runs to its end, and the file it makes reaches the page by the files stream.
  */
 export function completeUpload(
   token: string,
   meetingId: string,
   uploadId: string,
+  signal?: AbortSignal,
 ): Promise<MeetingFile> {
   return apiFetch<MeetingFile>(`${uploadPath(meetingId, uploadId)}/complete`, {
     method: 'POST',
     headers: authHeaders(token),
+    signal,
   });
 }
 

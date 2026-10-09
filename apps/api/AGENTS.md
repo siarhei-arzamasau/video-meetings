@@ -27,9 +27,9 @@ src/
   configure-app.ts      Every global that shapes request handling
   app.module.ts         Root module — register new feature modules here
   config/               Environment contract
-  common/               Cross-cutting filters and interceptors, shutdown/ for what the
-                        process does with its connections when it is stopped, and
-                        processing/ for what every polling worker shares
+  common/               Cross-cutting: the exception filter, logging/ for the request log,
+                        shutdown/ for what the process does with its connections when it
+                        is stopped, and processing/ for what every polling worker shares
   modules/<feature>/    One directory per feature: module, controller, specs, and
                         commands/ — a command class plus its handler per write operation.
                         queries/ mirrors it where a read crosses a module boundary,
@@ -440,7 +440,8 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   write up to 100 MB for a non-UUID id or an invisible meeting and then reject it. The handler
   checks visibility again — a command has to be safe whatever dispatched it — and that second
   indexed read is the cost of not writing 100 MB. The check is
-  `requireVisibleMeetingBeforeBody`, which the chunk route's interceptor shares.
+  `requireVisibleMeetingBeforeBody`; the chunk route's interceptor makes the same two reads
+  through the same two helpers, and then goes on to the session.
 - **The type is sniffed from the bytes, never the client's header.** `file-type` is pinned to
   **16.5.4** because 17+ is ESM-only: Node 24 would `require()` it, but Jest's loader cannot —
   both suites fail with `Cannot use import statement outside a module` — so moving past it
@@ -632,6 +633,29 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   answered, `expires_at` is set to `now()` **before** the chunk tree is removed, so a retry from
   then on is a 404 and never a second file. Assembly writes to `tmp/assemble-<uuid>`, never
   `tmp/<uploadId>` — two completions must not write into or remove one another's file.
+- **A chunk is moved into place while its session's row is held `FOR SHARE`**
+  (`MeetingFileUploadHoldRepository.whileLive`). A session is ended by a write to its row —
+  an abort, a completion, the worker's claim of an expired one — after which the worker
+  removes its tree and marks it purged. A chunk still on its way to the disk at that moment
+  used to be renamed into a tree nobody would look at again, since `purged_at` keeps the row
+  from being claimed twice: up to 8 MiB for good each time an upload was cancelled with a
+  request in flight. Held, everything that ends the session waits for the write — the
+  worker's claim passes over a locked row — so the purge that follows finds the chunk.
+  **Only the rename runs under the hold, and no more than three holds are open at once**
+  (`ConcurrencyLimit`). A hold pins a pooled connection until its write returns, and the pool
+  is ten for every route: with a whole chunk flushed under it and no bound on how many ran,
+  one account sending chunks side by side held all ten and every other request waited on the
+  pool. So the file is flushed before the hold and its directory after it, and a fourth hold
+  waits in memory instead of in the pool.
+  `FOR SHARE` and not stronger, so two chunks of one session are still written side by side;
+  the index is recorded after the hold, by the statement that always did, because recording
+  it under the hold would have two chunks each waiting for the other's lock.
+  `meeting-file-upload-hold.e2e-spec.ts` holds the order against a real Postgres.
+  **The hold has a time limit — a minute — and running out of it ends the lock, not the
+  move.** A move that outlives it finishes unheld, which is the gap the hold exists to close,
+  so `StoreChunkHandler` follows up a hold that failed: it waits for the move to settle, asks
+  whether the session is still live, and removes the tree of one that is not, since the
+  purge may already have been. A live session keeps the chunk, unrecorded, for its own purge.
 - **A chunk's length is derived from the session, never believed from the request.** Every chunk
   but the last must be exactly `chunk_size`, the last is the remainder. That is what makes a
   truncated chunk a 400 instead of a hole only the checksum would catch, and why the client
@@ -639,14 +663,24 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
 - **The chunk body is parsed by `MeetingFileChunkInterceptor`, and must never move back into
   middleware.** Middleware runs before guards, so a parser there buffers up to a whole chunk of
   every `PUT` before `JwtAuthGuard` can answer — when it was middleware, an anonymous caller with
-  a made-up path held 8 MiB of memory per connection. The interceptor answers the 401, 400, and
-  404 first (`requireVisibleMeetingBeforeBody`, shared with the single-request interceptor so the
-  two cannot drift), then parses with a one-chunk limit and inflation off; a body over the limit
-  is the contract's `Chunk length does not match`, since it is the wrong length for every index.
+  a made-up path held 8 MiB of memory per connection. The interceptor answers the 401, the
+  400s, and both 404s first — `requireOwnedUploadBeforeBody`, built from the helpers the
+  single-request interceptor's check uses (`callerOf`, `uuidParamOf`) so the two cannot drift —
+  and the 400 for an index the session has no chunk at. **The session, and not only the
+  meeting**: anyone can create a meeting, so "may see the meeting" is true of every account
+  for one of its own, and until the session was asked about first a signed-in caller with a
+  made-up session id held the same 8 MiB. Only then does it parse, with inflation off and a
+  limit of the length _this_ chunk has to have; a body over that is the contract's
+  `Chunk length does not match`. What is left is what a session entitles its owner to: one
+  chunk of it in memory per connection, for as long as the connection may stall. Closing that
+  means streaming the body to `tmp/` instead of buffering it, and a cap on chunks in flight
+  per account.
   `express` is a direct dependency for `raw`: pnpm's strict layout means an undeclared import
   compiles and fails at boot. The specs pinning this order use `putHeadersOnly`, which declares
   a body and never sends it — supertest always sends one, and a server that rightly answers
-  early fails that upload with `EPIPE`.
+  early fails that upload with `EPIPE`. The cases for a caller the meeting does not know are in
+  `meeting-file-uploads.e2e-spec.ts`; a member naming a session or a chunk that is not theirs
+  is `meeting-file-chunk-before-body.e2e-spec.ts`.
 - **Two things about the chunked routes are not visible in the controller.**
   `MeetingFileUploadsController` is listed **before** `MeetingFilesController`, so
   `files/uploads/…` is never matched as a file id by the routes one segment shorter. And a
@@ -1525,7 +1559,24 @@ in `main.ts`.
   into whatever the DTO property is typed as, so `{"password": 12345678}` arrives as
   `"12345678"` and passes `@IsString()` — the API would accept credentials of any JSON type.
   The cost is that a numeric query or param DTO needs an explicit `@Type(() => Number)`.
-- **`HttpExceptionFilter`** and **`LoggingInterceptor`** from `src/common/`.
+- **`HttpExceptionFilter`** from `src/common/`.
+- **The request log is middleware (`createRequestLogger`), after CORS and before anything
+  that can refuse a request — and it must not become an interceptor again.** An interceptor
+  sees only what reached a handler, once per value the handler answers with: a request a
+  guard refused (a bad token, a spent rate limit) and a path no route matches left no line
+  at all, so a run of failed sign-ins was invisible, while a files stream left a line for
+  every event and heartbeat it sent. Here a request is one line, written when its response
+  closes: a refusal is a warning, and a connection the client closed first says so in place
+  of a status it never got. After CORS, because CORS answers a preflight itself and a line
+  per preflight would double the log. **The request target is written as visible ASCII and
+  cut to a line's length**: whoever sends the request chooses it, and the line is now written
+  for callers no guard has let in. `request-log.e2e-spec.ts` pins the guard's 401, the
+  unknown route, and the stream's single line.
+- **An error is logged through `describeError` (`src/common/error-message.ts`), never as
+  `error.stack`.** A stack stops at the wrapper, and the wrapper is a sentence this code
+  chose: every `{ cause }` attached to keep an `ENOENT`, a constraint, or the SDK's own
+  failure was being dropped at the one place it was kept for. `describeError` puts each
+  cause's stack under the error that wraps it.
 - **Security headers from `helmet`, first in the chain** so a CORS preflight carries them too.
   The policy is `default-src 'none'` with no framing, because nothing here should ever render;
   a response that did would load, run and embed nothing. **HSTS is off on purpose** — it
@@ -1596,6 +1647,14 @@ already in `process.env`, which is what lets the root `pnpm dev` decide `PORT` �
 
 ## Prisma 7 specifics
 
+- **The API never applies migrations at boot**, and each way of starting it has its own
+  `prisma migrate deploy`: `pnpm start:dev` for development, the e2e suite's global setup for
+  its own database, and under Compose the one-shot `migrate` service, which `api` waits on
+  with `service_completed_successfully`. A service of its own rather than a step in the
+  image's command, so it runs once however many `api` containers start and a failed migration
+  stops the stack before an API boots on a schema it does not match. An image started any
+  other way needs it run first — `node_modules/.bin/prisma migrate deploy` in
+  `/repo/apps/api`.
 - The `datasource` block has **no `url`**. The CLI reads the connection string from
   `prisma.config.ts`; the runtime client receives it through the `PrismaPg` driver adapter
   constructed in `PrismaService`.
@@ -1628,9 +1687,10 @@ Jest, configured inline in `package.json` with `rootDir: src` and `testRegex: .*
 unit specs sit beside the code. E2E specs use `test/jest-e2e.json` and Supertest. Not Vitest —
 that's the web app.
 
-**Neither `pnpm test` nor CI runs `test:e2e`** (it is not in `turbo.json`, and CI has no
-Postgres), **so a module whose only coverage is an e2e spec is uncovered as far as CI is
-concerned.** Every command handler, query handler, and read service gets a `*.spec.ts` beside
+**`pnpm test` does not run `test:e2e`** (it is not in `turbo.json`, because it needs
+Postgres), **and so neither does the pre-commit hook: a module whose only coverage is an e2e
+spec is uncovered until CI, whose `api-e2e` job is the one thing that runs the suite
+unasked.** Every command handler, query handler, and read service gets a `*.spec.ts` beside
 it for that reason, not for a coverage number.
 
 **A spec that needs a whole stored row builds it from a `*.fixture.ts` beside the code** and
@@ -1669,15 +1729,35 @@ A mocked SDK would only repeat back what the mock assumed, so the unit specs cov
 decided on this side of it: no token, no call; a call already called off starts nothing; and
 `outcomeOf`'s table of what each result the SDK is known to produce becomes.
 
-E2E specs run against the **real database** `DATABASE_URL` points at — by default your
-development one; point it elsewhere if local rows matter to you. `test/utils/create-test-app.ts`
-boots `AppModule` and `useApiSuite` truncates the tables it touches, so `test:e2e` needs
-`docker compose up -d postgres` and a migrated schema — without them every test fails in
-`beforeEach` with `relation "..." does not exist`, which reads like a broken suite and is
-really a missing database. Cleanup runs at both ends for different reasons: `beforeEach` so no
-test inherits another's rows (which is also what makes a repeated run independent of the last),
-`afterAll` so the final test's fixtures are not stranded. **The web app's Playwright suite
-truncates the same table, so the two must never run at the same time.**
+E2E specs run against a real database, **and never the one `DATABASE_URL` names**: the suite
+uses that database's name with `_test` after it, on the same server (`testDatabaseUrl`, in
+`test/utils/test-database.ts`). `test/utils/create-test-app.ts` boots `AppModule` and
+`useApiSuite` empties `users`, and everything that hangs off it, before every test — against
+the configured database that was a developer's own data gone at the first run. So
+`test:e2e` needs `docker compose up -d postgres` and nothing else: `test/global-setup.ts`
+creates the database when it is missing and runs `prisma migrate deploy` on it before the
+first spec. Three things about it:
+
+- **A name that already ends in `_test` is used as it is.** That is what makes the answer
+  safe to feed back in — `setup-env.ts` writes it to `DATABASE_URL` once per spec file — and
+  it is how to choose a database on purpose: a second session on the same Postgres runs
+  with `DATABASE_URL=…/video_meetings_<name>` and gets `video_meetings_<name>_test`.
+  **Except one that ends in the browser suite's `_web_test`**, which ends in `_test` as well:
+  used as it is, both suites would be handed one database. It gets this suite's suffix like
+  any other name, and `truncateUsers` refuses such a database outright.
+- **`truncateUsers` refuses any other database, in the statement that would empty it.** The
+  environment is what points the suite at a test database; the refusal is what holds if that
+  line is ever lost. `test-database.e2e-spec.ts` pins both.
+- **The web app's Playwright suite has a database of its own by the same rule, with
+  `_web_test` for the suffix** (`browserSuiteDatabaseUrl`), so the two suites never empty
+  each other's. `test/e2e-web/environment.ts` points that suite's API at it and
+  `test/e2e-web/main.ts` creates and migrates it before the module is compiled — there and
+  not in Playwright's `globalSetup`, which runs after the servers have started. Its teardown
+  is in the web package and restates the rule, with the same refusal.
+
+Cleanup runs at both ends for different reasons: `beforeEach` so no test inherits another's
+rows (which is also what makes a repeated run independent of the last), `afterAll` so the
+final test's fixtures are not stranded.
 
 Nine things about that setup are easy to get wrong:
 

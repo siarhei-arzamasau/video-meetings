@@ -9,6 +9,7 @@ import { Test } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/configure-app';
 import { ClaudeAgentService } from '../../src/modules/claude-agent/services/claude-agent.service';
+import { browserSuiteDatabaseUrl, prepareTestDatabase } from '../utils/test-database';
 import { CONTROL_PORT, listenForControl } from './control-server';
 import { DigestHolds } from './digest-holds';
 import { ScriptedClaudeAgent } from './scripted-claude-agent';
@@ -25,6 +26,10 @@ import { ScriptedClaudeAgent } from './scripted-claude-agent';
  * `configureApp`, the same worker.
  */
 async function bootstrap(): Promise<void> {
+  // Before the module is compiled, which is when `PrismaService` connects. Playwright starts
+  // its servers ahead of its own global setup, so this is the one place early enough.
+  await prepareTestDatabase(browserSuiteDatabaseUrl());
+
   const holds = new DigestHolds();
   const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
     .overrideProvider(ClaudeAgentService)

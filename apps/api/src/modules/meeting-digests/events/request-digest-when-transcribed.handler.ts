@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { EventsHandler, IEventHandler } from '@nestjs/cqrs';
 import type { MeetingFile } from '@repo/shared';
 
+import { describeError } from '../../../common/error-message';
 import { MeetingFileChangedEvent } from '../../meeting-files/events/meeting-file-changed.event';
 import { MeetingDigestAnnouncer } from '../services/meeting-digest-announcer';
 import { MeetingDigestRepository } from '../services/meeting-digest.repository';
@@ -86,7 +87,7 @@ export class RequestDigestWhenTranscribedHandler implements IEventHandler<Meetin
     } catch (error) {
       this.logger.error(
         `Digest of meeting ${meetingId}: the request after file ${fileId} was transcribed failed; nothing is queued`,
-        error instanceof Error ? error.stack : String(error),
+        describeError(error),
       );
 
       return;

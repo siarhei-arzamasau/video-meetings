@@ -2,7 +2,7 @@ import type { MeetingFile } from '@repo/shared';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ApiError, uploadMeetingFile } from '@/lib/api-client';
+import { ApiError, abortUpload, uploadMeetingFile } from '@/lib/api-client';
 import type * as ApiClient from '@/lib/api-client';
 import { fingerprint, uploadInChunks } from '@/lib/chunked-upload';
 import type * as ChunkedUpload from '@/lib/chunked-upload';
@@ -164,5 +164,58 @@ describe('useUploadQueue', () => {
     expect(result.current.uploads[0]).toMatchObject({ status: 'failed', canRetry: false });
     expect(uploadInChunks).not.toHaveBeenCalled();
     expect(uploadMeetingFile).not.toHaveBeenCalled();
+  });
+
+  // "Back to your meetings" and Log out both unmount the queue. Left running, the upload had
+  // no row and no Cancel, kept the token it started with, and was joined by a second runner on
+  // the same session once the file was picked again.
+  it('ends an upload in flight when the page goes away, and keeps its session to resume', async () => {
+    let signal: AbortSignal | undefined;
+    vi.mocked(uploadInChunks).mockImplementationOnce(
+      (_token: string, _meetingId: string, _file: File, options?: ChunkedUploadOptions) => {
+        signal = options?.signal;
+        options?.onSession?.(UPLOAD_ID);
+
+        // Never settles on its own: only the abort can end it.
+        return new Promise<MeetingFile>(() => undefined);
+      },
+    );
+    const { result, unmount } = renderQueue();
+
+    act(() => {
+      result.current.enqueue([pdf()]);
+    });
+    await waitFor(() => {
+      expect(result.current.uploads[0]).toMatchObject({ status: 'uploading', uploadId: UPLOAD_ID });
+    });
+    expect(signal?.aborted).toBe(false);
+
+    unmount();
+
+    expect(signal?.aborted).toBe(true);
+    // Leaving is not Cancel: the server keeps the session and so does this browser.
+    expect(abortUpload).not.toHaveBeenCalled();
+    expect(recallUploadSession(fingerprint(pdf()))).toBe(UPLOAD_ID);
+  });
+
+  it('does not start a waiting upload once the page has gone', async () => {
+    vi.mocked(uploadInChunks).mockImplementation(() => new Promise<MeetingFile>(() => undefined));
+    const { result, unmount } = renderQueue();
+
+    act(() => {
+      result.current.enqueue([pdf(), new File(['%PDF'], 'second.pdf', { lastModified: 2 })]);
+    });
+    await waitFor(() => {
+      expect(result.current.uploads.map((upload) => upload.status)).toEqual([
+        'uploading',
+        'queued',
+      ]);
+    });
+    const waiting = result.current.uploads[1]?.controller.signal;
+
+    unmount();
+
+    expect(waiting?.aborted).toBe(true);
+    expect(uploadInChunks).toHaveBeenCalledTimes(1);
   });
 });

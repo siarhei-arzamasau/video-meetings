@@ -109,7 +109,8 @@ describe('uploadInChunks', () => {
     await expect(uploadInChunks('t', 'm1', file(), {}, transport)).resolves.toEqual(FILE);
 
     expect(transport.sent).toEqual([0, 1, 2]);
-    expect(transport.completeUpload).toHaveBeenCalledWith('t', 'm1', 'up1');
+    // The fourth argument is the caller's abort signal, which this upload was given none of.
+    expect(transport.completeUpload).toHaveBeenCalledWith('t', 'm1', 'up1', undefined);
   });
 
   it('slices each chunk to the range the server expects', async () => {

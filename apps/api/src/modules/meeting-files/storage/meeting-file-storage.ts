@@ -96,10 +96,45 @@ export class MeetingFileStorage implements OnModuleInit {
    * the same request, and a crash before either lands simply means the upload did not happen.
    */
   async putChunk(key: string, sourcePath: string): Promise<void> {
+    // First, so a key that is not one is refused before the filesystem is touched at all.
+    this.pathOf(key);
+
+    await this.flush(sourcePath);
+    await this.placeChunk(key, sourcePath);
+    await this.syncChunkDirectory(key);
+  }
+
+  /** `fsync`s a file, so its bytes are on disk before anything is renamed to point at them. */
+  async flush(sourcePath: string): Promise<void> {
+    const handle = await open(sourcePath, 'r+');
+
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  }
+
+  /**
+   * The middle of `putChunk` and nothing else: a flushed file renamed into place as a chunk.
+   * Separate because it is the one step a session's hold has to cover, and the hold pins a
+   * database connection — two directory operations under it, rather than a whole chunk
+   * flushed to a disk that may be busy.
+   */
+  async placeChunk(key: string, sourcePath: string): Promise<void> {
     const destination = this.pathOf(key);
 
-    await this.move(destination, sourcePath);
-    await syncDirectory(path.dirname(destination));
+    await mkdir(path.dirname(destination), { recursive: true });
+    await rename(sourcePath, destination);
+  }
+
+  /**
+   * Makes a placed chunk's directory entry durable. A directory that has gone is a session
+   * that was purged in the meantime, and is left to the caller to notice: there is nothing
+   * of the chunk left to keep.
+   */
+  async syncChunkDirectory(key: string): Promise<void> {
+    await syncDirectory(path.dirname(this.pathOf(key)));
   }
 
   /** Every chunk of one upload session, in one call. Idempotent, like `remove`. */
@@ -159,13 +194,7 @@ export class MeetingFileStorage implements OnModuleInit {
   }
 
   private async move(destination: string, sourcePath: string): Promise<void> {
-    const handle = await open(sourcePath, 'r+');
-    try {
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-
+    await this.flush(sourcePath);
     await mkdir(path.dirname(destination), { recursive: true });
     await rename(sourcePath, destination);
   }

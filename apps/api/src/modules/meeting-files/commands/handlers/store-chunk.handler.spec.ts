@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { QueryBus } from '@nestjs/cqrs';
 import { Test } from '@nestjs/testing';
 
+import { MeetingFileUploadHoldRepository } from '../../services/meeting-file-upload-hold.repository';
 import { MeetingFileUploadRepository } from '../../services/meeting-file-upload.repository';
 import type { MeetingFileUploadRecord } from '../../services/meeting-file-upload.mapper';
 import { MeetingFileStorage } from '../../storage/meeting-file-storage';
@@ -47,6 +48,7 @@ describe('StoreChunkHandler', () => {
   const execute = jest.fn();
   const findOwned = jest.fn();
   const addReceivedChunk = jest.fn();
+  const whileLive = jest.fn();
   let root: string;
   let storage: MeetingFileStorage;
   let handler: StoreChunkHandler;
@@ -58,6 +60,14 @@ describe('StoreChunkHandler', () => {
     execute.mockReset().mockResolvedValue(MEETING);
     findOwned.mockReset().mockResolvedValue(RECORD);
     addReceivedChunk.mockReset().mockResolvedValue([0]);
+    // A live session: the write runs, held.
+    whileLive
+      .mockReset()
+      .mockImplementation(async (_uploadId: string, write: () => Promise<void>) => {
+        await write();
+
+        return true;
+      });
 
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'store-chunk-'));
     storage = new MeetingFileStorage({ getOrThrow: () => root } as unknown as ConfigService);
@@ -68,6 +78,7 @@ describe('StoreChunkHandler', () => {
         StoreChunkHandler,
         { provide: QueryBus, useValue: { execute } },
         { provide: MeetingFileUploadRepository, useValue: { findOwned, addReceivedChunk } },
+        { provide: MeetingFileUploadHoldRepository, useValue: { whileLive } },
         { provide: MeetingFileStorage, useValue: storage },
       ],
     }).compile();
@@ -152,20 +163,50 @@ describe('StoreChunkHandler', () => {
     expect(fs.existsSync(path.join(root, 'uploads'))).toBe(false);
   });
 
-  it('answers 404 when the session lapses between the lookup and the acknowledgement', async () => {
+  it('moves the chunk into place only while the session is held live', async () => {
+    const seenDuringHold: boolean[] = [];
+    whileLive.mockImplementation(async (_uploadId: string, write: () => Promise<void>) => {
+      seenDuringHold.push(fs.existsSync(chunkPath(0)));
+      await write();
+      seenDuringHold.push(fs.existsSync(chunkPath(0)));
+
+      return true;
+    });
+
+    await handler.execute(command(0, Buffer.alloc(8, 0x01)));
+
+    expect(whileLive).toHaveBeenCalledWith(UPLOAD_ID, expect.any(Function));
+    expect(seenDuringHold).toEqual([false, true]);
+  });
+
+  // The session ended between the lookup and the move: the purge may already have been, so a
+  // chunk renamed into place now would be one nothing ever removes.
+  it('answers 404 and stores nothing for a session that ended before the move', async () => {
+    whileLive.mockResolvedValue(false);
+
+    await expect(handler.execute(command(0, Buffer.alloc(8)))).rejects.toThrow(
+      new NotFoundException('Upload not found'),
+    );
+
+    expect(fs.existsSync(path.join(root, 'uploads'))).toBe(false);
+    expect(fs.readdirSync(storage.tempDir())).toEqual([]);
+    expect(addReceivedChunk).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 when the session ends between the move and the acknowledgement', async () => {
     addReceivedChunk.mockResolvedValue(null);
 
     await expect(handler.execute(command(0, Buffer.alloc(8)))).rejects.toThrow(
       new NotFoundException('Upload not found'),
     );
 
-    // The bytes stay for the worker's removeTree; there is nothing to gain from a second
-    // failure path here, and the session's whole tree is about to go.
+    // The bytes stay for the worker's removeTree: whatever ended the session waited for the
+    // hold, so its purge comes after this chunk and takes it with the rest of the tree.
     expect(fs.existsSync(chunkPath(0))).toBe(true);
   });
 
   it('leaves no temp file behind when the move fails', async () => {
-    jest.spyOn(storage, 'putChunk').mockRejectedValue(new Error('disk full'));
+    jest.spyOn(storage, 'placeChunk').mockRejectedValue(new Error('disk full'));
 
     await expect(handler.execute(command(0, Buffer.alloc(8)))).rejects.toThrow('disk full');
 

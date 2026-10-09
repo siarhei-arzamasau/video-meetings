@@ -64,7 +64,7 @@ export function FilesSection({ token, meeting, user, files, onUnauthorized }: Fi
       className={`gap-0 p-6 transition-shadow ${isDragging ? 'ring-accent ring-2 ring-offset-2' : ''}`}
       {...handlers}
     >
-      <FilesAnnouncement files={listed} />
+      <FilesAnnouncement files={list.state === 'ready' ? list.files : null} />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-col gap-0.5">

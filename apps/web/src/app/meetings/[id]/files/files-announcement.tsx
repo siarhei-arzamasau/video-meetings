@@ -5,8 +5,11 @@ import type { MeetingFile } from '@repo/shared';
 import { useFilesAnnouncement } from './use-files-announcement';
 
 interface FilesAnnouncementProps {
-  /** The list itself, not a copy sorted for display: see `useFilesAnnouncement`. */
-  files: ReadonlyArray<MeetingFile>;
+  /**
+   * The list itself, not a copy sorted for display, and `null` until there is one: see
+   * `useFilesAnnouncement`.
+   */
+  files: ReadonlyArray<MeetingFile> | null;
 }
 
 /**

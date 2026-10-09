@@ -21,6 +21,7 @@ import { storeAccessToken } from '@/lib/auth-token';
 import { normaliseEmail, validateEmail, validateLoginPassword } from '@/lib/credentials';
 
 import { CARD_CLASS } from '../card';
+import { renderPageHeading } from '../page-heading';
 
 type Submission =
   | { state: 'idle' }
@@ -69,7 +70,9 @@ export function LoginCard() {
   return (
     <Card className={CARD_CLASS}>
       <Card.Header className="gap-1.5">
-        <Card.Title className="text-2xl leading-8">Welcome back</Card.Title>
+        <Card.Title className="text-2xl leading-8" render={renderPageHeading}>
+          Welcome back
+        </Card.Title>
         <Card.Description>
           Sign in to start a meeting or join one you were invited to.
         </Card.Description>
@@ -157,7 +160,7 @@ export function LoginCard() {
         <Button type="submit" variant="primary" size="lg" fullWidth isDisabled={isSubmitting}>
           {isSubmitting ? (
             <>
-              <Spinner size="sm" />
+              <Spinner color="current" size="sm" />
               Signing you in…
             </>
           ) : (

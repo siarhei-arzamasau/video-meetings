@@ -13,6 +13,7 @@ import {
   meetingFileTranscriptionTimeLimitMessage,
 } from '@repo/shared';
 
+import { describeError } from '../../../common/error-message';
 import { PollingLoop } from '../../../common/processing/polling-loop';
 import { DEFAULT_TRANSCRIPTION_TIMEOUT_SECONDS } from '../../../config/transcription.defaults';
 import { MeetingFileHandOvers } from '../services/meeting-file-hand-overs';
@@ -205,7 +206,7 @@ export class MeetingFileTranscriptionWorker implements OnApplicationBootstrap, O
 
       this.logger.error(
         `File ${claimed.id} of meeting ${claimed.meetingId}: transcription failed (${reason})`,
-        outcome.error instanceof Error ? outcome.error.stack : String(outcome.error),
+        describeError(outcome.error),
       );
       await this.recorder.fail(claimed, held, reason, startedAt);
     }

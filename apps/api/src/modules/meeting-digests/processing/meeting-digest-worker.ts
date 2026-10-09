@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { QueryBus } from '@nestjs/cqrs';
 import { MEETING_DIGEST_REPEATED_FAILURE_MESSAGE } from '@repo/shared';
 
+import { describeError } from '../../../common/error-message';
 import { PollingLoop } from '../../../common/processing/polling-loop';
 import { DEFAULT_MEETING_DIGEST_TIMEOUT_SECONDS } from '../../../config/meeting-digest.defaults';
 import { MEETING_DIGEST_MODEL } from '../meeting-digest.constants';
@@ -213,7 +214,7 @@ export class MeetingDigestWorker implements OnApplicationBootstrap, OnModuleDest
 
       this.logger.error(
         `Digest of meeting ${claimed.meetingId}: generation failed (${reason})`,
-        error instanceof Error ? error.stack : String(error),
+        describeError(error),
       );
       await this.recorder.fail(
         claimed,

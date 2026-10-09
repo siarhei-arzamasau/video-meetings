@@ -1,9 +1,10 @@
 'use client';
 
-import { Alert, Button, Card, Separator, Skeleton, Spinner, buttonVariants } from '@heroui/react';
+import { Alert, Button, Card, Separator, Skeleton, Spinner } from '@heroui/react';
 import type { User } from '@repo/shared';
 import Link from 'next/link';
 
+import { ButtonLink } from '@/components/button-link';
 import { ArrowLeftIcon, SignOutIcon, WarningIcon } from '@/components/icons';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { UserAvatar } from '@/components/user-avatar';
@@ -101,11 +102,9 @@ function AccountCard({ user, token }: { user: User; token: string }) {
 
       <Separator className="my-6" />
 
-      {/* An anchor, not a Button: this navigates, and Next's client-side routing needs a real
-          link to hook. */}
-      <Link href="/profile/edit" className={`${buttonVariants({ variant: 'primary' })} w-fit`}>
+      <ButtonLink href="/profile/edit" className="w-fit">
         Edit profile
-      </Link>
+      </ButtonLink>
     </Card>
   );
 }

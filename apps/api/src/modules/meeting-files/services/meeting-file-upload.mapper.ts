@@ -70,6 +70,17 @@ export function chunkLengthOf(size: number, chunkSize: number, index: number): n
   return index === last ? size - chunkSize * last : chunkSize;
 }
 
+/** The canonical decimal form, the same one the storage key accepts. */
+const CHUNK_INDEX = /^(0|[1-9]\d{0,8})$/;
+
+/**
+ * The index a path segment spells, or `null` when it spells none — a word, a negative, a
+ * leading zero. Whether a session has that many chunks is the caller's to ask.
+ */
+export function parseChunkIndex(segment: string): number | null {
+  return CHUNK_INDEX.test(segment) ? Number(segment) : null;
+}
+
 /** Where one chunk lives under the storage root. Opaque, like `storageKeyOf`. */
 export function chunkKeyOf(uploadId: string, index: number): string {
   return `uploads/${uploadId}/${String(index)}`;

@@ -9,6 +9,8 @@ import {
 import type { ApiErrorResponse } from '@repo/shared';
 import type { Request, Response } from 'express';
 
+import { describeError } from '../error-message';
+
 /** Normalises every thrown value into one error shape — `ApiErrorResponse`, which the web
  *  app reads to turn a failure into something a person can act on. */
 @Catch()
@@ -24,10 +26,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       exception instanceof HttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
 
     if (statusCode >= HttpStatus.INTERNAL_SERVER_ERROR) {
-      this.logger.error(
-        `${request.method} ${request.url}`,
-        exception instanceof Error ? exception.stack : String(exception),
-      );
+      this.logger.error(`${request.method} ${request.url}`, describeError(exception));
     }
 
     const body: ApiErrorResponse = {

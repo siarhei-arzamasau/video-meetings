@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { EventBus } from '@nestjs/cqrs';
 
+import { describeError } from '../../../common/error-message';
 import { MeetingDigestChangedEvent } from '../events/meeting-digest-changed.event';
 import { MeetingDigestsService } from './meeting-digests.service';
 
@@ -37,7 +38,7 @@ export class MeetingDigestAnnouncer {
     } catch (error) {
       this.logger.error(
         `Digest of meeting ${meetingId}: a change could not be announced; open pages have it at their next fetch`,
-        error instanceof Error ? error.stack : String(error),
+        describeError(error),
       );
     }
   }

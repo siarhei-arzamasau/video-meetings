@@ -8,6 +8,7 @@ import { pipeline } from 'node:stream/promises';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { describeError } from '../../../../common/error-message';
 import { TranscriptionProvider, TranscriptionRequestError } from './transcription-provider';
 
 /**
@@ -90,7 +91,7 @@ export class HttpTranscriptionProvider implements TranscriptionProvider {
       stream.destroy();
       this.logger.error(
         `Transcription request to model ${model} failed for ${contentType}`,
-        error instanceof Error ? error.stack : String(error),
+        describeError(error),
       );
 
       throw new TranscriptionRequestError('The transcription request did not complete', {

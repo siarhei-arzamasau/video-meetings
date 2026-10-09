@@ -1,5 +1,7 @@
 import type { Logger } from '@nestjs/common';
 
+import { describeError } from '../error-message';
+
 /** The one repository call a heartbeat makes, so a spec can drive it with a stub. */
 export interface LeaseRenewer {
   renewLease(id: string, lease: Date | null, leaseSeconds: number): Promise<Date | null>;
@@ -114,10 +116,7 @@ class LeaseRenewal {
     } catch (error) {
       // A failed renewal is not a lost lease: the next beat tries again, and the transition
       // at the end is the real check.
-      logger.error(
-        `${subject}: renewing the lease failed`,
-        error instanceof Error ? error.stack : String(error),
-      );
+      logger.error(`${subject}: renewing the lease failed`, describeError(error));
     }
   }
 }

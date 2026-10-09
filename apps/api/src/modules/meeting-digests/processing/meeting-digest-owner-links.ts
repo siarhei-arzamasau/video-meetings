@@ -1,6 +1,7 @@
 import type { Logger } from '@nestjs/common';
 import type { QueryBus } from '@nestjs/cqrs';
 
+import { describeError } from '../../../common/error-message';
 import { FindMeetingMemberIdsQuery } from '../../meetings/queries/find-meeting-member-ids.query';
 import { FindUsersByIdsQuery } from '../../user/queries/find-users-by-ids.query';
 import type { UserDisplayName } from '../../user/queries/find-users-by-ids.query';
@@ -55,7 +56,7 @@ export async function ownerLinksOf(
   } catch (error) {
     logger.error(
       `Digest of meeting ${meetingId}: its members could not be read, so every owner stays a name as spoken`,
-      error instanceof Error ? error.stack : String(error),
+      describeError(error),
     );
 
     return NO_OWNER_LINKS;

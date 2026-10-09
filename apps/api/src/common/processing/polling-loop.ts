@@ -1,5 +1,7 @@
 import type { Logger } from '@nestjs/common';
 
+import { describeError } from '../error-message';
+
 /**
  * Calls `tick` until it reports there was nothing to do, then waits `pollMs` and asks again.
  * It knows nothing about what a tick does, which is the point: the worker's scheduling and
@@ -46,10 +48,7 @@ export class PollingLoop {
         })
         .catch((error: unknown) => {
           // A claim that throws (a lost connection, say) must not kill the loop.
-          this.logger.error(
-            'Worker tick failed',
-            error instanceof Error ? error.stack : String(error),
-          );
+          this.logger.error('Worker tick failed', describeError(error));
           this.schedule(this.pollMs);
         })
         .finally(() => {

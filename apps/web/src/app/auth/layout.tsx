@@ -61,9 +61,12 @@ function BrandPanel() {
 
       <div className="relative flex max-w-lg flex-col gap-8">
         <div className="flex flex-col gap-4">
-          <h1 className="text-4xl leading-tight font-semibold tracking-tight text-balance">
+          {/* A paragraph, not a heading: the panel is hidden below `lg`, so as the page's `h1`
+              it left a phone with none, and beside the card's it made two. The card names the
+              page; this is the brand talking. */}
+          <p className="text-4xl leading-tight font-semibold tracking-tight text-balance">
             Meetings that start the moment you do.
-          </h1>
+          </p>
           <p className="text-lg text-white/70 text-pretty">
             Create a room, share one link, and everyone is in — from a browser, on any device.
           </p>

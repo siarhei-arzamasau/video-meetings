@@ -9,7 +9,10 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: video_meetings
     ports:
-      - '${POSTGRES_PORT:-5433}:5432'
+      # Loopback only: the password above is a development default, and only tooling on this
+      # host — `pnpm dev`, the Prisma CLI, the test suites — needs the published port. The
+      # `migrate` and `api` services below reach Postgres over the Compose network.
+      - '127.0.0.1:${POSTGRES_PORT:-5433}:5432'
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -17,6 +20,23 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # Applies the committed migrations and exits; `api` waits for it to succeed. A service of
+  # its own rather than a step in the API's start command: it runs once however many `api`
+  # containers start, and a migration that fails stops the stack before an API boots on a
+  # schema it does not match. `migrate deploy`, as in `pnpm start:dev` — it applies what is
+  # committed and can neither generate a migration nor reset the database.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: 'no'
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/video_meetings
+    command: ['node_modules/.bin/prisma', 'migrate', 'deploy']
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   api:
     build:
@@ -62,6 +82,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   web:
     build:

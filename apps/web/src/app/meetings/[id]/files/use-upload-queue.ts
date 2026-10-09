@@ -3,16 +3,12 @@
 import type { MeetingFile } from '@repo/shared';
 import { useEffect, useRef, useState } from 'react';
 
-import { ApiError, abortUpload, uploadMeetingFile } from '@/lib/api-client';
-import { fingerprint, uploadInChunks } from '@/lib/chunked-upload';
-import { isChunkedUpload, validateFileBeforeUpload } from '@/lib/meeting-files';
-import {
-  forgetUploadSession,
-  recallUploadSession,
-  rememberUploadSession,
-} from '@/lib/upload-sessions';
-import { describeFailure } from '@/lib/use-signed-in';
+import { abortUpload } from '@/lib/api-client';
+import { fingerprint } from '@/lib/chunked-upload';
+import { validateFileBeforeUpload } from '@/lib/meeting-files';
+import { forgetUploadSession } from '@/lib/upload-sessions';
 import type { QueuedUpload } from './upload-row';
+import { useUploadRunner } from './use-upload-runner';
 
 export interface UploadQueue {
   uploads: ReadonlyArray<QueuedUpload>;
@@ -32,10 +28,10 @@ export interface UploadQueueOptions {
 }
 
 /**
- * The upload queue behind `FilesSection`: the rows, and the runner that sends them one at a
- * time — the PRD's "one rejection does not lose the rest". A file rejected by the client-side
- * checks lands as a failed row without a round trip; a success is handed to `onUploaded` and
- * its row removed; a failure keeps its row and its message.
+ * The upload queue behind `FilesSection`: the rows, and — in `useUploadRunner` — the runner
+ * that sends them one at a time, the PRD's "one rejection does not lose the rest". A file
+ * rejected by the client-side checks lands as a failed row without a round trip; a success is
+ * handed to `onUploaded` and its row removed; a failure keeps its row and its message.
  *
  * A file over the single-request cap goes through `uploadInChunks` instead, and the only
  * difference a caller sees is that such a row carries a session id: Cancel tells the server to
@@ -65,22 +61,10 @@ export function useUploadQueue({
   }
 
   function enqueue(files: Iterable<File>) {
-    const queued = [...files].map((file): QueuedUpload => {
-      const error = validateFileBeforeUpload(file);
+    const queued = [...files].map((file) => {
       nextLocalId.current += 1;
 
-      return {
-        localId: String(nextLocalId.current),
-        file,
-        status: error === null ? 'queued' : 'failed',
-        progress: null,
-        controller: new AbortController(),
-        error,
-        uploadId: null,
-        resuming: false,
-        // A file this app rejected without asking the server would be rejected again.
-        canRetry: false,
-      };
+      return toQueuedUpload(file, String(nextLocalId.current));
     });
 
     setUploads((current) => [...current, ...queued]);
@@ -109,73 +93,54 @@ export function useUploadQueue({
     patch(localId, { status: 'queued', error: null, canRetry: false });
   }
 
-  // The runner: whenever nothing is in flight and something is waiting, start it. Keyed on the
-  // queue itself, so a finished upload starts the next one and a cancel does too.
-  useEffect(() => {
-    if (uploads.some((upload) => upload.status === 'uploading')) {
-      return;
-    }
-
-    const next = uploads.find((upload) => upload.status === 'queued');
-
-    if (next === undefined) {
-      return;
-    }
-
-    patch(next.localId, { status: 'uploading' });
-
-    const chunked = isChunkedUpload(next.file);
-    const key = fingerprint(next.file);
-    const onProgress = (fraction: number) => patch(next.localId, { progress: fraction });
-    const started = chunked
-      ? uploadInChunks(token, meetingId, next.file, {
-          signal: next.controller.signal,
-          onProgress,
-          resumeFrom: recallUploadSession(key) ?? undefined,
-          onSession: (uploadId) => {
-            rememberUploadSession(key, uploadId);
-            patch(next.localId, { uploadId });
-          },
-          onResume: () => patch(next.localId, { resuming: true }),
-        })
-      : uploadMeetingFile(token, meetingId, next.file, {
-          signal: next.controller.signal,
-          onProgress,
-        });
-
-    void started
-      .then((file) => {
-        if (chunked) {
-          forgetUploadSession(key);
-        }
-
-        onUploaded(file);
-        dismiss(next.localId);
-      })
-      .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === 'AbortError') {
-          // Cancel already removed the row.
-          return;
-        }
-
-        if (error instanceof ApiError && error.status === 401) {
-          onUnauthorized();
-
-          return;
-        }
-
-        // A chunked upload keeps its session, so Retry resumes rather than starts over.
-        patch(next.localId, {
-          status: 'failed',
-          error: describeFailure(error),
-          canRetry: chunked,
-        });
-      });
-    // `patch` and `dismiss` are stable state updaters wrapped in plain functions.
-    // `onUploaded` is in the list because it changes with the list's readiness, and the effect
-    // bails out early while an upload is in flight, so re-running it is free.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uploads, token, meetingId, onUploaded]);
+  useUploadRunner({ uploads, token, meetingId, onUploaded, onUnauthorized, patch, dismiss });
+  useAbortOnUnmount(uploads);
 
   return { uploads, enqueue, cancel, dismiss, retry };
+}
+
+/**
+ * Ends every upload when the queue goes away — "Back to your meetings", Log out, a 401.
+ *
+ * Nothing else would. An upload left running had no row and no Cancel, went on sending with
+ * the token it was started with after the user had signed out, and — for a chunked one — was
+ * joined by a second runner on the same session as soon as the user came back and picked the
+ * file again, whose `complete` then answered 404 for a file that had uploaded.
+ *
+ * Only the request is ended. A chunked upload's session is neither dropped on the server nor
+ * forgotten here, so picking the file again resumes it: leaving the page is not Cancel.
+ */
+function useAbortOnUnmount(uploads: ReadonlyArray<QueuedUpload>): void {
+  const latest = useRef(uploads);
+
+  useEffect(() => {
+    latest.current = uploads;
+  }, [uploads]);
+
+  useEffect(
+    () => () => {
+      for (const upload of latest.current) {
+        upload.controller.abort();
+      }
+    },
+    [],
+  );
+}
+
+/** A picked file as a row: waiting its turn, or already failed by the client-side checks. */
+function toQueuedUpload(file: File, localId: string): QueuedUpload {
+  const error = validateFileBeforeUpload(file);
+
+  return {
+    localId,
+    file,
+    status: error === null ? 'queued' : 'failed',
+    progress: null,
+    controller: new AbortController(),
+    error,
+    uploadId: null,
+    resuming: false,
+    // A file this app rejected without asking the server would be rejected again.
+    canRetry: false,
+  };
 }

@@ -1,5 +1,6 @@
 import { ParseUUIDPipe, UnauthorizedException } from '@nestjs/common';
 import { QueryBus } from '@nestjs/cqrs';
+import type { User } from '@repo/shared';
 
 import type { AuthenticatedRequest } from '../../auth/authenticated-request';
 import { requireVisibleMeeting } from '../services/visible-meeting';
@@ -22,20 +23,31 @@ export async function requireVisibleMeetingBeforeBody(
   queryBus: QueryBus,
   request: AuthenticatedRequest,
 ): Promise<void> {
-  // The read `@CurrentUser()` performs, with its throw: on a route the guard did not run on,
-  // this fails loudly rather than skipping the check.
+  const user = callerOf(request);
+  const meetingId = await uuidParamOf(request, 'id');
+
+  await requireVisibleMeeting(queryBus, user.id, meetingId);
+}
+
+/**
+ * The read `@CurrentUser()` performs, with its throw: on a route the guard did not run on,
+ * this fails loudly rather than skipping the check.
+ */
+export function callerOf(request: AuthenticatedRequest): User {
   const { user } = request;
 
   if (user === undefined) {
     throw new UnauthorizedException();
   }
 
-  // Express 5 types a param as `string | string[] | undefined`; anything but one string is
-  // not a UUID, and the pipe says so with the same 400 it gives the handler.
-  const meetingId = await UUID_V4.transform(String(request.params['id'] ?? ''), {
-    type: 'param',
-    data: 'id',
-  });
+  return user;
+}
 
-  await requireVisibleMeeting(queryBus, user.id, meetingId);
+/**
+ * A path parameter as the UUID it has to be. Express 5 types a param as
+ * `string | string[] | undefined`; anything but one string is not a UUID, and the pipe says so
+ * with the same 400 it gives the handler.
+ */
+export function uuidParamOf(request: AuthenticatedRequest, name: string): Promise<string> {
+  return UUID_V4.transform(String(request.params[name] ?? ''), { type: 'param', data: name });
 }
