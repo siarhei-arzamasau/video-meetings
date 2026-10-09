@@ -159,7 +159,7 @@ export function AvatarSection({
             <Button variant="primary" isDisabled={isWorking} onPress={upload}>
               {isWorking ? (
                 <>
-                  <Spinner size="sm" />
+                  <Spinner color="current" size="sm" />
                   Uploading…
                 </>
               ) : (
@@ -174,7 +174,7 @@ export function AvatarSection({
             <Button variant="secondary" isDisabled={isWorking} onPress={remove}>
               {isWorking ? (
                 <>
-                  <Spinner size="sm" />
+                  <Spinner color="current" size="sm" />
                   Removing…
                 </>
               ) : (

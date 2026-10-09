@@ -11,6 +11,9 @@ import { UploadCapReached, type UploadCaps } from './meeting-file-upload-caps';
  * A session is live when it has not expired and has not been purged. Every lookup here says
  * so, so an expired session is invisible to its owner the moment it lapses, whether or not
  * the worker has got round to removing its chunks.
+ *
+ * One statement lives elsewhere: the lock a chunk's write is made under is
+ * `MeetingFileUploadHoldRepository`'s, because this file is at its size limit.
  */
 @Injectable()
 export class MeetingFileUploadRepository {

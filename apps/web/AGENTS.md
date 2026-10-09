@@ -117,6 +117,17 @@ aliases in sync if either changes.
   `focus-visible:focus-ring`, the utility the button's own rule applies, so the two rings
   cannot drift. Upstream fixed the selector in 3.2.5; that upgrade moves React Aria to peer
   dependencies, which is why it was not the fix. Delete the constant with it.
+- **A `Spinner` inside a `Button` is `color="current"`.** Its default is the accent, which is
+  the fill of a primary button: on "Signing you in…" and every other submit it was drawn in
+  the colour it sat on. A spinner in a chip or beside a caption stays the accent.
+- **The sign-in and sign-up cards name the page, so their `Card.Title` is the `h1`**
+  (`renderPageHeading`, `src/app/auth/page-heading.tsx`). HeroUI's own is an `h3`; the brand
+  panel's tagline used to be the only `h1`, and that panel is hidden below `lg`. The tagline
+  is a paragraph now, so there is one `h1` at every width.
+- **The dashboard offers no "New meeting", on purpose, until there is a page to create one
+  on.** Both of its links pointed at `/meetings/new`, which no route answers — the meeting
+  page took `new` for an id and showed "Page not found". The action returns with the page;
+  `ready-dashboard.test.tsx` holds the dashboard to linking only where a page exists.
 - **`src/app/providers.tsx`.** HeroUI v3 needs no provider of its own; this file exists for
   next-themes, which must set both `class` and `data-theme` because HeroUI reads the two
   together.
@@ -228,7 +239,7 @@ aliases in sync if either changes.
   - **`tab.opener` is set to `null`**, because `noopener` would return no window to point at
     the text.
 - **A file over 100 MB is uploaded in chunks, and the row is the only part that looks
-  different.** `use-upload-queue.ts` routes on `isChunkedUpload`; `FilesSection` only learns
+  different.** `use-upload-runner.ts` routes on `isChunkedUpload`; `FilesSection` only learns
   that such a row carries a session id (Cancel drops it server-side, Retry resumes).
   The client-side size check is the **chunked** cap for that reason — rejecting at 100 MB would
   refuse a file the app can perfectly well send.
@@ -240,9 +251,15 @@ aliases in sync if either changes.
 - **The upload queue renders on `uploads.length`, not on the list being `ready`.** Add file and
   the drop target work while the list is still loading or failed, so hiding the queue there would
   swallow a rejection message and run an upload with no progress or Cancel. The queue itself is
-  `use-upload-queue.ts` — one upload in flight at a time, the client-side checks on the way in —
+  `use-upload-queue.ts` — the rows, the client-side checks on the way in — with the runner
+  that sends them one at a time in `use-upload-runner.ts`,
   and the drag state is `use-drop-target.ts`, whose depth counter is what keeps the target lit
-  while the pointer crosses the rows inside it. Pre-flight messages
+  while the pointer crosses the rows inside it. **Leaving the page ends every upload in flight
+  and is not Cancel**: the queue aborts its requests when it unmounts — "Back to your
+  meetings", Log out, a 401 — because an upload left running had no row and no Cancel, kept
+  the token it started with, and was joined by a second runner on the same session once the
+  file was picked again. A chunked upload's session is neither dropped on the server nor
+  forgotten here, so picking the file again resumes it. Pre-flight messages
   come from the `MEETING_FILE_*_MESSAGE` constants in `@repo/shared` — the same ones the API
   sends — so a file rejected here reads exactly as it would have from the server. Queue rows are
   keyed by a counter, not `crypto.randomUUID()`, which exists only in secure contexts: a dev
@@ -306,7 +323,10 @@ each of which was a bug once:
 - **One polite `role="status"` region** (`FilesAnnouncement`, visually hidden) announces how
   many files are processing, and each transcription that ends: one per section, never one per
   row, and empty on first render so nothing is read aloud for arriving. `useFilesAnnouncement`
-  derives both from the list, so the poll says what the stream would. **A transcription is
+  derives both from the list, so the poll says what the stream would. **It is handed `null`
+  until the list has loaded, never an empty array**: the page renders before its files
+  arrive, and a placeholder taken for the opening list made the first real answer a change —
+  "1 file is processing." read to someone who had only just opened the page. **A transcription is
   announced at its two ends only** — the transcript is ready, or it failed — and only for a
   row the page saw queued or running: the steps between are three interruptions where one
   says everything, and a recording that arrives finished is nobody's news. Changes that land
@@ -448,7 +468,8 @@ of this side would get wrong:
 All calls to the backend go through `src/lib/api-client/` — the single boundary between the
 web app and the API, imported as `@/lib/api-client` whichever file inside it a wrapper lives
 in. `core.ts` holds the transport every wrapper shares (`apiFetch`, `ApiError`, the bearer
-header, `sendWithProgress`); `auth.ts`, `user.ts`, `meetings.ts`, `meeting-files.ts`,
+header) and `progress-upload.ts` the one `XMLHttpRequest` path; `auth.ts`, `user.ts`,
+`meetings.ts`, `meeting-files.ts`,
 `meeting-digests.ts` and `uploads.ts` group the wrappers by the part of the API they call,
 and `index.ts` re-exports all of them. `auth.ts` and `user.ts` split where the API splits — credentials and tokens
 against the account record — which is why `getMe` sits in `auth.ts` under `/auth/me` while
@@ -471,9 +492,15 @@ Three calls are exceptions, and all three stay inside that directory:
 
 - **`uploadMeetingFile` and `putChunk` are `XMLHttpRequest`**, because `fetch` cannot report
   upload progress and the PRD asks for a percentage. Both go through one shared
-  `sendWithProgress` in `core.ts`, so the exception lives in a single place; everything else
-  about them matches `apiFetch`. A third caller belongs there too — nothing else in the app
-  may open an `XMLHttpRequest`.
+  `sendWithProgress` in `progress-upload.ts`, so the exception lives in a single place;
+  everything else about them matches `apiFetch`. A third caller belongs there too — nothing
+  else in the app may open an `XMLHttpRequest`. **It ends a request that has not moved for
+  `UPLOAD_STALL_MS` (a minute) as a network failure.** A connection can go quiet without
+  resetting, and an `XMLHttpRequest` then reports nothing: the row sat at its percentage for
+  good, and the only way out was Cancel, which drops the session a chunked upload would have
+  resumed. Rejected as the `TypeError` a failed request is, a stalled chunk is re-sent by
+  `uploadInChunks` like any other dropped one; Cancel still rejects as an abort, which nothing
+  retries.
 - **`openMeetingFileEvents` hands back the `Response` unread**, because the body is a
   `text/event-stream` the caller reads with `readEventStream`. It is still the same boundary —
   `buildApiUrl`, the bearer header, a non-2xx as an `ApiError` — so a 401 there reaches
@@ -651,15 +678,17 @@ deployment's ten a minute), this app on **3100**, and a fake Whisper on **3102**
 `reuseExistingServer` off, one worker, and no retries. **That API is not `src/main.ts`**: it
 is `apps/api/test/e2e-web/main.ts`, the same application with the meeting digest on and a
 scripted Claude bound inside it, which also listens on loopback **3103** for a spec's orders
-(below). It needs `docker compose up -d postgres`,
-a migrated schema, and `pnpm exec playwright install chromium` once. `E2E_SERVER_TIMEOUT_MS`
+(below). It needs `docker compose up -d postgres`
+and `pnpm exec playwright install chromium` once. `E2E_SERVER_TIMEOUT_MS`
 raises the two-minute wait per server; a wait that times out even at several minutes is the
-corrupt-cache symptom above, not a slow machine. **Its `globalTeardown` truncates `users` in
-the database `DATABASE_URL` names — by default the development one.** The API's own e2e suite
-has a database to itself since it started deriving one
-([the API guide](../api/AGENTS.md#tests)); this suite does not yet, so point `DATABASE_URL`
-at a scratch database if local rows matter. A running `next dev` from this directory also
-blocks it, because Next locks `.next`.
+corrupt-cache symptom above, not a slow machine. **It runs on a database of its own** — the
+one `DATABASE_URL` names with `_web_test` after it, which that API entry point creates and
+migrates before it connects — and its `globalTeardown` truncates `users` there and refuses
+any database not named `…_test`. The API's own e2e suite has another, `…_test`
+([the API guide](../api/AGENTS.md#tests)), so neither empties the other's or a developer's.
+`e2e/global-teardown.ts` restates the naming rule because it cannot import the API's; change
+the two together. A running `next dev` from this directory also blocks it, because Next
+locks `.next`.
 
 **Every wait in the suite goes through `e2e/timeouts.ts`, and `E2E_TIMEOUT_SCALE` is the dial
 for a busy machine.** Most specs wait on one chain — upload lands, the worker claims the row

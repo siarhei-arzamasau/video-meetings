@@ -192,7 +192,7 @@ export function DisplayNameSection({
         <Button type="submit" variant="primary" isDisabled={isSaving || isUnchanged}>
           {isSaving ? (
             <>
-              <Spinner size="sm" />
+              <Spinner color="current" size="sm" />
               Saving…
             </>
           ) : (

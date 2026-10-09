@@ -23,6 +23,12 @@ const SILENT: Announcement = { phrase: '', sequence: 0 };
  * page's opening state aloud is noise. Derived from the list rather than from stream
  * events, so the poll fallback announces the same thing.
  *
+ * **`null` is "no list yet", and it is not an empty list.** The page renders before its files
+ * have loaded, and a hook that took the placeholder for the opening list compared nothing
+ * with the first real answer — and read "1 file is processing." to a reader who had only
+ * just opened the page. The first list that arrives is the opening state; nothing is said
+ * until it changes.
+ *
  * **Changes that arrive in one render are one phrase.** The region holds one string, so a
  * second `setState` would replace the first before anything had read it.
  *
@@ -36,11 +42,15 @@ const SILENT: Announcement = { phrase: '', sequence: 0 };
  * Pass the list itself, not a copy sorted for display: the comparison runs whenever the
  * array is a new one.
  */
-export function useFilesAnnouncement(files: ReadonlyArray<MeetingFile>): Announcement {
+export function useFilesAnnouncement(files: ReadonlyArray<MeetingFile> | null): Announcement {
   const [announcement, setAnnouncement] = useState(SILENT);
   const previousFiles = useRef<ReadonlyArray<MeetingFile> | null>(null);
 
   useEffect(() => {
+    if (files === null) {
+      return;
+    }
+
     const previous = previousFiles.current;
     previousFiles.current = files;
 

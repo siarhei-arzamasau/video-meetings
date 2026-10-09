@@ -215,7 +215,7 @@ export function ChangePasswordSection({
         <Button type="submit" variant="primary" isDisabled={isSaving}>
           {isSaving ? (
             <>
-              <Spinner size="sm" />
+              <Spinner color="current" size="sm" />
               Changing…
             </>
           ) : (

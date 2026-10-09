@@ -6,8 +6,15 @@ import { Client } from 'pg';
 
 import { ENV_FILE_PATHS } from '../../src/config/env-values';
 
-/** What marks a database as the suite's to empty. `truncateUsers` refuses any other. */
+/** What marks a database as a suite's to empty. `truncateUsers` refuses any other. */
 export const TEST_DATABASE_SUFFIX = '_test';
+
+/**
+ * The browser suite's own mark. It ends in the one above, so the same refusal covers it, and
+ * differs from it, so the two suites — each of which empties `users` as it goes — are never
+ * handed one database.
+ */
+export const BROWSER_SUITE_DATABASE_SUFFIX = `_web${TEST_DATABASE_SUFFIX}`;
 
 /** The Prisma CLI's own fallback (`prisma.config.ts`): the Compose database. */
 const DEFAULT_DATABASE_URL = 'postgresql://postgres:postgres@localhost:5433/video_meetings';
@@ -45,11 +52,28 @@ const databaseNameOf = (url: URL): string => decodeURIComponent(url.pathname.sli
  * suite somewhere else on purpose is still one variable: name the database `…_test`.
  */
 export function testDatabaseUrl(configured: string = configuredDatabaseUrl()): string {
+  return withSuffix(configured, TEST_DATABASE_SUFFIX);
+}
+
+/**
+ * The same for the web app's browser suite, whose API is `test/e2e-web/main.ts`:
+ * `video_meetings_web_test` beside this suite's `video_meetings_test`.
+ *
+ * **`apps/web/e2e/global-teardown.ts` restates this rule**, because it runs in another package
+ * and cannot import it. Change one and change the other; if they ever disagree, the teardown
+ * empties a database the suite did not use, and its own refusal keeps that from being one a
+ * developer's data is in.
+ */
+export function browserSuiteDatabaseUrl(configured: string = configuredDatabaseUrl()): string {
+  return withSuffix(configured, BROWSER_SUITE_DATABASE_SUFFIX);
+}
+
+function withSuffix(configured: string, suffix: string): string {
   const url = new URL(configured);
   const name = databaseNameOf(url);
 
-  if (!name.endsWith(TEST_DATABASE_SUFFIX)) {
-    url.pathname = `/${encodeURIComponent(`${name}${TEST_DATABASE_SUFFIX}`)}`;
+  if (!name.endsWith(suffix)) {
+    url.pathname = `/${encodeURIComponent(`${name}${suffix}`)}`;
   }
 
   return url.toString();

@@ -2,8 +2,7 @@ import { Card, EmptyState, Separator } from '@heroui/react';
 import type { Meeting, User } from '@repo/shared';
 import Link from 'next/link';
 
-import { ButtonLink } from '@/components/button-link';
-import { CalendarIcon, PlusIcon } from '@/components/icons';
+import { CalendarIcon } from '@/components/icons';
 import { MeetingStatusChip } from '@/components/meeting-status-chip';
 import { formatMeetingTime } from '@/lib/date-time';
 import { LATEST_MEETINGS_COUNT, latestMeetings } from '@/lib/meetings';
@@ -51,23 +50,13 @@ export function ReadyDashboard({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-col gap-0.5">
             <h2 className="text-lg font-semibold tracking-tight">Latest meetings</h2>
-            {/* Both the subtitle and the header action are suppressed when the list is empty.
-                The subtitle would describe an ordering of nothing, and the empty state carries
-                its own primary call to action — two identical buttons in one card is a choice
-                the reader has to make twice. */}
+            {/* Suppressed when the list is empty: it would describe an ordering of nothing. */}
             {!isEmpty && (
               <p className="text-muted text-sm">
                 The {LATEST_MEETINGS_COUNT} most recently scheduled, newest first.
               </p>
             )}
           </div>
-
-          {!isEmpty && (
-            <ButtonLink href="/meetings/new">
-              <PlusIcon />
-              New meeting
-            </ButtonLink>
-          )}
         </div>
 
         {isEmpty ? (
@@ -114,7 +103,13 @@ function MeetingRow({ meeting, isHost }: { meeting: Meeting; isHost: boolean }) 
 
 /**
  * A new account's first screen, so this is a designed view rather than a fallback: it says what
- * the list will hold and offers the one action that fills it.
+ * the list will hold.
+ *
+ * **It offers no "New meeting", and neither does the card's header, until there is a page to
+ * create one on.** Both used to link to `/meetings/new`, which no route answers: the meeting
+ * page took `new` for an id and showed "Page not found" — for the only primary action a new
+ * account was offered. Meetings are created through the API (`POST /api/meetings`) for now;
+ * the action comes back with the page.
  */
 function NoMeetings() {
   return (
@@ -125,13 +120,9 @@ function NoMeetings() {
       <div className="flex flex-col gap-1">
         <p className="font-medium">No meetings yet</p>
         <p className="text-muted max-w-sm text-sm text-pretty">
-          Schedule your first meeting and it will show up here, with everyone you invited.
+          Meetings you host or are invited to will show up here.
         </p>
       </div>
-      <ButtonLink href="/meetings/new">
-        <PlusIcon />
-        New meeting
-      </ButtonLink>
     </EmptyState>
   );
 }

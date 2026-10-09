@@ -3,12 +3,13 @@
  * one of these wrappers — components never call `fetch` themselves — and every one of them is
  * re-exported here, so a caller imports `@/lib/api-client` whichever file it lives in.
  *
- * `core.ts` holds the transport the wrappers share (`apiFetch`, `ApiError`, the bearer header,
- * and the one `XMLHttpRequest` path that exists because `fetch` cannot report upload
- * progress); the rest are grouped by the part of the API they call.
+ * `core.ts` holds the transport the wrappers share (`apiFetch`, `ApiError`, the bearer header),
+ * `progress-upload.ts` the one `XMLHttpRequest` path, which exists because `fetch` cannot
+ * report upload progress; the rest are grouped by the part of the API they call.
  */
 export { ApiError, buildApiUrl, getApiBaseUrl, apiFetch } from './core';
-export type { UploadOptions } from './core';
+export { UPLOAD_STALL_MS } from './progress-upload';
+export type { UploadOptions } from './progress-upload';
 export { getHealth, register, login, getMe, changePassword } from './auth';
 export { deleteAvatar, fetchAvatar, updateDisplayName, uploadAvatar } from './user';
 export { countMeetings, listMeetings, getMeeting } from './meetings';

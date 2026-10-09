@@ -37,7 +37,7 @@ export function DigestActionButtons({
     <>
       {action !== null && (
         <Button variant="secondary" size="sm" isDisabled={isRequesting} onPress={onRequest}>
-          {isRequesting && <Spinner size="sm" aria-hidden="true" />}
+          {isRequesting && <Spinner color="current" size="sm" aria-hidden="true" />}
           {!isRequesting && (action.kind === 'retry' ? <RetryIcon /> : <SparkIcon />)}
           {action.label}
         </Button>

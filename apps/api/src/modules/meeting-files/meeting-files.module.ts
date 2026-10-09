@@ -31,6 +31,7 @@ import { ContentSniffer } from './services/content-sniffer';
 import { MeetingFileEventsService } from './services/meeting-file-events.service';
 import { MeetingFileHandOvers } from './services/meeting-file-hand-overs';
 import { MeetingFileTranscriptionRepository } from './services/meeting-file-transcription.repository';
+import { MeetingFileUploadHoldRepository } from './services/meeting-file-upload-hold.repository';
 import { MeetingFileUploadRepository } from './services/meeting-file-upload.repository';
 import { MeetingFileUploadsService } from './services/meeting-file-uploads.service';
 import { MeetingFileRepository } from './services/meeting-file.repository';
@@ -79,6 +80,7 @@ import { VisibleMeetingGuard } from './visible-meeting.guard';
     MeetingFileRepository,
     MeetingFileTranscriptionRepository,
     MeetingFileUploadRepository,
+    MeetingFileUploadHoldRepository,
     MeetingFileStorage,
     MeetingFileUploadInterceptor,
     MeetingFileChunkInterceptor,

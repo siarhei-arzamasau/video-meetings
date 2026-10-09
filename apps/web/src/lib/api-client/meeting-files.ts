@@ -1,6 +1,5 @@
 import type { MeetingFile } from '@repo/shared';
 
-import type { UploadOptions, XhrFactory } from './core';
 import {
   ApiError,
   apiFetch,
@@ -8,8 +7,9 @@ import {
   authHeaders,
   buildApiUrl,
   readErrorMessage,
-  sendWithProgress,
 } from './core';
+import type { UploadOptions, XhrFactory } from './progress-upload';
+import { sendWithProgress } from './progress-upload';
 
 /** Every non-deleted file of a meeting, newest first as the API orders them. */
 export function listMeetingFiles(

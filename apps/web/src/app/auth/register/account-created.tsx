@@ -9,7 +9,7 @@ export function AccountCreated({ email }: { email: string }) {
         <CheckIcon />
       </span>
       <div className="flex flex-col gap-1">
-        <h2 className="text-xl font-semibold">You're all set</h2>
+        <h1 className="text-xl font-semibold">You're all set</h1>
         <p className="text-muted text-sm">
           Your account for <span className="text-foreground font-medium">{email}</span> is ready,
           and you are signed in.

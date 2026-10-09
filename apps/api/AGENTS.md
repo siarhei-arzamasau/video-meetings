@@ -633,6 +633,18 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   answered, `expires_at` is set to `now()` **before** the chunk tree is removed, so a retry from
   then on is a 404 and never a second file. Assembly writes to `tmp/assemble-<uuid>`, never
   `tmp/<uploadId>` — two completions must not write into or remove one another's file.
+- **A chunk is moved into place while its session's row is held `FOR SHARE`**
+  (`MeetingFileUploadHoldRepository.whileLive`). A session is ended by a write to its row —
+  an abort, a completion, the worker's claim of an expired one — after which the worker
+  removes its tree and marks it purged. A chunk still on its way to the disk at that moment
+  used to be renamed into a tree nobody would look at again, since `purged_at` keeps the row
+  from being claimed twice: up to 8 MiB for good each time an upload was cancelled with a
+  request in flight. Held, everything that ends the session waits for the write — the
+  worker's claim passes over a locked row — so the purge that follows finds the chunk.
+  `FOR SHARE` and not stronger, so two chunks of one session are still written side by side;
+  the index is recorded after the hold, by the statement that always did, because recording
+  it under the hold would have two chunks each waiting for the other's lock.
+  `meeting-file-upload-hold.e2e-spec.ts` holds the order against a real Postgres.
 - **A chunk's length is derived from the session, never believed from the request.** Every chunk
   but the last must be exactly `chunk_size`, the last is the remainder. That is what makes a
   truncated chunk a 400 instead of a hole only the checksum would catch, and why the client
@@ -1720,11 +1732,12 @@ first spec. Three things about it:
 - **`truncateUsers` refuses any other database, in the statement that would empty it.** The
   environment is what points the suite at a test database; the refusal is what holds if that
   line is ever lost. `test-database.e2e-spec.ts` pins both.
-- **The web app's Playwright suite is not covered by any of this.** It boots the API on the
-  database `DATABASE_URL` names and its teardown truncates that one — by default the
-  development database. The two suites therefore no longer share a database; giving the
-  browser suite the same isolation means creating its database before `start:e2e-web` boots
-  the API, which Playwright's `globalSetup` runs too late to do.
+- **The web app's Playwright suite has a database of its own by the same rule, with
+  `_web_test` for the suffix** (`browserSuiteDatabaseUrl`), so the two suites never empty
+  each other's. `test/e2e-web/environment.ts` points that suite's API at it and
+  `test/e2e-web/main.ts` creates and migrates it before the module is compiled — there and
+  not in Playwright's `globalSetup`, which runs after the servers have started. Its teardown
+  is in the web package and restates the rule, with the same refusal.
 
 Cleanup runs at both ends for different reasons: `beforeEach` so no test inherits another's
 rows (which is also what makes a repeated run independent of the last), `afterAll` so the

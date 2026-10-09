@@ -17,14 +17,36 @@ const file = (id: string, overrides: Partial<MeetingFile> = {}): MeetingFile => 
 });
 
 /** The hook over a list a test replaces, as the stream or the poll would. */
-const announce = (files: MeetingFile[]) =>
-  renderHook(({ list }) => useFilesAnnouncement(list), { initialProps: { list: files } });
+const announce = (files: MeetingFile[] | null) =>
+  renderHook(({ list }: { list: MeetingFile[] | null }) => useFilesAnnouncement(list), {
+    initialProps: { list: files },
+  });
 
 describe('useFilesAnnouncement', () => {
   it('says nothing about the list the page opened with', () => {
     const { result } = announce([file('a', { status: 'processing' }), file('b')]);
 
     expect(result.current.phrase).toBe('');
+  });
+
+  // The order a page really opens in: rendered before its files have loaded, then handed the
+  // first answer. Taking "no list yet" for an empty list made that answer a change.
+  it('says nothing about the first list to arrive after a page that opened without one', () => {
+    const { result, rerender } = announce(null);
+
+    rerender({ list: [file('a', { status: 'processing' }), file('b')] });
+
+    expect(result.current.phrase).toBe('');
+    expect(result.current.sequence).toBe(0);
+  });
+
+  it('follows the list from that first answer on', () => {
+    const { result, rerender } = announce(null);
+
+    rerender({ list: [file('a', { status: 'processing' })] });
+    rerender({ list: [file('a')] });
+
+    expect(result.current.phrase).toBe('All files have finished processing.');
   });
 
   it('says how many files are still being processed when that number changes', () => {

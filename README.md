@@ -238,12 +238,11 @@ suite needs Whisper running. Its API is booted with the meeting digest on and a 
 stand-in for Claude inside it (listening for the specs on 3103), so neither suite needs an
 Anthropic token or the network either.
 
-Both empty the `users` table, and everything that hangs off it, as they go — in different
-databases. The API's suite never touches the one `DATABASE_URL` names: it uses that name with
-`_test` after it (`video_meetings_test`), which it creates and migrates on its first run, and
-it refuses to empty a database named any other way. The browser suite still runs against the
-database `DATABASE_URL` names and truncates it when it finishes, so point that variable at a
-scratch database first if your local rows matter.
+Both empty the `users` table, and everything that hangs off it, as they go — each in a
+database of its own, and never the one `DATABASE_URL` names. The API's suite uses that name
+with `_test` after it (`video_meetings_test`) and the browser suite the same with `_web_test`
+(`video_meetings_web_test`). Each creates and migrates its database on its first run, and
+refuses to empty one named any other way.
 
 A third suite sends real requests to Anthropic through the Claude Agent SDK — among them the
 transcripts of a made-up meeting, to check the digest Claude writes from them. It needs no

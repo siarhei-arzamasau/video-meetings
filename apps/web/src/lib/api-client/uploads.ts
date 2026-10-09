@@ -1,7 +1,8 @@
 import type { MeetingFile, MeetingFileUpload } from '@repo/shared';
 
-import type { UploadOptions, XhrFactory } from './core';
-import { apiFetch, authHeaders, sendWithProgress } from './core';
+import { apiFetch, authHeaders } from './core';
+import type { UploadOptions, XhrFactory } from './progress-upload';
+import { sendWithProgress } from './progress-upload';
 
 /** The chunked upload's five calls, in the order a client makes them. */
 const uploadsPath = (meetingId: string): string => `/meetings/${meetingId}/files/uploads`;

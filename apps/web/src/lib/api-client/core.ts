@@ -24,8 +24,9 @@ export class ApiError extends Error {
 }
 
 /**
- * The single boundary between the web app and the API — with one exception, `uploadMeetingFile`
- * below, which is an `XMLHttpRequest` because `fetch` cannot report upload progress.
+ * The single boundary between the web app and the API — with one exception, `sendWithProgress`
+ * in `progress-upload.ts`, which is an `XMLHttpRequest` because `fetch` cannot report upload
+ * progress.
  *
  * A 204 resolves to `undefined`: there is no body to parse, and reading one would throw.
  */
@@ -154,90 +155,4 @@ function terminate(sentence: string): string {
  */
 export function authHeaders(token: string): Record<string, string> {
   return { authorization: `Bearer ${token}` };
-}
-
-export interface UploadOptions {
-  /** Aborts the request; the promise rejects with an `AbortError` `DOMException`. */
-  signal?: AbortSignal;
-  /** Called with a fraction in `[0, 1]` whenever the browser reports upload progress. */
-  onProgress?: (fraction: number) => void;
-}
-
-/** Injectable for tests only; production always uses the browser's. */
-export type XhrFactory = () => XMLHttpRequest;
-
-/**
- * The `XMLHttpRequest` half of this module, shared by the single-request upload and by each
- * chunk of a chunked one. Same contract as `apiFetch` — the API's own message in an
- * `ApiError`, `buildApiUrl` for the URL, the token as a bearer header — plus the two things
- * `fetch` cannot do: report upload progress and be aborted mid-body.
- */
-export function sendWithProgress<T>(
-  {
-    method,
-    path,
-    token,
-    body,
-    contentType,
-  }: {
-    method: string;
-    path: string;
-    token: string;
-    body: XMLHttpRequestBodyInit;
-    contentType?: string;
-  },
-  { signal, onProgress }: UploadOptions,
-  createXhr: XhrFactory,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    if (signal?.aborted === true) {
-      reject(new DOMException('The upload was aborted', 'AbortError'));
-
-      return;
-    }
-
-    const xhr = createXhr();
-    const abort = (): void => xhr.abort();
-
-    signal?.addEventListener('abort', abort, { once: true });
-
-    xhr.open(method, buildApiUrl(path));
-    xhr.setRequestHeader('authorization', `Bearer ${token}`);
-
-    if (contentType !== undefined) {
-      xhr.setRequestHeader('content-type', contentType);
-    }
-
-    xhr.responseType = 'json';
-
-    xhr.upload.addEventListener('progress', (event) => {
-      if (event.lengthComputable && event.total > 0) {
-        onProgress?.(Math.min(1, event.loaded / event.total));
-      }
-    });
-
-    xhr.addEventListener('load', () => {
-      signal?.removeEventListener('abort', abort);
-
-      if (xhr.status >= 200 && xhr.status < 300) {
-        // A 204 carries no body, and `apiFetch` resolves those to `undefined` too — a chunk's
-        // caller must not have to know that a real XHR reports the absence as `null`.
-        resolve((xhr.status === 204 ? undefined : xhr.response) as T);
-      } else {
-        reject(new ApiError(xhr.status, messageOf(xhr.response, xhr.status, path)));
-      }
-    });
-
-    xhr.addEventListener('error', () => {
-      signal?.removeEventListener('abort', abort);
-      reject(new TypeError('Failed to fetch'));
-    });
-
-    xhr.addEventListener('abort', () => {
-      signal?.removeEventListener('abort', abort);
-      reject(new DOMException('The upload was aborted', 'AbortError'));
-    });
-
-    xhr.send(body);
-  });
 }

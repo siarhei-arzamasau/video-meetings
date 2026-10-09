@@ -22,6 +22,7 @@ import { storeAccessToken } from '@/lib/auth-token';
 import { normaliseEmail, validateEmail, validatePassword } from '@/lib/credentials';
 
 import { CARD_CLASS } from '../card';
+import { renderPageHeading } from '../page-heading';
 
 import { AccountCreated } from './account-created';
 
@@ -94,7 +95,9 @@ export function RegisterCard() {
   return (
     <Card className={CARD_CLASS}>
       <Card.Header className="gap-1.5">
-        <Card.Title className="text-2xl leading-8">Create your account</Card.Title>
+        <Card.Title className="text-2xl leading-8" render={renderPageHeading}>
+          Create your account
+        </Card.Title>
         <Card.Description>
           Your email and a password are all it takes. No credit card, no meeting-room hardware.
         </Card.Description>
@@ -182,7 +185,7 @@ export function RegisterCard() {
         <Button type="submit" variant="primary" size="lg" fullWidth isDisabled={isSubmitting}>
           {isSubmitting ? (
             <>
-              <Spinner size="sm" />
+              <Spinner color="current" size="sm" />
               Creating your account…
             </>
           ) : (

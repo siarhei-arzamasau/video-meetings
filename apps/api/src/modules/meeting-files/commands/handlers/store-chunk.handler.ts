@@ -5,6 +5,7 @@ import path from 'node:path';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { CommandHandler, ICommandHandler, QueryBus } from '@nestjs/cqrs';
 
+import { MeetingFileUploadHoldRepository } from '../../services/meeting-file-upload-hold.repository';
 import { MeetingFileUploadRepository } from '../../services/meeting-file-upload.repository';
 import { chunkKeyOf, chunkLengthOf } from '../../services/meeting-file-upload.mapper';
 import { UPLOAD_NOT_FOUND, requireOwnedUpload } from '../../services/owned-upload';
@@ -25,12 +26,18 @@ export const CHUNK_LENGTH_MESSAGE = 'Chunk length does not match';
  *
  * The length is derived from the session, never believed from the request: a truncated chunk
  * is a 400 rather than a file with a hole in it that only the checksum would catch.
+ *
+ * **The move into place happens while the session is held live** (`whileLive`). An abort or
+ * an expiry that arrives during it waits, so the purge it leads to finds the chunk and removes
+ * it. Moved unheld, a chunk could land in a tree the worker had already removed and marked
+ * purged, where nothing would ever look again.
  */
 @CommandHandler(StoreChunkCommand)
 export class StoreChunkHandler implements ICommandHandler<StoreChunkCommand, void> {
   constructor(
     private readonly queryBus: QueryBus,
     private readonly uploads: MeetingFileUploadRepository,
+    private readonly holds: MeetingFileUploadHoldRepository,
     private readonly storage: MeetingFileStorage,
   ) {}
 
@@ -52,18 +59,23 @@ export class StoreChunkHandler implements ICommandHandler<StoreChunkCommand, voi
     }
 
     const tempPath = path.join(this.storage.tempDir(), `chunk-${randomUUID()}`);
+    let isStored = false;
 
     try {
       await writeFile(tempPath, body);
-      await this.storage.putChunk(chunkKeyOf(uploadId, index), tempPath);
+      isStored = await this.holds.whileLive(uploadId, () =>
+        this.storage.putChunk(chunkKeyOf(uploadId, index), tempPath),
+      );
     } finally {
       // A no-op once `putChunk` has renamed it; on every other exit this removes it.
       await rm(tempPath, { force: true });
     }
 
-    // The session can lapse between the lookup and here. The chunk is left on disk for the
-    // worker's `removeTree` to collect, and the client is told what a resume would tell it.
-    if ((await this.uploads.addReceivedChunk(uploadId, index)) === null) {
+    // The session can end between the lookup and the move, in which case nothing was stored,
+    // or between the move and here. That chunk is on disk, and what ended the session waited
+    // for it, so the purge that follows removes it. Either way the client is told what a
+    // resume would tell it.
+    if (!isStored || (await this.uploads.addReceivedChunk(uploadId, index)) === null) {
       throw new NotFoundException(UPLOAD_NOT_FOUND);
     }
   }

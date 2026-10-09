@@ -19,8 +19,9 @@ import { scaled } from './e2e/timeouts';
  * one service that would reach Anthropic. See `e2e/digest.ts` for how a spec scripts it.
  *
  * Not in `turbo.json` and not in CI: it needs Postgres, a browser, and three servers. Run it
- * explicitly with `pnpm --filter=@repo/web test:e2e`. Its teardown truncates `users` in the
- * database `DATABASE_URL` names; the API's own e2e suite has a database to itself.
+ * explicitly with `pnpm --filter=@repo/web test:e2e`. It runs on a database of its own —
+ * `DATABASE_URL`'s with `_web_test` after its name, which the API entry point creates — and
+ * its teardown empties only that one.
  */
 /**
  * How long to wait for each server to answer. Two minutes is plenty on a machine that is not

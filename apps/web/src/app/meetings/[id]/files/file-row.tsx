@@ -153,7 +153,11 @@ export function FileRow({
             isDisabled={retry.isRetrying}
             onPress={() => retry.retry(retryTarget)}
           >
-            {retry.isRetrying ? <Spinner size="sm" aria-hidden="true" /> : <RetryIcon />}
+            {retry.isRetrying ? (
+              <Spinner color="current" size="sm" aria-hidden="true" />
+            ) : (
+              <RetryIcon />
+            )}
             Retry
           </Button>
         )}
