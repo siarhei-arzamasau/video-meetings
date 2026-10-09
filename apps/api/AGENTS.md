@@ -1452,8 +1452,9 @@ shape, and the three are gathered with `createSdkMcpServer`.
   task keeps the status it reached. Required, a model restating a finished task would have
   to pick one, and would reopen it.
 - **The SDK is loaded by `ClaudeAgentToolkitLoader`, inside `createServer`**, for the reason
-  nothing imports it at the top of a file (_Claude_, above). So the unit spec and
-  `test/meeting-tools.e2e-spec.ts` both stand a two-function fake in its place — the e2e
+  nothing imports it at the top of a file (_Claude_, above). So the unit specs' fixture
+  (`meeting-tools.fixture.ts`) and `test/meeting-tools.e2e-spec.ts` both stand a
+  two-function fake in its place — the e2e
   spec with everything behind a tool real — and **the SDK's own `tool` and
   `createSdkMcpServer` run only in `test:live`**, where the real model calls the real
   server over a `TaskService` held in memory.

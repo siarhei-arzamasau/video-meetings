@@ -1,115 +1,20 @@
 import { Logger } from '@nestjs/common';
-import { CommandBus } from '@nestjs/cqrs';
-import { z } from 'zod';
 
-import type {
-  ClaudeAgentToolkit,
-  ClaudeAgentToolkitLoader,
-} from '../claude-agent/services/claude-agent-toolkit.loader';
-import {
-  MeetingDigestRevisionOutcome,
-  ReviseMeetingDigestCommand,
-} from '../meeting-digests/commands/revise-meeting-digest.command';
-import {
-  MAX_DIGEST_ITEMS,
-  MAX_DIGEST_SUMMARY_LENGTH,
-} from '../meeting-digests/meeting-digest.constants';
-import { TaskService } from '../tasks/services/task.service';
 import { MAX_TASK_TITLE_LENGTH } from '../tasks/task.constants';
-import { MEETING_TOOLS_SERVER_NAME, MeetingToolName, MeetingTools } from './meeting-tools';
+import { MEETING_TOOLS_SERVER_NAME, MeetingToolName } from './meeting-tools';
+import {
+  LETTERED_MEETING_ID,
+  MEETING_ID,
+  OTHER_MEETING_ID,
+  TASK_AS_ANSWERED,
+  answerOf,
+  useMeetingTools,
+} from './meeting-tools.fixture';
+import type { DescribedTool } from './meeting-tools.fixture';
 
-const MEETING_ID = '44444444-4444-4444-8444-444444444444';
-const LETTERED_MEETING_ID = 'abcdef12-4444-4444-8444-444444444444';
-const OTHER_MEETING_ID = '77777777-7777-4777-8777-777777777777';
-
-const TASK = {
-  id: '55555555-5555-4555-8555-555555555555',
-  title: 'Rewrite the launch emails',
-  sourceMeetingId: MEETING_ID,
-  status: 'OPEN' as const,
-  createdAt: new Date('2026-10-01T10:00:00.000Z'),
-  updatedAt: new Date('2026-10-01T10:00:00.000Z'),
-};
-const TASK_AS_ANSWERED = {
-  id: TASK.id,
-  title: TASK.title,
-  status: TASK.status,
-  sourceMeetingId: MEETING_ID,
-};
-
-interface DescribedTool {
-  name: string;
-  description: string;
-  inputSchema: z.ZodRawShape;
-  handler: (input: unknown, extra: unknown) => Promise<ToolAnswer>;
-  annotations?: { readOnlyHint?: boolean };
-}
-
-interface ToolAnswer {
-  isError?: boolean;
-  content: Array<{ type: string; text: string }>;
-}
-
-/**
- * The SDK's two functions as they were observed to behave: `tool` answers with its
- * arguments under their names, and `createSdkMcpServer` registers what it is given. The
- * real ones are ESM, which this suite cannot load — and nothing here is about them: what is
- * held to account is what this file describes, and what each handler does.
- */
-const toolkit = {
-  tool: (
-    name: string,
-    description: string,
-    inputSchema: z.ZodRawShape,
-    handler: DescribedTool['handler'],
-    extras?: { annotations?: DescribedTool['annotations'] },
-  ): DescribedTool => ({ name, description, inputSchema, handler, ...extras }),
-  createSdkMcpServer: (options: object): object => ({ type: 'sdk', ...options }),
-} as unknown as ClaudeAgentToolkit;
-
-/** What a tool answered with, read back out of the text it is carried in. */
-const answerOf = ({ content }: ToolAnswer): unknown => JSON.parse(content[0]?.text ?? 'null');
-
+/** The server and its two task tools. `update_meeting` is `meeting-tools.update-meeting.spec.ts`. */
 describe('MeetingTools', () => {
-  const search = jest.fn();
-  const upsert = jest.fn();
-  const execute = jest.fn();
-  const tools = new MeetingTools(
-    { loadToolkit: () => Promise.resolve(toolkit) } as ClaudeAgentToolkitLoader,
-    { search, upsert } as unknown as TaskService,
-    { execute } as unknown as CommandBus,
-  );
-
-  const server = async (): Promise<{ name: string; tools: DescribedTool[] }> =>
-    (await tools.createServer(MEETING_ID)) as unknown as { name: string; tools: DescribedTool[] };
-  const toolNamed = async (name: MeetingToolName): Promise<DescribedTool> => {
-    const described = (await server()).tools.find((tool) => tool.name === name);
-
-    if (described === undefined) {
-      throw new Error(`No tool is named ${name}`);
-    }
-
-    return described;
-  };
-  /** Calls a tool as the SDK does: the input through its schema first, then the handler. */
-  const call = async (name: MeetingToolName, input: object): Promise<ToolAnswer> => {
-    const tool = await toolNamed(name);
-
-    return tool.handler(z.object(tool.inputSchema).parse(input), undefined);
-  };
-  const accepts = async (name: MeetingToolName, input: object): Promise<boolean> =>
-    z.object((await toolNamed(name)).inputSchema).safeParse(input).success;
-
-  beforeEach(() => {
-    search.mockReset().mockResolvedValue([TASK]);
-    upsert.mockReset().mockResolvedValue(TASK);
-    execute.mockReset().mockResolvedValue(MeetingDigestRevisionOutcome.REVISED);
-    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-  });
-
-  afterEach(() => {
-    jest.restoreAllMocks();
-  });
+  const { search, upsert, tools, server, toolNamed, call, accepts } = useMeetingTools();
 
   it('registers the three tools on a server named meeting', async () => {
     const { name, tools: described } = await server();
@@ -244,85 +149,6 @@ describe('MeetingTools', () => {
 
       expect(answer.isError).toBe(true);
       expect(answer.content[0]?.text).toBe('The task could not be saved. Check the meeting id.');
-    });
-  });
-
-  describe('update_meeting', () => {
-    const input = {
-      meetingId: MEETING_ID,
-      summary: ' The launch moves to May. ',
-      decisions: ['Launch in May.', ' Hire two. '],
-    };
-
-    it('dispatches the revision of the digest, every text trimmed', async () => {
-      const answer = await call(MeetingToolName.UPDATE_MEETING, input);
-
-      expect(execute).toHaveBeenCalledWith(
-        new ReviseMeetingDigestCommand(MEETING_ID, 'The launch moves to May.', [
-          'Launch in May.',
-          'Hire two.',
-        ]),
-      );
-      expect(execute.mock.calls[0]?.[0]).toBeInstanceOf(ReviseMeetingDigestCommand);
-      expect(answerOf(answer)).toEqual({ meetingId: MEETING_ID, updated: true });
-    });
-
-    it('refuses any meeting but the one the server was made for, and dispatches nothing', async () => {
-      const answer = await call(MeetingToolName.UPDATE_MEETING, {
-        ...input,
-        meetingId: OTHER_MEETING_ID,
-      });
-
-      expect(answer.isError).toBe(true);
-      expect(answer.content[0]?.text).toMatch(/one meeting/);
-      expect(execute).not.toHaveBeenCalled();
-    });
-
-    it.each([
-      [MeetingDigestRevisionOutcome.NO_DIGEST, /no digest yet/],
-      [MeetingDigestRevisionOutcome.UNFIT, /blank or too long/],
-    ])('answers %s as an error that says why', async (outcome, reason) => {
-      execute.mockResolvedValue(outcome);
-
-      const answer = await call(MeetingToolName.UPDATE_MEETING, input);
-
-      expect(answer.isError).toBe(true);
-      expect(answer.content[0]?.text).toMatch(reason);
-    });
-
-    it.each([
-      ['a blank summary', { ...input, summary: '' }],
-      [
-        'a summary past the bound',
-        { ...input, summary: 'a'.repeat(MAX_DIGEST_SUMMARY_LENGTH + 1) },
-      ],
-      ['a blank decision', { ...input, decisions: [' '] }],
-      [
-        'more decisions than a digest holds',
-        { ...input, decisions: Array(MAX_DIGEST_ITEMS + 1).fill('One.') },
-      ],
-      ['decisions that are not a list', { ...input, decisions: 'Launch in May.' }],
-      ['a meeting id that is not an id', { ...input, meetingId: '1' }],
-    ])('refuses %s', async (_case, unfit) => {
-      await expect(accepts(MeetingToolName.UPDATE_MEETING, unfit)).resolves.toBe(false);
-    });
-
-    it('accepts a meeting with no decisions', async () => {
-      await expect(
-        accepts(MeetingToolName.UPDATE_MEETING, { ...input, decisions: [] }),
-      ).resolves.toBe(true);
-    });
-
-    it('answers a failed write as an error, and logs the cause', async () => {
-      execute.mockRejectedValue(new Error('connection lost'));
-
-      const answer = await call(MeetingToolName.UPDATE_MEETING, input);
-
-      expect(answer).toEqual({
-        isError: true,
-        content: [{ type: 'text', text: 'The meeting could not be updated.' }],
-      });
-      expect(Logger.prototype.error).toHaveBeenCalledTimes(1);
     });
   });
 });
