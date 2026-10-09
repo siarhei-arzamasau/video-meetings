@@ -25,7 +25,7 @@ export const CHUNK_RETRIES = 3;
 const RETRY_DELAYS_MS = [500, 1_500, 3_500];
 
 export interface ChunkedUploadOptions {
-  /** Aborts the chunk in flight; the promise rejects with an `AbortError` `DOMException`. */
+  /** Aborts whichever request is in flight; rejects with an `AbortError` `DOMException`. */
   signal?: AbortSignal;
   /** Bytes acknowledged over total, as a fraction in `[0, 1]`. */
   onProgress?: (fraction: number) => void;
@@ -152,7 +152,7 @@ export async function uploadInChunks(
 
   throwIfAborted(signal);
 
-  return deps.completeUpload(token, meetingId, session.id);
+  return deps.completeUpload(token, meetingId, session.id, signal);
 }
 
 /**
@@ -166,11 +166,12 @@ async function openSession(
   token: string,
   meetingId: string,
   file: File,
-  { resumeFrom }: ChunkedUploadOptions,
+  { resumeFrom, signal }: ChunkedUploadOptions,
   deps: ChunkedUploadDeps,
 ): Promise<MeetingFileUpload> {
   if (resumeFrom !== undefined) {
-    const existing = await deps.getUpload(token, meetingId, resumeFrom).catch((error: unknown) => {
+    const asked = deps.getUpload(token, meetingId, resumeFrom, signal);
+    const existing = await asked.catch((error: unknown) => {
       if (error instanceof ApiError) {
         return null;
       }
@@ -183,7 +184,7 @@ async function openSession(
     }
   }
 
-  return deps.createUpload(token, meetingId, file);
+  return deps.createUpload(token, meetingId, file, signal);
 }
 
 /**

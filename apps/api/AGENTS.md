@@ -1742,6 +1742,9 @@ first spec. Three things about it:
   safe to feed back in — `setup-env.ts` writes it to `DATABASE_URL` once per spec file — and
   it is how to choose a database on purpose: a second session on the same Postgres runs
   with `DATABASE_URL=…/video_meetings_<name>` and gets `video_meetings_<name>_test`.
+  **Except one that ends in the browser suite's `_web_test`**, which ends in `_test` as well:
+  used as it is, both suites would be handed one database. It gets this suite's suffix like
+  any other name, and `truncateUsers` refuses such a database outright.
 - **`truncateUsers` refuses any other database, in the statement that would empty it.** The
   environment is what points the suite at a test database; the refusal is what holds if that
   line is ever lost. `test-database.e2e-spec.ts` pins both.

@@ -50,9 +50,13 @@ const databaseNameOf = (url: URL): string => decodeURIComponent(url.pathname.sli
  * ran `test:e2e` on a set-up machine. A name that already ends in `_test` is used as it is, so
  * the result can be fed back in — `setup-env.ts` runs once per spec file — and so pointing the
  * suite somewhere else on purpose is still one variable: name the database `…_test`.
+ *
+ * **Unless it ends in the browser suite's `_web_test`**, which ends in `_test` too. Used as it
+ * is, that name would hand both suites one database, each emptying it under the other; it
+ * gets this suite's suffix like any other name.
  */
 export function testDatabaseUrl(configured: string = configuredDatabaseUrl()): string {
-  return withSuffix(configured, TEST_DATABASE_SUFFIX);
+  return withSuffix(configured, TEST_DATABASE_SUFFIX, BROWSER_SUITE_DATABASE_SUFFIX);
 }
 
 /**
@@ -68,11 +72,16 @@ export function browserSuiteDatabaseUrl(configured: string = configuredDatabaseU
   return withSuffix(configured, BROWSER_SUITE_DATABASE_SUFFIX);
 }
 
-function withSuffix(configured: string, suffix: string): string {
+/**
+ * `configured` with `suffix` on its database's name, unless the name already carries it —
+ * and does not carry `anotherSuites`, a longer suffix that ends the same way.
+ */
+function withSuffix(configured: string, suffix: string, anotherSuites?: string): string {
   const url = new URL(configured);
   const name = databaseNameOf(url);
+  const isAnotherSuites = anotherSuites !== undefined && name.endsWith(anotherSuites);
 
-  if (!name.endsWith(suffix)) {
+  if (!name.endsWith(suffix) || isAnotherSuites) {
     url.pathname = `/${encodeURIComponent(`${name}${suffix}`)}`;
   }
 
