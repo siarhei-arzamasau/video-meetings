@@ -6,6 +6,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { CommandBus } from '@nestjs/cqrs';
 import { z } from 'zod';
 
+import { describeError } from '../../common/error-message';
 import { TaskStatus } from '../../generated/prisma/enums';
 import { ClaudeAgentToolkitLoader } from '../claude-agent/services/claude-agent-toolkit.loader';
 import {
@@ -216,10 +217,7 @@ export class MeetingTools {
   }
 
   private failed(toolName: MeetingToolName, error: unknown, reason: string): ToolResult {
-    this.logger.error(
-      `Tool ${toolName} failed`,
-      error instanceof Error ? error.stack : String(error),
-    );
+    this.logger.error(`Tool ${toolName} failed`, describeError(error));
 
     return refused(reason);
   }

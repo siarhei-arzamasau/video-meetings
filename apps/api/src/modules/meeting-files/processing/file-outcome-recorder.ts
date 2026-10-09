@@ -3,6 +3,7 @@ import type { EventBus } from '@nestjs/cqrs';
 import type { MeetingFileStatus } from '@repo/shared';
 import { MEETING_FILE_PROCESSING_FAILED_MESSAGE } from '@repo/shared';
 
+import { describeError } from '../../../common/error-message';
 import { MeetingFileChangedEvent } from '../events/meeting-file-changed.event';
 import type { MeetingFileHandOvers } from '../services/meeting-file-hand-overs';
 import { toMeetingFile } from '../services/meeting-file.mapper';
@@ -107,7 +108,7 @@ export class FileOutcomeRecorder {
 
     this.logger.error(
       `File ${claimed.id} of meeting ${claimed.meetingId}: step failed (${reason})`,
-      cause instanceof Error ? cause.stack : String(cause),
+      describeError(cause),
     );
     await this.fail(claimed, held, reason, startedAt, patchBefore(error));
   }

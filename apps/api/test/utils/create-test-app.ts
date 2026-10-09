@@ -43,7 +43,7 @@ export async function createTestApp({
 
   const moduleRef = await builder.compile();
 
-  // `logger: false` keeps LoggingInterceptor's per-request output off the test report.
+  // `logger: false` keeps the request logger's line per request off the test report.
   const app = moduleRef.createNestApplication({ logger: false });
   const configService = app.get(ConfigService);
 

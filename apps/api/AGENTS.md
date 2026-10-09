@@ -27,9 +27,9 @@ src/
   configure-app.ts      Every global that shapes request handling
   app.module.ts         Root module — register new feature modules here
   config/               Environment contract
-  common/               Cross-cutting filters and interceptors, shutdown/ for what the
-                        process does with its connections when it is stopped, and
-                        processing/ for what every polling worker shares
+  common/               Cross-cutting: the exception filter, logging/ for the request log,
+                        shutdown/ for what the process does with its connections when it
+                        is stopped, and processing/ for what every polling worker shares
   modules/<feature>/    One directory per feature: module, controller, specs, and
                         commands/ — a command class plus its handler per write operation.
                         queries/ mirrors it where a read crosses a module boundary,
@@ -1536,7 +1536,22 @@ in `main.ts`.
   into whatever the DTO property is typed as, so `{"password": 12345678}` arrives as
   `"12345678"` and passes `@IsString()` — the API would accept credentials of any JSON type.
   The cost is that a numeric query or param DTO needs an explicit `@Type(() => Number)`.
-- **`HttpExceptionFilter`** and **`LoggingInterceptor`** from `src/common/`.
+- **`HttpExceptionFilter`** from `src/common/`.
+- **The request log is middleware (`createRequestLogger`), after CORS and before anything
+  that can refuse a request — and it must not become an interceptor again.** An interceptor
+  sees only what reached a handler, once per value the handler answers with: a request a
+  guard refused (a bad token, a spent rate limit) and a path no route matches left no line
+  at all, so a run of failed sign-ins was invisible, while a files stream left a line for
+  every event and heartbeat it sent. Here a request is one line, written when its response
+  closes: a refusal is a warning, and a connection the client closed first says so in place
+  of a status it never got. After CORS, because CORS answers a preflight itself and a line
+  per preflight would double the log. `request-log.e2e-spec.ts` pins the guard's 401, the
+  unknown route, and the stream's single line.
+- **An error is logged through `describeError` (`src/common/error-message.ts`), never as
+  `error.stack`.** A stack stops at the wrapper, and the wrapper is a sentence this code
+  chose: every `{ cause }` attached to keep an `ENOENT`, a constraint, or the SDK's own
+  failure was being dropped at the one place it was kept for. `describeError` puts each
+  cause's stack under the error that wraps it.
 - **Security headers from `helmet`, first in the chain** so a CORS preflight carries them too.
   The policy is `default-src 'none'` with no framing, because nothing here should ever render;
   a response that did would load, run and embed nothing. **HSTS is off on purpose** — it

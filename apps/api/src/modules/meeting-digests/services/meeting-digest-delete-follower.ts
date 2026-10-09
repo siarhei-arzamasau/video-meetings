@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { QueryBus } from '@nestjs/cqrs';
 
+import { describeError } from '../../../common/error-message';
 import { FindTranscribedRecordingsQuery } from '../../meeting-files/queries/find-transcribed-recordings.query';
 import type { TranscribedRecording } from '../../meeting-files/queries/find-transcribed-recordings.query';
 import { MeetingDigestAnnouncer } from './meeting-digest-announcer';
@@ -118,7 +119,7 @@ export class MeetingDigestDeleteFollower {
     } catch (error) {
       this.logger.error(
         `Digest of meeting ${meetingId}: its recordings could not be checked after it was stored; the read withholds what a deleted one said`,
-        error instanceof Error ? error.stack : String(error),
+        describeError(error),
       );
     }
   }

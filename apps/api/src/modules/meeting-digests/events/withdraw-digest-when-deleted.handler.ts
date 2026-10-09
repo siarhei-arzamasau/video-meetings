@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { EventsHandler, IEventHandler } from '@nestjs/cqrs';
 import type { MeetingFile } from '@repo/shared';
 
+import { describeError } from '../../../common/error-message';
 import { MeetingFileChangedEvent } from '../../meeting-files/events/meeting-file-changed.event';
 import { MeetingDigestDeleteFollower } from '../services/meeting-digest-delete-follower';
 import { PendingDigestRequests } from '../services/pending-digest-requests';
@@ -69,7 +70,7 @@ export class WithdrawDigestWhenDeletedHandler implements IEventHandler<MeetingFi
     } catch (error) {
       this.logger.error(
         `Digest of meeting ${meetingId}: following the delete of file ${file.id} failed; the read still withholds what was built from it`,
-        error instanceof Error ? error.stack : String(error),
+        describeError(error),
       );
     }
   }

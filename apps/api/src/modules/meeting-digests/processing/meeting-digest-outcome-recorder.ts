@@ -1,6 +1,7 @@
 import type { Logger } from '@nestjs/common';
 import { MEETING_DIGEST_FAILED_MESSAGE } from '@repo/shared';
 
+import { describeError } from '../../../common/error-message';
 import type { ClaudeModel } from '../../claude-agent/claude-agent.constants';
 import type { HeldDigest } from '../services/meeting-digest-claim-writes';
 import type {
@@ -92,7 +93,7 @@ export class DigestOutcomeRecorder {
     } catch (error) {
       this.logger.error(
         `Digest of meeting ${claimed.meetingId}: the digest could not be stored`,
-        error instanceof Error ? error.stack : String(error),
+        describeError(error),
       );
 
       const settledAs = await this.claims.fail(held, MEETING_DIGEST_FAILED_MESSAGE);
