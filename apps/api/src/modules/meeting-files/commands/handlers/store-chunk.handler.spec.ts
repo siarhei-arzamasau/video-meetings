@@ -206,7 +206,7 @@ describe('StoreChunkHandler', () => {
   });
 
   it('leaves no temp file behind when the move fails', async () => {
-    jest.spyOn(storage, 'putChunk').mockRejectedValue(new Error('disk full'));
+    jest.spyOn(storage, 'placeChunk').mockRejectedValue(new Error('disk full'));
 
     await expect(handler.execute(command(0, Buffer.alloc(8)))).rejects.toThrow('disk full');
 

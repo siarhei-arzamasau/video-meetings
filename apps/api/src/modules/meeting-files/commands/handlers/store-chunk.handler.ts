@@ -19,18 +19,19 @@ export const CHUNK_LENGTH_MESSAGE = 'Chunk length does not match';
 /**
  * One chunk, on disk, then acknowledged — in that order, and the order is the whole point.
  *
- * The bytes go to the temp directory first and are moved into place with `putChunk`, so a
- * connection that dies mid-body leaves a temp file rather than a half-written chunk at the
- * key a later `complete` will read. `putChunk` `fsync`s the file and its directory before
- * returning, and only then is the index added to `received_chunks`. A 204 therefore means
- * the bytes survive a power cut, which is what entitles the client to forget them.
+ * The bytes go to the temp directory first and are renamed into place, so a connection that
+ * dies mid-body leaves a temp file rather than a half-written chunk at the key a later
+ * `complete` will read. The file is `fsync`ed before the rename and its directory after it,
+ * and only then is the index added to `received_chunks`. A 204 therefore means the bytes
+ * survive a power cut, which is what entitles the client to forget them.
  *
  * The length is derived from the session, never believed from the request: a truncated chunk
  * is a 400 rather than a file with a hole in it that only the checksum would catch.
  *
- * **The move into place happens while the session is held live** (`whileLive`). An abort or
- * an expiry that arrives during it waits, so the purge it leads to finds the chunk and removes
- * it. Moved unheld, a chunk could land in a tree the worker had already removed and marked
+ * **The rename happens while the session is held live** (`whileLive`), and only the rename:
+ * the hold pins a database connection, so the two flushes stay outside it. An abort or an
+ * expiry that arrives during it waits, so the purge it leads to finds the chunk and removes
+ * it. Renamed unheld, a chunk could land in a tree the worker had already removed and marked
  * purged, where nothing would ever look again.
  *
  * **A hold has a time limit, and a move that outlives it finishes unheld.** So a hold that
@@ -81,23 +82,31 @@ export class StoreChunkHandler implements ICommandHandler<StoreChunkCommand, voi
    * session that has already ended.
    */
   private async store(uploadId: string, index: number, body: Buffer): Promise<boolean> {
+    const key = chunkKeyOf(uploadId, index);
     const tempPath = path.join(this.storage.tempDir(), `chunk-${randomUUID()}`);
     const move: { started?: Promise<void> } = {};
 
     try {
       await writeFile(tempPath, body);
+      await this.storage.flush(tempPath);
 
-      return await this.holds.whileLive(uploadId, () => {
-        move.started = this.storage.putChunk(chunkKeyOf(uploadId, index), tempPath);
+      const isPlaced = await this.holds.whileLive(uploadId, () => {
+        move.started = this.storage.placeChunk(key, tempPath);
 
         return move.started;
       });
+
+      if (isPlaced) {
+        await this.storage.syncChunkDirectory(key);
+      }
+
+      return isPlaced;
     } catch (error) {
       await this.removeWhatOutlivedTheHold(uploadId, move.started);
 
       throw error;
     } finally {
-      // A no-op once `putChunk` has renamed it; on every other exit this removes it.
+      // A no-op once the chunk has been renamed into place; on every other exit this removes it.
       await rm(tempPath, { force: true });
     }
   }

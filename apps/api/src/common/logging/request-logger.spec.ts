@@ -107,6 +107,25 @@ describe('createRequestLogger', () => {
     });
   });
 
+  // The target is the caller's to choose, and the line is written for callers nobody has let
+  // in. A control character in it reaches the terminal of whoever reads the log.
+  it('writes only the visible characters of a request target', () => {
+    finish(begin('GET', '/api/meetings/\u001b[2Jwiped\u009b\tend'), 404);
+
+    expect(String(warn.mock.calls[0]?.[0])).toMatch(
+      /^GET \/api\/meetings\/\?\[2Jwiped\?\?end 404 \d+ms$/,
+    );
+  });
+
+  it('cuts a request target that is longer than any route', () => {
+    finish(begin('GET', `/api/${'a'.repeat(5_000)}`), 404);
+
+    const line = String(warn.mock.calls[0]?.[0]);
+
+    expect(line.length).toBeLessThan(2_100);
+    expect(line).toMatch(/a… 404 \d+ms$/);
+  });
+
   it('measures from the request to the end of its response', () => {
     jest.useFakeTimers({ now: 1_000 });
 

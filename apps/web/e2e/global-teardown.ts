@@ -45,9 +45,10 @@ function browserSuiteDatabaseUrl(): string {
  * needed for correctness. `TRUNCATE ... CASCADE` follows the foreign keys to meetings,
  * participants, and files. The API's own temp storage directory goes the same way.
  *
- * **It refuses a database whose name does not end in `_test`, in the statement that would
- * empty it** — as the API's helper does. This used to run against whatever `DATABASE_URL`
- * named, which on a set-up machine is the development database.
+ * **It refuses a database whose name does not end in `_web_test`, in the statement that would
+ * empty it** — the whole of this suite's suffix, so not the API suite's `…_test` either. This
+ * used to run against whatever `DATABASE_URL` named, which on a set-up machine is the
+ * development database.
  */
 export default async function globalTeardown(): Promise<void> {
   const client = new Client({ connectionString: browserSuiteDatabaseUrl() });
@@ -58,8 +59,8 @@ export default async function globalTeardown(): Promise<void> {
     await client.query(`
       DO $$
       BEGIN
-        IF right(current_database(), 5) <> '_test' THEN
-          RAISE EXCEPTION 'Refusing to truncate "%": not a test database', current_database();
+        IF right(current_database(), ${String(BROWSER_SUITE_DATABASE_SUFFIX.length)}) <> '${BROWSER_SUITE_DATABASE_SUFFIX}' THEN
+          RAISE EXCEPTION 'Refusing to truncate "%": not the browser suite''s database', current_database();
         END IF;
 
         TRUNCATE TABLE "users" RESTART IDENTITY CASCADE;

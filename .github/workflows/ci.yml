@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# Every job here checks out, installs, builds, and tests: none of them writes to the
+# repository, and two of them run install scripts and test code.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

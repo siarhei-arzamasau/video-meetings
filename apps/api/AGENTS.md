@@ -641,6 +641,12 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
   from being claimed twice: up to 8 MiB for good each time an upload was cancelled with a
   request in flight. Held, everything that ends the session waits for the write — the
   worker's claim passes over a locked row — so the purge that follows finds the chunk.
+  **Only the rename runs under the hold, and no more than three holds are open at once**
+  (`ConcurrencyLimit`). A hold pins a pooled connection until its write returns, and the pool
+  is ten for every route: with a whole chunk flushed under it and no bound on how many ran,
+  one account sending chunks side by side held all ten and every other request waited on the
+  pool. So the file is flushed before the hold and its directory after it, and a fourth hold
+  waits in memory instead of in the pool.
   `FOR SHARE` and not stronger, so two chunks of one session are still written side by side;
   the index is recorded after the hold, by the statement that always did, because recording
   it under the hold would have two chunks each waiting for the other's lock.
@@ -1562,7 +1568,9 @@ in `main.ts`.
   every event and heartbeat it sent. Here a request is one line, written when its response
   closes: a refusal is a warning, and a connection the client closed first says so in place
   of a status it never got. After CORS, because CORS answers a preflight itself and a line
-  per preflight would double the log. `request-log.e2e-spec.ts` pins the guard's 401, the
+  per preflight would double the log. **The request target is written as visible ASCII and
+  cut to a line's length**: whoever sends the request chooses it, and the line is now written
+  for callers no guard has let in. `request-log.e2e-spec.ts` pins the guard's 401, the
   unknown route, and the stream's single line.
 - **An error is logged through `describeError` (`src/common/error-message.ts`), never as
   `error.stack`.** A stack stops at the wrapper, and the wrapper is a sentence this code

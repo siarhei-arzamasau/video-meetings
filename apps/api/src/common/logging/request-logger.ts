@@ -4,6 +4,12 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 /** What `createRequestLogger` writes with: the two levels of a `Logger`, so a spec can watch. */
 export type RequestLog = Pick<Logger, 'log' | 'warn'>;
 
+/** Longer than any route here; past it a request target is somebody filling the log. */
+const MAX_LOGGED_URL_LENGTH = 2_048;
+
+/** Everything that is not a visible ASCII character: controls, spaces, and bytes above them. */
+const UNPRINTABLE = /[^\x21-\x7e]/g;
+
 /**
  * Logs method, path, status, and duration once per request, when its response is over.
  *
@@ -22,7 +28,7 @@ export function createRequestLogger(logger: RequestLog = new Logger('HTTP')): Re
     const startedAt = Date.now();
 
     response.once('close', () => {
-      const line = `${request.method} ${request.originalUrl} ${outcomeOf(response)} ${String(Date.now() - startedAt)}ms`;
+      const line = `${request.method} ${printable(request.originalUrl)} ${outcomeOf(response)} ${String(Date.now() - startedAt)}ms`;
 
       if (response.writableFinished && response.statusCode >= HttpStatus.BAD_REQUEST) {
         logger.warn(line);
@@ -33,6 +39,19 @@ export function createRequestLogger(logger: RequestLog = new Logger('HTTP')): Re
 
     next();
   };
+}
+
+/**
+ * The request target as it is safe to write to a log. Whoever sends a request chooses it, and
+ * this line is written for callers no guard has let in: visible ASCII only, so nothing in it
+ * can drive a terminal an operator reads the log in, and no longer than a line.
+ */
+function printable(url: string): string {
+  const visible = url.replace(UNPRINTABLE, '?');
+
+  return visible.length > MAX_LOGGED_URL_LENGTH
+    ? `${visible.slice(0, MAX_LOGGED_URL_LENGTH)}…`
+    : visible;
 }
 
 /**

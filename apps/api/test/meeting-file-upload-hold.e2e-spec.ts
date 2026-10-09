@@ -141,6 +141,37 @@ describe('a session cannot end while a chunk is being written into it', () => {
     expect(write).not.toHaveBeenCalled();
   });
 
+  // Each hold pins a pooled connection until its write returns, and the pool is ten for
+  // every route. Unbounded, one account sending chunks side by side could take all of it.
+  it('keeps no more than three holds open at once, and starts the next as one ends', async () => {
+    const uploadId = await openSession();
+    const writes = Array.from({ length: 5 }, () => controlledWrite());
+    const begun: number[] = [];
+
+    const holding = writes.map(({ write }, position) =>
+      holds().whileLive(uploadId, () => {
+        begun.push(position);
+
+        return write();
+      }),
+    );
+    await pause(SETTLE_MS);
+
+    // Which three, not in what order: they are three transactions started side by side.
+    expect(begun.toSorted()).toEqual([0, 1, 2]);
+
+    writes[0]?.finish();
+    await pause(SETTLE_MS);
+
+    expect(begun.toSorted()).toEqual([0, 1, 2, 3]);
+
+    for (const { finish } of writes) {
+      finish();
+    }
+
+    await expect(Promise.all(holding)).resolves.toEqual([true, true, true, true, true]);
+  });
+
   it('lets two chunks of one session be written side by side', async () => {
     const uploadId = await openSession();
     const first = controlledWrite();
