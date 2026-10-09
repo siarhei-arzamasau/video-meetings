@@ -1622,6 +1622,14 @@ already in `process.env`, which is what lets the root `pnpm dev` decide `PORT` â
 
 ## Prisma 7 specifics
 
+- **The API never applies migrations at boot**, and each way of starting it has its own
+  `prisma migrate deploy`: `pnpm start:dev` for development, the e2e suite's global setup for
+  its own database, and under Compose the one-shot `migrate` service, which `api` waits on
+  with `service_completed_successfully`. A service of its own rather than a step in the
+  image's command, so it runs once however many `api` containers start and a failed migration
+  stops the stack before an API boots on a schema it does not match. An image started any
+  other way needs it run first â€” `node_modules/.bin/prisma migrate deploy` in
+  `/repo/apps/api`.
 - The `datasource` block has **no `url`**. The CLI reads the connection string from
   `prisma.config.ts`; the runtime client receives it through the `PrismaPg` driver adapter
   constructed in `PrismaService`.

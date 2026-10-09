@@ -13,3 +13,12 @@ docs
 !**/.env.example
 **/*.log
 .DS_Store
+# Uploaded recordings, transcripts, and avatars (MEETING_FILES_DIR's default). Gitignored, so
+# without this line `COPY . .` would bake a developer's local uploads into the API image.
+apps/api/storage
+# Run output and agent tooling: none of it is needed to build either image.
+apps/web/test-results
+apps/web/playwright-report
+.playwright-mcp
+.claude
+.agents

@@ -48,7 +48,8 @@ pnpm dev                        # web on :3000, api on :3001
 
 Files uploaded to a meeting are stored under `apps/api/storage/` (gitignored, created at
 boot; set `MEETING_FILES_DIR` to move it). Under `docker compose` the API keeps them on a named
-volume instead. Files up to 100 MB are uploaded in one request; larger ones, up to 1 GB, are
+volume instead, and a one-shot `migrate` service applies the database migrations before the
+API starts. Files up to 100 MB are uploaded in one request; larger ones, up to 1 GB, are
 uploaded in chunks and can be resumed, and an unfinished upload is discarded after
 `MEETING_FILE_UPLOAD_TTL_HOURS` (default 24).
 
