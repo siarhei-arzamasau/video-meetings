@@ -77,8 +77,10 @@ front of the API: left at 0, every client arrives as the proxy and shares one bu
 than the real count, a client can choose its own address and with it a fresh budget.
 
 The host port is 5433 rather than the usual 5432, so the container does not collide with a
-PostgreSQL you already run locally. To use a different one, set `POSTGRES_PORT` in `.env`
-and point `DATABASE_URL` at the same port:
+PostgreSQL you already run locally, and it is published on `127.0.0.1` only: the password in
+`docker-compose.yml` is a development default, and nothing off this machine needs the port.
+To use a different one, set `POSTGRES_PORT` in `.env` and point `DATABASE_URL` at the same
+port:
 
 ```bash
 POSTGRES_PORT=5434
