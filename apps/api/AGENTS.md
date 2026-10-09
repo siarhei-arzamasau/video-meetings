@@ -835,8 +835,9 @@ get wrong. Transcription has a PRD and a plan of its own, named under _Transcrip
 `ClaudeAgentService` is Claude through the Claude Agent SDK, two ways: `runPrompt(prompt, model)`
 is a prompt in and text out, and `runStructuredPrompt(request, signal)` is a system prompt, a
 prompt, and a JSON schema in and an object bound to that schema out, with its model, cost, and
-token counts. No route reaches either; a feature that wants Claude imports `ClaudeAgentModule`,
-and the meeting digest is the one that does.
+token counts — and, when the request names them, tools of the API's own that the run may call
+before it answers. No route reaches either; a feature that wants Claude imports
+`ClaudeAgentModule`, and the meeting digest is the one that does.
 
 - **The SDK is Claude Code as a library, not an HTTP client.** Each call starts a Claude Code
   process — a native binary of about 220 MB, installed as a per-platform optional dependency —
@@ -859,7 +860,10 @@ and the meeting digest is the one that does.
 module` unless Node runs with `--experimental-vm-modules`, and `ClaudeAgentModule` is in
   `AppModule`, so a top-level import would fail every e2e spec before its first test. The
   `await import()` inside `ClaudeAgentSdkLoader.loadQuery` runs only when a prompt is sent;
-  everything else the module takes from the package is `import type`.
+  everything else the module takes from the package is `import type`. **There is a second
+  place, for the same reason**: `ClaudeAgentToolkitLoader.loadToolkit` loads `tool` and
+  `createSdkMcpServer`, which describe tools and send nothing. It is the one of the two the
+  module exports — a module that describes tools is not handed the means to send a prompt.
 - **`ClaudeAgentSdkLoader` is the seam the service's own decisions are tested through, and
   nothing else.** The specs beside the service hand it a scripted process
   (`claude-agent-process.fixture.ts`) and hold it to what it decides around one: that nothing
@@ -876,6 +880,36 @@ module` unless Node runs with `--experimental-vm-modules`, and `ClaudeAgentModul
   `SINGLE_TURN`. What the cap costs is the correction: an answer the SDK rejects against the
   schema has no second request to be put right in, and ends as a failure. Raise it only for
   that, and only with the process still holding no tool that touches the host.
+- **A request that names `tools` is the one call that holds any, and only those.**
+  `toolOptionsOf` (`services/claude-agent-tools.ts`) adds options and takes none away:
+  `mcpServers` with the one in-process server, `allowedTools` with the names the caller
+  listed, `maxTurns` raised to `MAX_TOOL_RUN_TURNS` or to what the caller asks for, and
+  the caller's `hooks` if it names any. The process still holds no
+  built-in tool, `dontAsk` still denies whatever is not listed, and `strictMcpConfig` still
+  keeps `.mcp.json` out — so `allowedTools` is the whole of what a prompt can make the
+  process do, and widening it is the decision the first bullet asks for. The answer is
+  bound to the schema as before; on 2026-10-09 the real model called the tools and then
+  answered through `StructuredOutput`, with no call denied.
+- **The server is asked for as a function, and made only when a process is about to be
+  started.** Making one loads the SDK. A caller that made it up front would do that in
+  every e2e spec, where `ClaudeAgentService` is a fake that never calls the function.
+- **Hooks are asked for as a function too, for another reason: one call of it per process.**
+  A hook may count a run, and hooks made once and handed to two runs count them as one.
+  **A hook is relied on only to refuse.** `deny` from a `PreToolUse` hook takes away a call
+  `allowedTools` would have let through, and its reason is the model's to read in place of
+  the tool's result; nothing here leans on a hook to let through what the list does not
+  name. Measured on 2026-10-09 with the real model: Claude Code asks the hooks about a tool
+  of an in-process server, a refused call does not end the run, and registering hooks adds
+  no tokens.
+- **A run stopped by its hooks needs turns past the point they stop it.** `maxTurns` ends a
+  run as a failure, `error_max_turns`; a refused call only tells the model, which then
+  answers. So a caller whose hooks cap the calls takes its cap from `turnsForToolCalls`,
+  which is that many turns and a few more — with both at the same number, a run calling
+  one tool a turn would fail on the cap in the turn before the hook had anything to refuse.
+- **`num_turns` is not the count `maxTurns` caps.** A one-turn answer reports 2, and a run
+  that looked for two tasks, wrote them, and answered reports 6 under a cap of 20. The cap
+  was never reached in a measurement, and what it does to a run that calls tools one at a
+  time for fifty tasks was not measured (`meeting-digest.defaults.ts`).
 - **The structured output is `unknown`, and the caller validates it again.** The schema was
   enforced by another process on the provider's word. A caller that stores or renders the
   answer checks the shape itself, with bounds on every length.
@@ -901,7 +935,8 @@ module` unless Node runs with `--experimental-vm-modules`, and `ClaudeAgentModul
   The measurements are in `src/config/meeting-digest.defaults.ts`.
 
 Its one caller is `MeetingDigestGenerator` (`src/modules/meeting-digests`): transcripts in, a
-validated digest out, one request and no state. What calls the generator, and what is done
+validated digest out, one run that is handed the meeting's tools (_Tasks, and the run's
+tools_, below). What calls the generator, and what is done
 with its answer, is the next section. The PRD is
 [`docs/prd-meeting-digest-summary-action-items-decisions.md`](../../docs/prd-meeting-digest-summary-action-items-decisions.md)
 and the decisions under it are in
@@ -971,6 +1006,13 @@ What a reader of the code would get wrong:
   with a decision about that field leaving the deployment. **That includes the members'
   names**, which would help the model spell an owner and are read only after it has
   answered (_Owners_, below).
+- **One identifier does leave: the meeting's id, in the system prompt.** The run's tools
+  take a meeting id, so the model is told which meeting it is — in the instructions, never
+  in the user message, which stays transcript. It is a random UUID that means nothing
+  outside the deployment, and that decision was the owner's, made on 2026-10-09. What the
+  tools answer leaves too: the titles, ids, and statuses of this meeting's tasks, which
+  were made from these transcripts. The e2e spec that reads the captured prompt holds the
+  line at exactly that: the id once, in the instructions, and nothing else.
 - **The setting stops new work and nothing else**, as the transcription's does. Off, a newly
   transcribed recording asks for nothing, the worker claims nothing, and a `QUEUED` row
   waits; a stored digest is still served, and both rules about recordings still apply to it,
@@ -1142,6 +1184,84 @@ What a reader of the code would get wrong:
   status and leaves the content rows, as phase 2 built it; they are withheld, and removed by
   the next delete in the meeting. It is reached only when a delete's reaction never ran.
 
+**Tasks, and the run's tools**
+
+- **A generation keeps the meeting's tasks while it writes the digest.** The run is handed
+  `MeetingTools`' server for its meeting with all three tools allowed, and the instructions
+  (`buildMeetingDigestInstructions`) carry three rules `test:live` holds the real model to:
+  look with `find_tasks` before creating a task; update the similar task that is found
+  rather than add a second; leave alone whatever is not a task.
+- **Tasks are written during the run, not with the answer.** Nothing about them waits for
+  `complete`, so a generation that fails, runs out of time, is handed back at a shutdown,
+  or is discarded for a recording deleted meanwhile has still written what it wrote — and
+  the generation that replaces it finds those tasks and updates them. **Nothing takes a
+  task back**: one made from a recording that is later deleted stays. The digest's rule
+  about deleted recordings does not cover tasks, and no route serves a task yet; the route
+  that does has that to decide.
+- **`update_meeting` is allowed in the run, and it is the one tool that can break a rule
+  here.** A revision writes at once, before the answer is checked against its recordings,
+  and outlives the run that made it: one that then fails leaves a summary no generation
+  completed, and one discarded for a deleted recording leaves words of that recording under
+  sources that never named it — which no delete withdraws. Allowing it was the owner's
+  decision, on 2026-10-09. What holds it back is the instructions, which tell the model the
+  answer is stored for it; on a meeting's first digest the tool answers `NO_DIGEST` and
+  nothing is written. Taking it out is one name fewer in the generator's `toolNames`.
+- **A run's use of the tools is bounded by hooks, not by the instructions.**
+  `MeetingHooks.createHooks` is made for every run and registered through the request's
+  `tools`: a title too short to be a task is refused, every call past
+  `MEETING_DIGEST_MAX_TOOL_CALLS` (20) is refused, and each call that ran is logged
+  (_Meeting tools_, below). **A generation that runs out of calls still stores its
+  digest** — the answer is not one of the calls — **and its tasks only in part**: at two
+  calls a task, twenty is ten tasks. The turn cap follows the budget (`turnsForToolCalls`,
+  under _Claude_).
+- **The model is told the budget, in the instructions, and that is what makes it usable.**
+  `buildMeetingDigestInstructions(meetingId, maxToolCalls)` says how many calls the run has
+  and how many tasks that is, most important first. Told nothing, a model with many tasks
+  searches for all of them before it writes one — it batches its calls — and a budget
+  spent on searches leaves a digest with no task at all. The generator reads the number
+  once and hands the same one to the instructions and to the hooks; the contract's floor
+  is two, one task. `test:live` holds the model to both halves: a budget of two records
+  one task with no call refused, and hooks made to allow one call under instructions that
+  promise twenty refuse the second and still get their digest.
+- **What the instructions say about ids is not what keeps a run to its meeting** — the
+  server does (_Meeting tools_, below).
+- **One e2e spec runs the tools through a generation, and it is the one about injection.**
+  Everywhere else both suites' Claude is a stand-in for `ClaudeAgentService` that never
+  asks for the server. In `test/meeting-digest-injection.e2e-spec.ts` the stand-in is a
+  model that a transcript has taken over completely: for the meeting id the transcript
+  names it searches, plants a task, closes a task, and rewrites the summary, through the
+  server the generator made, against the database. Nothing of the other meeting is read or
+  changed. **It asserts what happens when the model obeys, not that it refuses** — whether
+  the real model refuses is the instructions' and `test:live`'s. The tools alone against
+  the database are `test/meeting-tools.e2e-spec.ts`.
+- **A generation that writes tasks is three requests where there was one**, about five
+  times the tokens the same meeting read before there were tools, and twice the seconds;
+  the rows are in `meeting-digest.defaults.ts`. A meeting with fifty tasks was not measured
+  with tools, and the time limit was set before there were any.
+
+**Revision**
+
+- **`ReviseMeetingDigestCommand(meetingId, summary, decisions)` is the one write to a
+  digest's content that is not a worker's under its claim.** It puts a summary and decisions
+  in place of the stored ones; its caller is the `update_meeting` tool
+  (`src/modules/meeting-tools`), and it carries no user — whether the caller may touch the
+  meeting was decided by whoever handed it the command.
+- **It revises a digest and cannot make one.** The write is conditional on stored content,
+  and a meeting without any answers `NO_DIGEST`: content is served only while every
+  recording it was built from is still transcribed, so a summary stored under no recording
+  would be one no read returns.
+- **Action items, sources, `generated_at`, and the status are left as the last generation
+  left them.** The revision is therefore still attributed to that generation's recordings —
+  deleting one withdraws it with the rest — and a generation that is queued or under way
+  replaces it when it lands, as it replaces everything. It takes no edge of the status
+  table.
+- **`version` moves and the change is announced**, like every write that changes what `GET`
+  answers.
+- **Its bounds are the answer's, enforced by the answer's guard** (`readMeetingDigestRevision`):
+  what bounds a row must not depend on which way the text came.
+- **The setting is not asked about.** It decides whether transcripts leave the deployment,
+  and a revision sends nothing.
+
 **Generate and Retry**
 
 - **`POST :id/digest/generation` is the one caller of the edges into `QUEUED` that no
@@ -1267,6 +1387,114 @@ What a reader of the code would get wrong:
   discarded with a lost claim — is logged with its duration, its model, and what the SDK
   says it cost. No row holds a cost and no response carries one.
 
+## Tasks (`src/modules/tasks`)
+
+A task is one thing to be done that came out of a meeting, stored as a record of its own:
+`tasks`, with a title, the meeting it came from, and a status. **It is not a digest's action
+item and nothing links the two** — `meeting_digest_action_items` are replaced whole by every
+generation that succeeds, which is exactly why they cannot carry a status, and they are
+still what the digest stores and serves. **A task has no assignee, on purpose**; an action
+item's owner is not one.
+
+The module is `TaskService` and nothing else: no controller and no command. It exports the
+service for its one caller, `meeting-tools`, which offers both methods to an agent; no route
+reaches a task.
+
+- **`upsert` is keyed on the meeting and the title**, as given: the model's one `@@unique`
+  is the `ON CONFLICT` target. A reworded title is therefore another task, and the caller
+  normalises a title before it gets here, as a DTO does for everything else. A status that
+  is not passed is not written, so stating a task again does not reopen it.
+- **`search` is trigram similarity, not a substring match**: `pg_trgm`'s `%` over the whole
+  title or `<%` over a stretch of it, at Postgres' default thresholds, best first, at most
+  `TASK_SEARCH_LIMIT`. **It searches every task, whoever asks.** A route that answers with
+  it has to narrow it to the meetings the caller can see first — `visibleTo` in `meetings`
+  is that rule.
+- **A title's bounds, `MIN_TASK_TITLE_LENGTH` and `MAX_TASK_TITLE_LENGTH`, are the
+  caller's to enforce**, like its trimming. The first is what tells a task from a fragment.
+  The second is there because the title is half of a unique index, and PostgreSQL refuses
+  an entry past a third of a page.
+- **Both are raw SQL, so the unit spec shows only what they are given.** What they match and
+  write is `test/tasks.e2e-spec.ts`, which CI does not run.
+- **`pg_trgm` is created by the migration, by hand.** Prisma does not manage extensions
+  here, so nothing in `schema.prisma` says the trigram index needs one, and a database built
+  any other way than by the migrations has no `gin_trgm_ops`. It also depends on the
+  database's character type: under a `C` one `pg_trgm` drops every letter that is not ASCII,
+  and a Russian title matches nothing. The Compose database is `en_US.utf8`.
+
+## Meeting tools (`src/modules/meeting-tools`)
+
+`MeetingTools.createServer(meetingId)` answers with an MCP server named `meeting` that lives
+in this process and holds three tools over the API's own data: `find_tasks` and `upsert_task`, which
+are `TaskService`'s two methods, and `update_meeting`, which is the digest's revision
+(_Revision_, under _Meeting digests_ above). Each is described with the SDK's `tool` over a Zod
+shape, and the three are gathered with `createSdkMcpServer`.
+
+- **A server is made for one meeting, and its tools reach no other.** `createServer`
+  takes the meeting's id. `find_tasks` searches that meeting's tasks, and the two that
+  write refuse any other id with an error — in the handlers, whatever a run's instructions
+  say. The ids are arguments, so the model chooses them, and what the model reads is what
+  people said: without this a transcript naming another meeting could write there, and
+  `find_tasks` would hand one meeting's tasks to a digest another meeting's members read.
+- **Its one caller is the digest's generation**, which hands every run the server of the
+  meeting it is generating for and allows all three tools (_Tasks, and the run's tools_,
+  under _Meeting digests_).
+- **Only `find_tasks` carries `readOnlyHint`.** It is a hint to whoever decides permissions,
+  not a restriction: what keeps a read-only run read-only is `allowedTools`.
+- **The Zod shape is the DTO.** It trims, refuses blanks, and holds every text and list to
+  the bounds of what it is written to — the task's title bound and the digest's own
+  constants — so `TaskService` is given a title already normalised, as it expects. The SDK
+  checks an input against the shape before the handler runs, and the digest's handler holds
+  its revision to the same bounds again, because it owns the row.
+- **A tool never throws.** A thrown error's message is the SDK's to hand to the model, and
+  what it says — a constraint's name, a statement — is not for it. Every handler logs the
+  cause and answers `isError` with a sentence of this module's own.
+- **`upsert_task`'s status is optional although the task has one**: left out, an existing
+  task keeps the status it reached. Required, a model restating a finished task would have
+  to pick one, and would reopen it.
+- **The SDK is loaded by `ClaudeAgentToolkitLoader`, inside `createServer`**, for the reason
+  nothing imports it at the top of a file (_Claude_, above). So the unit specs' fixture
+  (`meeting-tools.fixture.ts`) and `test/meeting-tools.e2e-spec.ts` both stand a
+  two-function fake in its place — the e2e
+  spec with everything behind a tool real — and **the SDK's own `tool` and
+  `createSdkMcpServer` run only in `test:live`**, where the real model calls the real
+  server over a `TaskService` held in memory.
+
+**The hooks — `meeting-hooks.ts`**
+
+`MeetingHooks.createHooks(maxToolCalls)` answers with what `query()` takes as
+`options.hooks`: callbacks of the SDK's `HookCallback` type, which Claude Code calls in this
+process before and after a tool call.
+
+- **`preToolUseGuard`**, on `PreToolUse` for `mcp__meeting__upsert_task`: a title that is
+  blank or under `MIN_TASK_TITLE_LENGTH` (3) characters is denied, with a reason that says
+  what a title needs. It reads the arguments as the model sent them — before the tool's
+  shape has trimmed or checked anything — so
+  it expects a title that is missing or not text. **The bound itself is the tool's**:
+  `MIN_TASK_TITLE_LENGTH` is in the tasks' constants and in `upsert_task`'s shape, so a
+  server handed to a run without these hooks refuses the same titles. The hook says it
+  sooner, and in words the model can act on.
+- **`callBudget`**, on `PreToolUse` for every meeting tool: counts the calls of one run and
+  denies each one past the limit, telling the model to answer. A call counts when it is
+  asked for, so one the guard refuses has been spent. **It is made per run, and it never
+  counts the SDK's `StructuredOutput`**: refused that, a run out of calls could not do the
+  one thing it is told to.
+- **`auditLog`**, on `PostToolUse` and `PostToolUseFailure` for every meeting tool: one
+  `log`-level line with the tool's name, its arguments, and its result or error. **This puts
+  meeting content in the API's log** — a task's title, a summary, decisions — where until
+  now there were ids, durations, and costs. Each of the two is JSON on one line, so a line
+  break in a title cannot start a line of its own, and is cut at `MAX_AUDITED_CHARACTERS`.
+  A call a hook denied reaches neither event; the hook that denied it logs a warning.
+- **Every hook checks the tool's name itself**, and answers `{}` — no decision — for
+  anything else. The matcher only decides whether the SDK asks: Claude Code reads one made
+  of letters, digits, and underscores as a tool's whole name and anything else as a regular
+  expression, so the one for every meeting tool is `^mcp__meeting__`, anchored here rather
+  than left to how the expression is applied. `test:live` ran the budget and the log under
+  that matcher; the guard's, a whole name, has run only in the unit spec.
+- **No hook answers `allow`.** Whether a call may run stays `allowedTools`' to say; a hook
+  here only ever takes a call away.
+- **A refusal is not which meeting a run may touch.** That is the handlers' rule above, and
+  it holds with no hook registered.
+
 ## Bootstrap behaviour (`src/configure-app.ts`)
 
 **Every global belongs in `configureApp`, not in `main.ts`.** `main.ts` and the e2e test app
@@ -1326,13 +1554,18 @@ time limit is stated once for code, in `src/config/transcription.defaults.ts`, a
 in those two files because neither can import — change all three together. The model has no
 default in code at all: those two files are the only places the local one is named.
 
-**The digest's two variables are in the first two and not the third.** `MEETING_DIGEST_ENABLED`
-and `MEETING_DIGEST_TIMEOUT_SECONDS` are in the contract and `apps/api/.env.example`, with
+**The digest's three variables are in the first two and not the third.**
+`MEETING_DIGEST_ENABLED`, `MEETING_DIGEST_TIMEOUT_SECONDS`, and
+`MEETING_DIGEST_MAX_TOOL_CALLS` are in the contract and `apps/api/.env.example`, with
 `ANTHROPIC_AUTH_TOKEN` required whenever the flag is on. `docker-compose.yml` hands its `api`
 service none of the three, so the digest is off there whatever the root `.env` says: nobody
 has yet checked that the image, which is Alpine, carries a Claude Code binary the SDK can
-start. Adding them to Compose goes with that check. The time limit's default is stated once
-for code, in `src/config/meeting-digest.defaults.ts`, with its measurements.
+start. Adding them to Compose goes with that check. The time limit's default and the call
+budget's are stated once for code, in `src/config/meeting-digest.defaults.ts`, with their
+measurements. **The generator reads the budget with `ConfigService.get` and adds to it**, so
+it has to be a number: the contract makes it one, and a module built without the contract —
+`test:live`'s — sets it as a number itself, since `ConfigService.set` writes text to
+`process.env` and a value set to `undefined` reads back as that word.
 
 **The contract is two classes, and `validate` checks them as one.** The transcription
 settings are `TranscriptionEnvironmentVariables` in `env.validation.transcription.ts`, which
@@ -1407,11 +1640,13 @@ excludes the pattern as it does specs, so a fixture never reaches `dist`.
 
 **`test:live` is a third suite, and the only one that leaves the machine.** `test/*.live-spec.ts`
 under `test/jest-live.json` sends real requests to Anthropic — nothing mocked, nothing replayed
-— so it needs the network and a working `ANTHROPIC_AUTH_TOKEN`, and costs a few cents a run. It needs no database, which is why it is not an e2e spec, and nothing runs it but you.
+— so it needs the network and a working `ANTHROPIC_AUTH_TOKEN`, and costs a few cents a run. It needs no database — the tasks a run's tools keep are `LiveMeetingTasks`, in memory — which is why it is not an e2e spec, and nothing runs it but you.
 `claude-agent.live-spec.ts` is the SDK itself; `meeting-digest.live-spec.ts` is the digest's
 instructions held to the PRD by the real model, over the reference transcripts in
 `test/fixtures/meeting-digest` (`test/utils/meeting-digest-fixtures.ts` says what each is, and
-how the recording of the script beside them was made); `meeting-digest-measure.live-spec.ts`
+how the recording of the script beside them was made); `meeting-digest-budget.live-spec.ts`
+is the budget of tool calls, in both halves — the model planning for the number it is told,
+and the hooks holding it to a number it was not; `meeting-digest-measure.live-spec.ts`
 is the digest's measurements, every one of them skipped unless its variable asks for it.
 
 - **The token comes from the env files, not the shell.** The spec builds a `ConfigModule` over

@@ -59,7 +59,59 @@
  * summary, fifty action items with owners and fifty decisions of 500 characters each, and
  * the JSON around them — at three characters a token. Twice that is four minutes.
  *
+ * **Every row above was measured before a generation held tools, and none was run again
+ * with them.** Since 2026-10-09 a run is handed the meeting's three tools and keeps its
+ * tasks before it answers. Measured that day, same model and SDK, one run each, by
+ * `test:live` — whose task store is in memory, so a tool call costs no database time:
+ *
+ * | Transcripts, with tools                       | Tokens in | Tokens out | Seconds | Cost   |
+ * | --------------------------------------------- | --------- | ---------- | ------- | ------ |
+ * | The reference, two tasks created              | 14,896    | 675        | 6.7     | $0.023 |
+ * | The reference again, both tasks already there | 15,283    | 696        | 6.3     | $0.013 |
+ * | The reference in Russian                      | 15,102    | 728        | 6.7     | $0.020 |
+ * | No outcomes, so no tool call                  | 4,587     | 204        | 2.9     | $0.011 |
+ * | Two recordings with no speech                 | 4,490     | 110        | 2.8     | $0.009 |
+ * | Instructions past a closing tag               | 15,507    | 842        | 8.2     | $0.022 |
+ *
+ * - **The tools and their rules are about 1,600 tokens of every call** (4,490 against the
+ *   2,904 of the same row above), and a meeting that states no task makes no tool call.
+ * - **A meeting with tasks is three requests where there was one**: one to look for the
+ *   tasks, one to write them, one to answer, and each reads the whole prompt and the
+ *   tools' replies so far. That is the 14,900 tokens — three times a run that calls no
+ *   tool, five times what the reference read before there were tools — and about twice
+ *   the seconds. The SDK reported `num_turns: 6` for each such run and 2 for the others.
+ * - **Nothing here says what fifty tasks cost.** If the model looks and writes in two
+ *   rounds, as it did for two, the answer still dominates and the limit below holds; if it
+ *   works through them one at a time, a hundred rounds each read the prompt again, and
+ *   neither the limit nor `MAX_TOOL_RUN_TURNS` was measured against that.
+ *   `MEETING_DIGEST_MEASURE_OUTCOMES` is the run that would say.
+ *
  * The rates are Anthropic's on the day, and they move with load: a deployment that sees
  * digests fail on the limit wants a larger `MEETING_DIGEST_TIMEOUT_SECONDS`, not a retry.
  */
 export const DEFAULT_MEETING_DIGEST_TIMEOUT_SECONDS = 240;
+
+/**
+ * How many times one generation may call the meeting's tools before every further call is
+ * refused and the model is told to answer.
+ *
+ * **Twenty is room, not a measurement.** Keeping a task is two calls, one to look for it and
+ * one to write it, so twenty is ten tasks; no run was counted against it. A meeting with
+ * more than that gets its digest whole and its tasks in part: the answer is not a tool call
+ * and is never refused. What the budget bounds is the cost of a run that keeps calling,
+ * since every round of calls reads the whole prompt again.
+ *
+ * What was measured, on 2026-10-09 by `test:live`, is that the budget holds in both of its
+ * halves. **Told its budget, the model plans for it**: the reference with two calls allowed
+ * searched for one task, wrote it, and answered with both action items and no call refused
+ * — 14,658 tokens in, 6.1 seconds, $0.021. **Told a larger one than its hooks allow, it is
+ * held all the same**: with one call let through under instructions that promised twenty,
+ * it made one, was refused the next, and answered with the whole digest — 9,756 tokens in,
+ * 5.0 seconds, $0.015. Before the instructions named the budget, that second run was the
+ * only way a budget showed: one search, and no task written.
+ *
+ * The sentence that names the budget is about 100 tokens of every call (4,593 for the
+ * recordings with no speech, against the 4,490 of the table above), and the hooks
+ * themselves none.
+ */
+export const DEFAULT_MEETING_DIGEST_MAX_TOOL_CALLS = 20;

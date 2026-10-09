@@ -149,9 +149,10 @@ A meeting can have a digest — a summary, the action items with whoever was nam
 and the decisions — written by Claude from the transcripts of its recordings. It is **off by
 default, because switching it on sends meeting content to a third party**: with
 `MEETING_DIGEST_ENABLED=true`, the text of every transcribed recording of a meeting is sent
-to Anthropic each time one of that meeting's recordings is transcribed. The transcripts are
-all that is sent — no recording, file name, email address, user id, or storage path — and with
-the setting off nothing is sent at all.
+to Anthropic each time one of that meeting's recordings is transcribed. With them go the
+meeting's id — a random UUID — and the tasks Claude has recorded for that meeting, which it
+looks up so as not to record one twice. Nothing else is sent — no recording, file name, email
+address, user id, or storage path — and with the setting off nothing is sent at all.
 
 ```bash
 # apps/api/.env
@@ -189,6 +190,11 @@ is off.
 
 - **Every generation is a paid request**, typically under a cent and a few seconds; the API
   log has each one's duration, model, and cost, and no response carries them.
+- **A generation may call its tools `MEETING_DIGEST_MAX_TOOL_CALLS` times** (default 20).
+  Past that every call is refused and the model is told to answer, so a meeting with many
+  tasks still gets its digest and keeps only some of its tasks. **Each call is written to the
+  API log with its arguments and result** — task titles, summaries, and decisions, which are
+  meeting content — so treat that log as you treat the transcripts.
 - **A digest that fails is not retried unless somebody asks**, and fails nothing else: the
   recordings stay ready and their transcripts still open. `MEETING_DIGEST_TIMEOUT_SECONDS` (default 240) bounds one
   generation, and a meeting whose transcripts are together past about 1.7 million characters

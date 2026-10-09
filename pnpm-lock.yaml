@@ -111,6 +111,9 @@ importers:
       strtok3:
         specifier: 6.3.0
         version: 6.3.0
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
     devDependencies:
       '@nestjs/cli':
         specifier: 11.0.24

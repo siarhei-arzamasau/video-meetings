@@ -23,7 +23,10 @@ import {
   parseBoolean,
 } from './env-values';
 import { TranscriptionEnvironmentVariables } from './env.validation.transcription';
-import { DEFAULT_MEETING_DIGEST_TIMEOUT_SECONDS } from './meeting-digest.defaults';
+import {
+  DEFAULT_MEETING_DIGEST_MAX_TOOL_CALLS,
+  DEFAULT_MEETING_DIGEST_TIMEOUT_SECONDS,
+} from './meeting-digest.defaults';
 
 /**
  * Environment contract for the API. Anything the app cannot start without belongs here,
@@ -189,6 +192,16 @@ export class EnvironmentVariables extends TranscriptionEnvironmentVariables {
   @IsInt()
   @Min(30)
   MEETING_DIGEST_TIMEOUT_SECONDS: number = DEFAULT_MEETING_DIGEST_TIMEOUT_SECONDS;
+
+  /**
+   * How many times one generation may call the meeting's tools — find a task, write one,
+   * revise the summary — before a hook refuses every further call and tells the model to
+   * answer. The digest is still written; the tasks past the budget are not. At least two,
+   * which is one task — a search and a write — and the least the instructions can plan for.
+   */
+  @IsInt()
+  @Min(2)
+  MEETING_DIGEST_MAX_TOOL_CALLS: number = DEFAULT_MEETING_DIGEST_MAX_TOOL_CALLS;
 
   /**
    * What the Claude Agent SDK authenticates with, sent to Anthropic as a bearer token, and
