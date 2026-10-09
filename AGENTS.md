@@ -118,6 +118,44 @@ These outrank whatever the existing code happens to do.
 - **Dependencies go through the module, never the service directly**, and never in a cycle —
   check before committing. Shared types come only from `@repo/shared`.
 
+## Skills are loaded where a change touches their area
+
+**Three reference skills are loaded before the code is written; `security-review` runs after
+it, on the diff.** The two kinds do different jobs. `heroui-react`,
+`vercel-react-best-practices`, and `nestjs-best-practices` say how to write something, so
+they are worth most while a change is being planned and are too late once it is built.
+`security-review` is a review method for code that exists, so it has nothing to read until
+there is a diff.
+
+| Skill                         | When           | Triggered by                                                                                                                                                                               |
+| ----------------------------- | -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `heroui-react`                | Before writing | A HeroUI component or pattern the app does not already use that way, or a change to the theme                                                                                              |
+| `vercel-react-best-practices` | Before writing | A new or reshaped component, hook, route, or data fetch in `apps/web`                                                                                                                      |
+| `nestjs-best-practices`       | Before writing | A new or reshaped module, provider, controller, guard, handler, or Prisma access in `apps/api`                                                                                             |
+| `security-review`             | On the diff    | Authentication or authorization, a route or DTO that takes input, upload and storage, tokens, secrets or env, raw queries, a new dependency, or content sent to a third party — either app |
+
+- **A small change loads nothing.** The rows say _new or reshaped_ on purpose: a copy change,
+  a rename, a one-line fix, a test-only or documentation edit adjusts something that already
+  follows the pattern, and a skill read for it is context spent on nothing. A change takes
+  every row it does match — a new upload form matches three.
+- **A reference skill is loaded once, not twice.** It stays in context for the session, so
+  the closing check is a re-read of the finished diff against what is already loaded, before
+  the final verification run — not a second load.
+- **The security pass goes to the `security-reviewer` subagent**, which preloads the skill.
+  A reader that did not write the code is not anchored on why it looked right, and the
+  skill's references stay out of the main context. Load `security-review` while planning as
+  well only when the design is itself the security question — a new sign-in flow, a new
+  upload path, a new destination for meeting content.
+- **Where a skill and a guide disagree, the guide wins.** The skills are generic; the guides
+  record what was decided here, often against the generic advice and with the reason.
+- **Say what ran**: one line naming the skills loaded and the review run, and what each
+  flagged — or that nothing matched.
+
+**The rule lives here rather than in the app guides** because the root guide is the only one
+in context while a plan is being written; an app's guide loads when a file under it is first
+read. The `ui-ux-pro-max` gate in [the web guide](apps/web/AGENTS.md) is separate and stays
+where it is.
+
 ## Token economy
 
 Command output lands in an agent's context, so default to the narrow form of each. Widen
