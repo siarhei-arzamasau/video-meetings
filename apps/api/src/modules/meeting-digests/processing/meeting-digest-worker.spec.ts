@@ -69,6 +69,12 @@ describe('MeetingDigestWorker: one claim, start to finish', () => {
     );
   });
 
+  it('asks for the digest of the meeting it claimed, which is whose tools the run is handed', async () => {
+    await worker.drain();
+
+    expect(doubles.generatedFor.mock.calls).toEqual([[DIGEST_MEETING_ID]]);
+  });
+
   it('takes a claim to a stored digest: the transcripts in upload order, the answer, its sources', async () => {
     await worker.drain();
 

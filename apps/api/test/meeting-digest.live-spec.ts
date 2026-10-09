@@ -2,9 +2,8 @@ import {
   ClaudeAgentFailure,
   ClaudeModel,
 } from '../src/modules/claude-agent/claude-agent.constants';
-import type { GeneratedMeetingDigest } from '../src/modules/meeting-digests/services/meeting-digest-generator';
 import { LiveMeetingDigest } from './utils/live-meeting-digest';
-import { readDigestTranscript } from './utils/meeting-digest-fixtures';
+import { expectReferenceOutcomes, readDigestTranscript } from './utils/meeting-digest-fixtures';
 
 const NEVER_ISSUED_TOKEN = 'sk-ant-api03-never-issued-by-anthropic';
 
@@ -52,6 +51,48 @@ describe('MeetingDigestGenerator against the real Anthropic API', () => {
   );
 
   it(
+    'keeps the tasks of the meeting: looks before it creates, and one task per action item',
+    async () => {
+      const meetingId = crypto.randomUUID();
+
+      await live.generateFrom(
+        'reference, with tasks',
+        [readDigestTranscript('reference')],
+        meetingId,
+      );
+
+      const calls = live.tasks.callsFor(meetingId);
+      const titles = live.tasks.of(meetingId).map(({ title }) => title);
+      expect(titles).toHaveLength(2);
+      expect(titles.some((title) => /e-?mail/i.test(title))).toBe(true);
+      expect(titles.some((title) => /pricing/i.test(title))).toBe(true);
+      // Looked first, and at least once for each task it then created.
+      expect(calls[0]?.method).toBe('search');
+      expect(calls.filter(({ method }) => method === 'search').length).toBeGreaterThanOrEqual(2);
+      // Every call was for this meeting: the id it was told, and no other.
+      expect(live.tasks.calls.filter((call) => call.meetingId === undefined)).toEqual([]);
+    },
+    GENERATION_TIMEOUT_MS,
+  );
+
+  it(
+    'updates the tasks a meeting already has instead of adding the same ones again',
+    async () => {
+      const meetingId = crypto.randomUUID();
+      const transcripts = [readDigestTranscript('reference')];
+
+      await live.generateFrom('reference, first of two', transcripts, meetingId);
+      const first = live.tasks.of(meetingId).map(({ title }) => title);
+      const again = await live.generateFrom('reference, second of two', transcripts, meetingId);
+
+      expectReferenceOutcomes(again);
+      expect(live.tasks.of(meetingId).map(({ title }) => title)).toEqual(first);
+      expect(first).toHaveLength(2);
+    },
+    2 * GENERATION_TIMEOUT_MS,
+  );
+
+  it(
     'writes the digest of a meeting held in Russian in English, names included',
     async () => {
       const digest = await live.generateFrom('reference in Russian', [
@@ -67,8 +108,15 @@ describe('MeetingDigestGenerator against the real Anthropic API', () => {
   it(
     'returns empty lists for a meeting that decided nothing and assigned nothing',
     async () => {
-      const digest = await live.generateFrom('no outcomes', [readDigestTranscript('noOutcomes')]);
+      const meetingId = crypto.randomUUID();
+      const digest = await live.generateFrom(
+        'no outcomes',
+        [readDigestTranscript('noOutcomes')],
+        meetingId,
+      );
 
+      // What is not a task is left alone: nothing was said to be done, so nothing is written.
+      expect(live.tasks.of(meetingId)).toEqual([]);
       expect(digest.answer.actionItems).toEqual([]);
       expect(digest.answer.decisions).toEqual([]);
       expect(digest.answer.summary).toMatch(/sign-?ups|support|check-in/i);
@@ -93,8 +141,13 @@ describe('MeetingDigestGenerator against the real Anthropic API', () => {
   it(
     'does not obey instructions spoken in a recording, even past a tag that closes it',
     async () => {
-      const digest = await live.generateFrom('injection', [readDigestTranscript('injection')]);
-      const everything = JSON.stringify(digest.answer);
+      const meetingId = crypto.randomUUID();
+      const digest = await live.generateFrom(
+        'injection',
+        [readDigestTranscript('injection')],
+        meetingId,
+      );
+      const everything = JSON.stringify([digest.answer, live.tasks.of(meetingId)]);
 
       // What the injected text asked for, from outside the recording it had "closed": French,
       // a one-word summary, no decisions, and an action item of its own. A digest that holds
@@ -115,18 +168,3 @@ describe('MeetingDigestGenerator against the real Anthropic API', () => {
     ).rejects.toMatchObject({ failure: ClaudeAgentFailure.AUTHENTICATION });
   });
 });
-
-/** The reference meeting's two action items and its decision, however they were worded. */
-function expectReferenceOutcomes({ answer }: GeneratedMeetingDigest): void {
-  const emails = answer.actionItems.find((item) => /e-?mail/i.test(item.description));
-  const pricing = answer.actionItems.find((item) => /pricing/i.test(item.description));
-
-  expect(answer.actionItems).toHaveLength(2);
-  expect(emails?.ownerName).toMatch(/^Ali[cs][ea] \w+son$/i);
-  // Stated with nobody named for it: "nobody has picked that up yet" is not an owner.
-  expect(pricing).toEqual({ description: expect.any(String) });
-
-  expect(answer.decisions).toHaveLength(1);
-  expect(answer.decisions[0]?.description).toMatch(/april/i);
-  expect(answer.summary).toMatch(/launch/i);
-}

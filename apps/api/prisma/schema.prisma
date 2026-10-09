@@ -73,6 +73,7 @@ model Meeting {
   files        MeetingFile[]
   fileUploads  MeetingFileUpload[]
   digest       MeetingDigest?       @relation("MeetingDigestMeeting")
+  tasks        Task[]               @relation("TaskSourceMeeting")
 
   @@index([hostId])
   @@map("meetings")
@@ -358,4 +359,45 @@ model MeetingDigestSource {
   @@index([digestId])
   @@index([meetingFileId])
   @@map("meeting_digest_sources")
+}
+
+/// Where a task stands. UPPER_CASE (`.claude/rules/prisma.md`). Two values on purpose: adding
+/// one to a Postgres enum is a one-line migration, and taking one away is not.
+enum TaskStatus {
+  OPEN
+  DONE
+
+  @@map("task_status")
+}
+
+/// One thing to be done that came out of a meeting, as a record of its own — unlike a
+/// `MeetingDigestActionItem`, which every successful generation replaces whole and which
+/// therefore cannot carry a status from one generation to the next.
+///
+/// No assignee, deliberately: a task has nobody responsible for it yet.
+model Task {
+  id              String @id @default(uuid()) @db.Uuid
+  /// As the caller gave it. With `sourceMeetingId` it is the task's identity — what
+  /// `TaskService.upsert` finds an existing task by — so a reworded title is another task.
+  title           String
+  sourceMeetingId String @map("source_meeting_id") @db.Uuid
+
+  status TaskStatus @default(OPEN)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  /// Defaulted as well as `@updatedAt`: the upsert is raw SQL, which Prisma's client-side
+  /// `@updatedAt` never sees, so it sets the column itself and an insert needs a value.
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  // Cascade, as for a digest: a task holds nothing on disk that has to outlive the meeting.
+  sourceMeeting Meeting @relation("TaskSourceMeeting", fields: [sourceMeetingId], references: [id], onDelete: Cascade)
+
+  /// One task per title within a meeting, and what the upsert's `ON CONFLICT` names.
+  @@unique([sourceMeetingId, title])
+  /// The foreign key's index, as the rules ask for one by this name.
+  @@index([sourceMeetingId])
+  /// Trigrams of the title, for `TaskService.search`. Needs the `pg_trgm` extension, which
+  /// the migration creates by hand: Prisma does not manage extensions here.
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("tasks")
 }

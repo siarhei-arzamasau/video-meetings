@@ -3,7 +3,9 @@ import { CqrsModule } from '@nestjs/cqrs';
 
 import { AuthModule } from '../auth/auth.module';
 import { ClaudeAgentModule } from '../claude-agent/claude-agent.module';
+import { MeetingToolsModule } from '../meeting-tools/meeting-tools.module';
 import { RequestMeetingDigestHandler } from './commands/handlers/request-meeting-digest.handler';
+import { ReviseMeetingDigestHandler } from './commands/handlers/revise-meeting-digest.handler';
 import { RequestDigestWhenTranscribedHandler } from './events/request-digest-when-transcribed.handler';
 import { WithdrawDigestWhenDeletedHandler } from './events/withdraw-digest-when-deleted.handler';
 import { MeetingDigestsController } from './meeting-digests.controller';
@@ -33,8 +35,10 @@ import { PENDING_DIGEST_REQUESTS, PendingDigestRequests } from './services/pendi
  * The files stream forwards it to the meeting's open pages; this module knows no stream.
  */
 @Module({
-  // `AuthModule` is for the guard on the two routes.
-  imports: [CqrsModule, AuthModule, ClaudeAgentModule],
+  // `AuthModule` is for the guard on the two routes, and `MeetingToolsModule` for the tools
+  // a generation's run is handed. That module reaches this one over the command bus and
+  // imports nothing of it, so the two are not a cycle.
+  imports: [CqrsModule, AuthModule, ClaudeAgentModule, MeetingToolsModule],
   controllers: [MeetingDigestsController],
   providers: [
     MeetingDigestGenerator,
@@ -44,6 +48,7 @@ import { PENDING_DIGEST_REQUESTS, PendingDigestRequests } from './services/pendi
     MeetingDigestAnnouncer,
     MeetingDigestDeleteFollower,
     RequestMeetingDigestHandler,
+    ReviseMeetingDigestHandler,
     // `@EventsHandler` registers nothing on its own, as a command handler does not: left out
     // of this array, a transcribed recording asks for nothing, a deleted one is followed by
     // nothing, and nothing says why.

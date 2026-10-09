@@ -8,6 +8,8 @@ import { readExchange } from './claude-agent-exchange';
 import { outcomeOf, structuredOutcomeOf } from './claude-agent-outcome';
 import type { ClaudeAgentExchange } from './claude-agent-outcome';
 import { ClaudeAgentSdkLoader } from './claude-agent-sdk.loader';
+import { toolOptionsOf } from './claude-agent-tools';
+import type { ClaudeAgentTools } from './claude-agent-tools';
 
 const AUTH_TOKEN_VARIABLE = 'ANTHROPIC_AUTH_TOKEN';
 
@@ -27,7 +29,8 @@ const CALLED_OFF = 'The prompt was called off before Claude Code was started';
 const ANSWERED_TOO_LATE = 'The prompt was called off, and the answer that followed is discarded';
 
 /**
- * One prompt, one answer: with no tools there is no result a second turn could read.
+ * One prompt, one answer: with no tools there is no result a second turn could read. A
+ * call that names tools of the API's own has a cap of its own, `MAX_TOOL_RUN_TURNS`.
  *
  * **A schema-bound answer fits this cap too, and it was measured rather than assumed.** With
  * `outputFormat` the SDK gives the model one tool of its own, `StructuredOutput` — there
@@ -58,6 +61,11 @@ export interface ClaudeStructuredPrompt {
   prompt: string;
   /** A JSON schema the answer is bound to. The SDK checks the answer against it. */
   schema: Record<string, unknown>;
+  /**
+   * Tools of the API's own the run may call before it answers. Left out, the run holds
+   * none and is one turn. The answer is bound to `schema` either way.
+   */
+  tools?: ClaudeAgentTools;
 }
 
 export interface ClaudeStructuredReply {
@@ -100,8 +108,9 @@ export class ClaudeAgentService {
   }
 
   /**
-   * A prompt in and an object out, bound to `schema` — still one turn, no tool that reaches
-   * the host, a replaced environment, and nothing from disk.
+   * A prompt in and an object out, bound to `schema` — no tool that reaches the host, a
+   * replaced environment, and nothing from disk. One turn, unless the request names tools
+   * of the API's own: then those and no others, for as many turns as `toolOptionsOf` says.
    *
    * **`signal` hangs up, and a call that was hung up on never resolves.** The SDK closes the
    * process's input and kills it about two seconds later, so the rejection follows the abort
@@ -128,6 +137,7 @@ export class ClaudeAgentService {
     try {
       const exchange = await this.exchange(request.prompt, {
         ...this.optionsFor(request.model, authToken),
+        ...(request.tools === undefined ? {} : await toolOptionsOf(request.tools)),
         systemPrompt: request.systemPrompt,
         outputFormat: { type: 'json_schema', schema: request.schema },
         abortController,

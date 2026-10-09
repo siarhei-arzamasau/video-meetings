@@ -4,6 +4,8 @@ import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { DigestRequestability } from './meeting-digest-action';
 import { requestGenerationByHand } from './meeting-digest-request';
+import { reviseContent } from './meeting-digest-revision';
+import type { MeetingDigestRevision } from './meeting-digest-revision';
 import { followDelete, requestGeneration } from './meeting-digest-writes';
 import type { DigestAfterDelete, RecordingsAfterDelete } from './meeting-digest-writes';
 import type { MeetingDigestRecord } from './meeting-digest.mapper';
@@ -18,7 +20,7 @@ export type DigestHandRequest =
 
 /**
  * The digest row as everybody but the worker touches it: asked for, made to follow a deleted
- * file, and read. The writes a worker makes under its lease are
+ * file, revised, and read. The writes a worker makes under its lease are
  * `MeetingDigestClaimRepository`'s; what each write here does is in `meeting-digest-writes`.
  *
  * The module owns these four tables and reads no other: which recordings are transcribed,
@@ -76,6 +78,14 @@ export class MeetingDigestRepository {
     });
 
     return digest?.requestedRevision ?? null;
+  }
+
+  /**
+   * Puts a summary and decisions in place of the stored ones, in one transaction, and
+   * answers whether the meeting had a digest to revise — `reviseContent`.
+   */
+  revise(meetingId: string, revision: MeetingDigestRevision): Promise<boolean> {
+    return this.prisma.$transaction((tx) => reviseContent(tx, meetingId, revision));
   }
 
   /** Makes the digest follow a deleted file, in one transaction — `followDelete`. */

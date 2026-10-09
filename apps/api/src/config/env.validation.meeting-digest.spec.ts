@@ -17,6 +17,7 @@ describe('validate: the meeting digest', () => {
 
     expect(env.MEETING_DIGEST_ENABLED).toBe(false);
     expect(env.MEETING_DIGEST_TIMEOUT_SECONDS).toBe(240);
+    expect(env.MEETING_DIGEST_MAX_TOOL_CALLS).toBe(20);
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
   });
 
@@ -79,5 +80,22 @@ describe('validate: the meeting digest', () => {
     expect(() => validate({ ...ON, MEETING_DIGEST_TIMEOUT_SECONDS: '29' })).toThrow(
       /MEETING_DIGEST_TIMEOUT_SECONDS/,
     );
+  });
+
+  it('takes the tool call budget from the environment, and refuses one too small for a task', () => {
+    expect(
+      validate({ ...ON, MEETING_DIGEST_MAX_TOOL_CALLS: '5' }).MEETING_DIGEST_MAX_TOOL_CALLS,
+    ).toBe(5);
+
+    expect(
+      validate({ ...ON, MEETING_DIGEST_MAX_TOOL_CALLS: '2' }).MEETING_DIGEST_MAX_TOOL_CALLS,
+    ).toBe(2);
+
+    // One call is a search with nothing left to write what it found.
+    for (const unfit of ['1', '0', '-1', '2.5', 'many']) {
+      expect(() => validate({ ...ON, MEETING_DIGEST_MAX_TOOL_CALLS: unfit })).toThrow(
+        /MEETING_DIGEST_MAX_TOOL_CALLS/,
+      );
+    }
   });
 });

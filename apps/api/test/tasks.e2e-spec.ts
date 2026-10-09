@@ -1,0 +1,189 @@
+import { TaskService } from '../src/modules/tasks/services/task.service';
+import { useApiSuite } from './utils/api-suite';
+import { EMAIL } from './utils/fixtures';
+import { createMeeting, registerUser } from './utils/meeting-files-suite';
+import { truncateUsers } from './utils/users-table';
+
+/** Restated rather than imported, as every stored vocabulary here is: see `fixtures.ts`. */
+const OPEN = 'OPEN';
+const DONE = 'DONE';
+
+interface TaskRow {
+  id: string;
+  title: string;
+  source_meeting_id: string;
+  status: string;
+}
+
+/**
+ * The two statements of `TaskService`, run against the database: what a search matches and
+ * in what order, and what an upsert writes. Both are raw SQL over `pg_trgm` and
+ * `ON CONFLICT`, so a stubbed client can show neither.
+ */
+describe('tasks, against the database', () => {
+  const suite = useApiSuite();
+  const tasks = (): TaskService => suite.app().get(TaskService);
+  const newMeeting = async (): Promise<string> =>
+    (await createMeeting(suite, await registerUser(suite, EMAIL))).id;
+  const rows = (): Promise<TaskRow[]> =>
+    suite
+      .prisma()
+      .$queryRawUnsafe<TaskRow[]>(
+        'SELECT id, title, source_meeting_id, status::text FROM "tasks" ORDER BY title',
+      );
+  const titlesFound = async (query: string): Promise<string[]> =>
+    (await tasks().search(query)).map(({ title }) => title);
+
+  describe('upsert', () => {
+    it('creates an open task of the meeting, and answers with the row it stored', async () => {
+      const meetingId = await newMeeting();
+
+      const task = await tasks().upsert({
+        title: 'Rewrite the emails',
+        sourceMeetingId: meetingId,
+      });
+
+      expect(task).toEqual({
+        id: expect.any(String),
+        title: 'Rewrite the emails',
+        sourceMeetingId: meetingId,
+        status: OPEN,
+        createdAt: expect.any(Date),
+        updatedAt: expect.any(Date),
+      });
+      await expect(rows()).resolves.toEqual([
+        { id: task.id, title: 'Rewrite the emails', source_meeting_id: meetingId, status: OPEN },
+      ]);
+    });
+
+    it('updates the status of the task the meeting already has, and makes no second one', async () => {
+      const meetingId = await newMeeting();
+      const created = await tasks().upsert({ title: 'Call Bob', sourceMeetingId: meetingId });
+
+      const updated = await tasks().upsert({
+        title: 'Call Bob',
+        sourceMeetingId: meetingId,
+        status: DONE,
+      });
+
+      expect(updated).toMatchObject({ id: created.id, status: DONE, createdAt: created.createdAt });
+      await expect(rows()).resolves.toHaveLength(1);
+    });
+
+    it('leaves the status of an existing task alone when none is given', async () => {
+      const meetingId = await newMeeting();
+      await tasks().upsert({ title: 'Call Bob', sourceMeetingId: meetingId, status: DONE });
+
+      await expect(
+        tasks().upsert({ title: 'Call Bob', sourceMeetingId: meetingId }),
+      ).resolves.toMatchObject({ status: DONE });
+    });
+
+    it('keeps one title in two meetings as two tasks', async () => {
+      const host = await registerUser(suite, EMAIL);
+      const [first, second] = [await createMeeting(suite, host), await createMeeting(suite, host)];
+
+      await tasks().upsert({ title: 'Call Bob', sourceMeetingId: first.id });
+      await tasks().upsert({ title: 'Call Bob', sourceMeetingId: second.id });
+
+      await expect(rows()).resolves.toHaveLength(2);
+    });
+
+    it('stores one task when the same one is upserted many times at once', async () => {
+      const meetingId = await newMeeting();
+      const upserts = Array.from({ length: 8 }, () =>
+        tasks().upsert({ title: 'Call Bob', sourceMeetingId: meetingId }),
+      );
+
+      const ids = (await Promise.all(upserts)).map(({ id }) => id);
+
+      expect(new Set(ids).size).toBe(1);
+      await expect(rows()).resolves.toHaveLength(1);
+    });
+
+    it('refuses a task of a meeting that does not exist', async () => {
+      await expect(
+        tasks().upsert({
+          title: 'Call Bob',
+          sourceMeetingId: '99999999-9999-4999-8999-999999999999',
+        }),
+      ).rejects.toThrow(/tasks_source_meeting_id_fkey/);
+      await expect(rows()).resolves.toEqual([]);
+    });
+  });
+
+  describe('search', () => {
+    const seed = async (...titles: string[]): Promise<void> => {
+      const meetingId = await newMeeting();
+
+      await Promise.all(
+        titles.map((title) => tasks().upsert({ title, sourceMeetingId: meetingId })),
+      );
+    };
+
+    it('finds a task worded slightly differently, and leaves an unrelated one out', async () => {
+      await seed('Rewrite the launch emails', 'Book the venue for the offsite');
+
+      await expect(titlesFound('rewrite launch email')).resolves.toEqual([
+        'Rewrite the launch emails',
+      ]);
+    });
+
+    it('finds a task by one word of a long title, and through a typo in it', async () => {
+      await seed('Prepare the quarterly report for the board meeting on Friday');
+
+      await expect(titlesFound('quarterly')).resolves.toHaveLength(1);
+      await expect(titlesFound('quartely report')).resolves.toHaveLength(1);
+    });
+
+    it('puts the most similar task first', async () => {
+      await seed('Send the invoice to the client', 'Send the invoices to all the clients today');
+
+      await expect(titlesFound('Send the invoice to the client')).resolves.toEqual([
+        'Send the invoice to the client',
+        'Send the invoices to all the clients today',
+      ]);
+    });
+
+    it('matches text that is not Latin, whatever its case', async () => {
+      await seed('Подготовить квартальный отчёт', 'Забронировать переговорную');
+
+      await expect(titlesFound('квартальный ОТЧЁТ')).resolves.toEqual([
+        'Подготовить квартальный отчёт',
+      ]);
+    });
+
+    it("narrowed to a meeting, finds only that meeting's tasks", async () => {
+      const host = await registerUser(suite, EMAIL);
+      const [first, second] = [await createMeeting(suite, host), await createMeeting(suite, host)];
+      await tasks().upsert({ title: 'Call Bob about the venue', sourceMeetingId: first.id });
+      await tasks().upsert({ title: 'Call Bob about the budget', sourceMeetingId: second.id });
+
+      const found = await tasks().search('Call Bob', second.id);
+
+      expect(found.map(({ title }) => title)).toEqual(['Call Bob about the budget']);
+      await expect(tasks().search('Call Bob')).resolves.toHaveLength(2);
+    });
+
+    it('finds nothing for a blank text, or for one no task resembles', async () => {
+      await seed('Rewrite the launch emails');
+
+      await expect(titlesFound('   ')).resolves.toEqual([]);
+      await expect(titlesFound('zzzz qqqq')).resolves.toEqual([]);
+    });
+
+    it('treats the text as text: a pattern or a quote in it matches nothing by itself', async () => {
+      await seed('Rewrite the launch emails');
+
+      await expect(titlesFound("%' OR 1=1 --")).resolves.toEqual([]);
+    });
+  });
+
+  it('is emptied by truncateUsers, so no spec needs a cleanup of its own', async () => {
+    await tasks().upsert({ title: 'Call Bob', sourceMeetingId: await newMeeting() });
+
+    await truncateUsers(suite.prisma());
+
+    await expect(rows()).resolves.toEqual([]);
+  });
+});

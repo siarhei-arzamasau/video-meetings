@@ -32,6 +32,9 @@
  * `requestByHand` never meets one: it refuses a row in either status, and a `READY` one
  * whose content covers every transcribed recording (`requestabilityOf`).
  *
+ * A revision — `ReviseMeetingDigestCommand` — takes none of these edges: it rewrites the
+ * summary and the decisions of content that is stored, under whatever status the row has.
+ *
  * **`GENERATING` → _(none)_ by a delete does not hang up on the call at once.** Its worker
  * finds the claim gone at the next lease renewal, a third of the lease away at most. One
  * replica runs one loop, so nothing starts meanwhile; with two, a request made in those

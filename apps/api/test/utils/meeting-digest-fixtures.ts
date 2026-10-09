@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import type { GeneratedMeetingDigest } from '../../src/modules/meeting-digests/services/meeting-digest-generator';
+
 const DIRECTORY = join(__dirname, '..', 'fixtures', 'meeting-digest');
 
 /**
@@ -94,4 +96,19 @@ function saidAgain(sayWeek: (number: number) => string, characters: number): str
   }
 
   return weeks.join(' ').slice(0, characters);
+}
+
+/** The reference meeting's two action items and its decision, however they were worded. */
+export function expectReferenceOutcomes({ answer }: GeneratedMeetingDigest): void {
+  const emails = answer.actionItems.find((item) => /e-?mail/i.test(item.description));
+  const pricing = answer.actionItems.find((item) => /pricing/i.test(item.description));
+
+  expect(answer.actionItems).toHaveLength(2);
+  expect(emails?.ownerName).toMatch(/^Ali[cs][ea] \w+son$/i);
+  // Stated with nobody named for it: "nobody has picked that up yet" is not an owner.
+  expect(pricing).toEqual({ description: expect.any(String) });
+
+  expect(answer.decisions).toHaveLength(1);
+  expect(answer.decisions[0]?.description).toMatch(/april/i);
+  expect(answer.summary).toMatch(/launch/i);
 }

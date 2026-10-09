@@ -22,8 +22,9 @@ rather than mirror the input language.
 | `@repo/shared`   | `packages/shared`   | Cross-app types and API contracts                           |
 | `@repo/tsconfig` | `packages/tsconfig` | Shared TypeScript base configs                              |
 
-`apps/api` owns email-and-password authentication, meetings, meeting files, and meeting
-digests; `apps/web` is its client. Two things are worth knowing before reading either: **pages are gated on the
+`apps/api` owns email-and-password authentication, meetings, meeting files, meeting
+digests, and tasks — a table and a service, with no route, kept by the digest's generation
+through three tools it hands Claude; `apps/web` is its client. Two things are worth knowing before reading either: **pages are gated on the
 client**, because the token lives in `localStorage` where neither the server nor middleware
 can read it, and **`meeting-files` is the largest module** — CQRS over local-disk storage
 with two in-process workers. Each app has its own `AGENTS.md` with the detail.

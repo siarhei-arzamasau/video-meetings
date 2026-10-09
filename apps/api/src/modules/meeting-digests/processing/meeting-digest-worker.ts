@@ -170,7 +170,8 @@ export class MeetingDigestWorker implements OnApplicationBootstrap, OnModuleDest
       claimed,
       readTranscripts: (meetingId) => transcriptsOf(this.queryBus, meetingId),
       readTranscribedIds: (meetingId) => transcribedIdsOf(this.queryBus, meetingId),
-      generate: (transcripts, signal) => this.generator.generate(transcripts, signal),
+      generate: (transcripts, signal) =>
+        this.generator.generate(claimed.meetingId, transcripts, signal),
       linkOwners: (meetingId, answer) =>
         ownerLinksOf(this.queryBus, this.logger, meetingId, answer),
       leases: this.claims,

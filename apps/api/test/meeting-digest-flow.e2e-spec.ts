@@ -165,9 +165,13 @@ describe('a meeting digest, from a transcribed recording to a stored one', () =>
     const [sent] = claude.calls;
     expect(sent?.prompt).toBe(`<recording number="1">\n${FIRST}\n</recording>`);
     const leaving = JSON.stringify([sent?.prompt, sent?.systemPrompt]);
-    for (const secret of [EMAIL, OTHER_EMAIL, host.id, guest.id, meeting.id, file.id, file.name]) {
+    for (const secret of [EMAIL, OTHER_EMAIL, host.id, guest.id, file.id, file.name]) {
       expect(leaving).not.toContain(secret);
     }
+    // The one identifier that leaves, and only in the instructions: the run's tools take
+    // the meeting's id as an argument, so the model is told which meeting it is.
+    expect(sent?.prompt).not.toContain(meeting.id);
+    expect(sent?.systemPrompt.split(meeting.id)).toHaveLength(2);
     expect(leaving).not.toMatch(/storage|\.transcript\.txt/);
 
     const served = JSON.stringify(await digests.read(host.token, meeting.id));

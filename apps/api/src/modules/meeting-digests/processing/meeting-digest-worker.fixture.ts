@@ -132,7 +132,10 @@ export interface DigestWorkerDoubles {
   transcribed: jest.Mock;
   memberIds: jest.Mock;
   memberNames: jest.Mock;
+  /** The generator, as a run calls it: the transcripts and the signal. */
   generate: jest.Mock;
+  /** The meeting each generation was asked for — what the worker gives the generator first. */
+  generatedFor: jest.Mock;
   /** `MeetingDigestAnnouncer.announce`: called with the meeting after every write that landed. */
   announce: jest.Mock;
   /** `MeetingDigestDeleteFollower.recheckStored`: the second look, after an answer is stored. */
@@ -152,6 +155,7 @@ export function digestWorkerDoubles(): DigestWorkerDoubles {
     memberIds: jest.fn(),
     memberNames: jest.fn(),
     generate: jest.fn(),
+    generatedFor: jest.fn(),
     announce: jest.fn(),
     recheckStored: jest.fn(),
   };
@@ -170,6 +174,7 @@ export function resetDigestWorkerDoubles(doubles: DigestWorkerDoubles): void {
   doubles.memberIds.mockReset().mockResolvedValue(MEMBERS.map(({ id }) => id));
   doubles.memberNames.mockReset().mockResolvedValue(MEMBERS);
   doubles.generate.mockReset().mockResolvedValue(GENERATED);
+  doubles.generatedFor.mockReset();
   doubles.announce.mockReset().mockResolvedValue(undefined);
   doubles.recheckStored.mockReset().mockResolvedValue(undefined);
 }
@@ -192,7 +197,18 @@ export async function buildDigestWorker(
   values: Record<string, unknown> = {},
 ): Promise<BuiltDigestWorker> {
   const { execute, transcribed, memberIds, memberNames, generate, announce, ...rest } = doubles;
-  const { recheckStored, ...claims } = rest;
+  const { recheckStored, generatedFor, ...claims } = rest;
+  // The meeting is taken off the front, so that `generate` is scripted and asserted with
+  // what a run hands it, here and in the run's own specs alike.
+  const generateFor = (
+    meetingId: string,
+    transcripts: ReadonlyArray<string>,
+    signal: AbortSignal,
+  ): unknown => {
+    generatedFor(meetingId);
+
+    return generate(transcripts, signal) as unknown;
+  };
   // By class, so that scripting the transcripts never scripts another query with them.
   const answeredApart: Array<[new (...args: never[]) => unknown, jest.Mock]> = [
     [FindTranscribedRecordingsQuery, transcribed],
@@ -214,7 +230,7 @@ export async function buildDigestWorker(
       },
       { provide: MeetingDigestClaimRepository, useValue: claims },
       { provide: QueryBus, useValue: { execute: dispatch } },
-      { provide: MeetingDigestGenerator, useValue: { generate } },
+      { provide: MeetingDigestGenerator, useValue: { generate: generateFor } },
       { provide: MeetingDigestAnnouncer, useValue: { announce } },
       { provide: MeetingDigestDeleteFollower, useValue: { recheckStored } },
     ],
