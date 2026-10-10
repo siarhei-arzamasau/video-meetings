@@ -4,7 +4,6 @@ import { CommandBus } from '@nestjs/cqrs';
 import { z } from 'zod';
 
 import { describeError } from '../../common/error-message';
-import { TaskStatus } from '../../generated/prisma/enums';
 import { ClaudeAgentToolkitLoader } from '../claude-agent/services/claude-agent-toolkit.loader';
 import {
   MeetingDigestRevisionOutcome,
@@ -16,23 +15,22 @@ import {
   MAX_DIGEST_SUMMARY_LENGTH,
 } from '../meeting-digests/meeting-digest.constants';
 import { TaskService } from '../tasks/services/task.service';
-import { MAX_TASK_TITLE_LENGTH, MIN_TASK_TITLE_LENGTH } from '../tasks/task.constants';
 import { FIND_TASKS_TOOL, findTasksOf } from './find-tasks.tool';
 import { MEETING_TOOLS_SERVER_NAME, MeetingToolName } from './meeting-tool-names';
 import { answered, refused, taskOf, textUpTo } from './meeting-tool-parts';
 import type { ToolResult } from './meeting-tool-parts';
+import { taskStatusInput, taskTitleInput } from './upsert-task.tool';
 
 // Named here as well, where everything that uses the tools has always found them.
 export { MEETING_TOOLS_SERVER_NAME, MeetingToolName };
 
 const UPSERT_TASK_INPUT = {
-  title: textUpTo(MAX_TASK_TITLE_LENGTH, MIN_TASK_TITLE_LENGTH).describe(
+  title: taskTitleInput().describe(
     'The task in one sentence. With the meeting it identifies the task: the same title updates it, another wording is another task.',
   ),
-  status: z
-    .enum(TaskStatus)
-    .optional()
-    .describe('Leave out to create the task as OPEN, or to keep the status an existing one has.'),
+  status: taskStatusInput().describe(
+    'Leave out to create the task as OPEN, or to keep the status an existing one has.',
+  ),
   sourceMeetingId: z.uuid().describe('The id of the meeting the task came out of.'),
 };
 

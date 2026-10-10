@@ -19,9 +19,10 @@ pnpm --filter=@repo/api prisma:migrate   # prisma migrate dev
 pnpm --filter=@repo/api prisma:studio
 ```
 
-One thing here is started by another program and never through `pnpm`: the meeting's tools
+One thing here is started by another program and never through `pnpm`: the meeting's tasks
 as an MCP server on stdio, `node dist/meeting-tools-stdio.main.js <meeting-id>` from this
-directory, after a build (_Meeting tools_, below, has why there is no script for it).
+directory, after a build and with its user's access token in `MEETING_TOOLS_ACCESS_TOKEN`
+(_Meeting tools_, below, has why there is no script for it).
 
 ## Layout
 
@@ -29,7 +30,7 @@ directory, after a build (_Meeting tools_, below, has why there is no script for
 src/
   main.ts               Process bootstrap: create app, configureApp, shutdown hooks, listen
   meeting-tools-stdio.main.ts
-                        A second process, not part of the API's: the meeting's tools as an
+                        A second process, not part of the API's: the meeting's tasks as an
                         MCP server on stdio, started by its client as a subprocess
   configure-app.ts      Every global that shapes request handling
   app.module.ts         Root module — register new feature modules here
@@ -217,6 +218,20 @@ Two rules keep it honest, and no type enforces either:
   address; a password change knows the token's subject and nothing else. Asking by email there
   would mean auth holding a user's address in order to verify their password.
 
+**Verifying a token is a module of its own, `AccessTokenModule`, inside `auth`.** It holds
+the one `JwtModule` registration — the key and the pinned algorithm — and
+`AccessTokenVerifier`, whose `subjectOf(token)` is the whole of how a token is verified and
+answers `null` for one that is not — one with no expiry included, which the library would
+accept and this API never issues: `JwtAuthGuard` turns that into a 401, and the meeting
+tools' stdio server into a process that does not start. `AuthModule` imports it and exports
+it with the guard, because a guard is instantiated in the module that uses it and injects the
+verifier there. It is separate because that stdio process imports it **alone**: a process
+that takes a token has no use for the credential routes, argon2, or the rate limit, and
+`AuthModule`'s factories ask for variables it does not have. For the same reason **a token's
+lifetime is set by `TokenService` as it signs, not in the `JwtModule` registration** —
+there, importing the module to verify would ask for `JWT_EXPIRES_IN_SECONDS`, and outside
+the API's contract that variable is text, which the signing library reads as milliseconds.
+
 `GET /me` reaches no handler of its own: `JwtAuthGuard` dispatches `FindUserByIdQuery` while
 authenticating and `@CurrentUser` returns what it attached — one query per authenticated
 request, in the guard, where the lookup already was.
@@ -388,6 +403,13 @@ every file route and twice per chunk, and a participants join there buys nothing
 only for a field a file route actually decides with. `MeetingFilesModule` does not import
 `MeetingsModule`, and `MeetingsController.findOne` still reads from `MeetingsService` — two
 reads sharing one `visibleTo` is the accepted price of the in-module read staying off the bus.
+
+**The two handlers that answer across this boundary are `MeetingQueriesModule`**
+(`meeting-queries.module.ts`), which `MeetingsModule` imports: `FindVisibleMeetingHandler`
+and `FindMeetingMemberIdsHandler`, apart from the controller and from `AuthModule`. The API
+is unchanged by the split — every handler still lands on the one set of buses. It exists for
+the meeting tools' stdio process, whose root module imports it alone to ask whether its user
+can see its meeting; a third handler that crosses out of `meetings` goes there too.
 
 ### The third boundary — what meeting-digests asks of the others
 
@@ -1536,9 +1558,10 @@ still what the digest stores and serves. **A task has no assignee, on purpose**;
 item's owner is not one.
 
 The module is `TaskService` and nothing else: no controller and no command. It exports the
-service for the two modules that hand it to an agent as tools — `meeting-tools`, which
-offers both methods to a digest's run, and that module's stdio twin, which offers the
-search to a client outside the process; no route reaches a task.
+service for the two modules that hand it to an agent — `meeting-tools`, which offers the
+search and the upsert to a digest's run as tools, and that module's stdio twin, which
+offers all four methods to a signed-in user's client outside the process, as tools and
+resources; no route reaches a task.
 
 - **`upsert` is keyed on the meeting and the title**, as given: the model's one `@@unique`
   is the `ON CONFLICT` target. A reworded title is therefore another task, and the caller
@@ -1553,7 +1576,14 @@ search to a client outside the process; no route reaches a task.
   caller's to enforce**, like its trimming. The first is what tells a task from a fragment.
   The second is there because the title is half of a unique index, and PostgreSQL refuses
   an entry past a third of a page.
-- **Both are raw SQL, so the unit spec shows only what they are given.** What they match and
+- **`open` and `get` are the two plain reads, through the client**: a meeting's tasks that
+  are still `OPEN`, the oldest first, at most `OPEN_TASKS_LIMIT` — a bound at all because a
+  member's client can add tasks without limit and the list is one answer — and one task by
+  its id, `null` for none. **`get` answers whichever meeting the task came out of, as
+  `search` does without a meeting**: an id is not a secret, so a caller that answers
+  anybody checks `sourceMeetingId` before it does, and hands it a UUID — the column is
+  one, and the client raises on anything else.
+- **`search` and `upsert` are raw SQL, so the unit spec shows only what they are given.** What they match and
   write is `test/tasks.e2e-spec.ts`, which CI does not run.
 - **`pg_trgm` is created by the migration, by hand.** Prisma does not manage extensions
   here, so nothing in `schema.prisma` says the trigram index needs one, and a database built
@@ -1601,40 +1631,115 @@ shape, and the three are gathered with `createSdkMcpServer`.
 
 **Over stdio — `stdio/` and `src/meeting-tools-stdio.main.ts`**
 
-The same tools as an MCP server of its own, for a client that is not this process: built
-with `@modelcontextprotocol/sdk` — `McpServer`, one tool registered with `registerTool`
+The meeting's tasks as an MCP server of its own, for a client that is not this process: built
+with `@modelcontextprotocol/sdk` — `McpServer`, each tool registered with `registerTool`
 over its Zod shape, the stdio transport — and started by its client as a subprocess,
-`node dist/meeting-tools-stdio.main.js <meeting-id>`. Today it serves `find_tasks` and
-nothing else.
+`node dist/meeting-tools-stdio.main.js <meeting-id>`, with its user's access token in
+`MEETING_TOOLS_ACCESS_TOKEN`. It serves two tools, `find_tasks` and `upsert_task`; two
+resources, the open tasks and one task by its id; and two prompts for gathering what is
+known about the meeting. It is a task manager for one meeting: everything that reads or
+writes is `TaskService`'s, and nothing of the meeting itself — its title, its files, its
+digest — is served.
 
-- **The tool is the in-process server's, not a second one like it.** Its name, description,
-  shape, and behaviour are `FIND_TASKS_TOOL` and `findTasksOf` (`find-tasks.tool.ts`), which
-  `MeetingTools` hands a digest's run as well; what differs is only which SDK serves it. A
-  tool added to the stdio server is described the same way, in a file both servers read —
-  and **`upsert_task` and `update_meeting` are not there on purpose**: they write, and who
-  may start a process that writes to a meeting is a decision nobody has made yet.
+- **`find_tasks` is the in-process server's tool, not a second one like it.** Its name,
+  description, shape, and behaviour are `FIND_TASKS_TOOL` and `findTasksOf`
+  (`find-tasks.tool.ts`), which `MeetingTools` hands a digest's run as well; what differs is
+  only which SDK serves it.
+- **`upsert_task` is the same service under a shape of this server's own**
+  (`upsert-task.tool.ts`): a title and an optional status, and **no meeting among its
+  arguments**. A digest's run is given the meeting's id and passes it back, checked; a
+  client of this server was never given one, and the meeting it writes to is the process's.
+  What the two shapes share is `taskTitleInput` and `taskStatusInput`, so they cannot come
+  to disagree about what a title or a status is, and both end in `TaskService.upsert` —
+  nothing here touches the database itself. It carries `readOnlyHint: false`, said rather
+  than left to the default, beside `find_tasks`'s `true`: a client that decides what to ask
+  its user about reads them.
+- **The resources are `tasks://open` and `task://{taskId}`**
+  (`stdio/meeting-tools-stdio.resources.ts`), both `application/json`: `TaskService.open`
+  for the server's meeting at a fixed address, and `TaskService.get` behind a
+  `ResourceTemplate` whose `list` is `undefined` — said on purpose: a task is found by
+  search and then read by its id, and the template lists nothing. **A task is answered
+  only when it came out of the server's meeting.** The id is its reader's to choose, so
+  without that check an id from anywhere reads a task of a meeting its reader cannot see;
+  an id that is not a UUID, one no task has, and another meeting's task are one error, as
+  they are one 404 on a route. The resolver is handed the `requester` — the user the token
+  names — and decides nothing by it yet: a task has no assignee, so whoever may read the
+  meeting may read each of its tasks. It is there for the rule that will.
+- **A resource that cannot be read is an error of that file's own wording**, as a tool's
+  is: the SDK hands a thrown error's message to the client as it is, so a refusal, a
+  missing task, and a failed read are each an `McpError` made here, and the cause is the
+  log's.
+- **The prompts are `meeting_overview` and `meeting_topic`**
+  (`stdio/meeting-tools-stdio.prompts.ts`): instructions for the client's model to collect
+  what the meeting's tasks say, as a whole or about one topic, from this server's own
+  resources and tools. Each ends by telling the model to change nothing and to read task
+  titles as data, since the server cannot make a client do either. **A prompt is text and
+  carries no data** — no task, not the meeting's id — which is why the prompts alone are
+  not behind the access check. One that quoted a task would have to be.
+- **`update_meeting` is not there on purpose.** This server keeps tasks; rewriting a
+  meeting's summary and decisions from outside the API is a decision nobody has made.
 - **A process is started for one meeting, named on its command line, and reaches no other**
-  — the in-process server's rule, for its reason: the meeting is not an argument of the
-  tool, so nothing a model sends can widen the search. An id that is missing or is not a
-  UUID is a usage line on stderr and exit code 1, before anything connects to the database.
+  — the in-process server's rule, for its reason: the meeting is not an argument of either
+  tool, so nothing a model sends can widen a search or aim a write. An id that is missing or
+  is not a UUID is a usage line on stderr and exit code 1, before anything connects to the
+  database. The id is lower-cased as it is read: Postgres compares UUIDs whatever their
+  case, but a task is matched to the server's meeting as text.
+- **It answers for one user, and checks them before every call and every read.** The client hands it the
+  access token `POST /api/auth/login` answers with; `MeetingToolsStdioAccess` has `auth`
+  verify it (`AccessTokenVerifier`, as the guard does) and asks `meetings` whether that user
+  can see the meeting (`FindVisibleMeetingQuery`, so `visibleTo`: the host and the
+  participants, who are who the meeting, its files, and its digest are shown to). The same
+  rule lets them write a task — a participant already uploads to a meeting. **Asked twice,
+  on purpose**: once before anything is served, so a stale token or a wrong meeting is a
+  line on stderr and exit code 1 instead of a server whose every call fails; and again
+  before every call, as a route checks every request, because a process outlives a token
+  and a session must not. A user taken off the meeting, a meeting deleted, a token past
+  `JWT_EXPIRES_IN_SECONDS` — each closes the tools and the resources at the next request,
+  with an error that says which, and the client restarts it with a new token.
+- **No lookup of the user, unlike the guard.** The guard makes one so a token cannot outlive
+  its account; here the meeting's own row does that — a user who is gone hosts and attends
+  nothing. A meeting that does not exist and one the user is not in are one sentence, as
+  they are one 404 on a route.
+- **A check that fails is a refusal, never a way in.** `MeetingToolsStdioServer.admit` is
+  the one gate, answering who is asking or the sentence they are refused with — the
+  latter also when the check itself throws, the database gone. Every tool and both
+  resources ask it first, and their own work is a function not yet called. **Each is let in
+  by an answer that names a requester, never by one that merely carries no refusal.** Whatever is
+  added to this server that reads or writes goes through it; registered without it, it is
+  open to whoever holds any token at all.
+- **The token arrives in the environment the process is started with — never on the command
+  line**, which every process on the host can read with `ps`, **and never from an env
+  file**. It is never logged and never repeated in a refusal. `ConfigModule` reads the env
+  files for the database and the key, so `validateMeetingToolsStdio` takes the token from
+  `process.env` alone, which at that moment still holds only what the process was started
+  with: `ConfigModule` copies what it read from a file there after `validate` returns. Read
+  from a file as well, a server started with no token would not refuse — it would answer
+  as whoever left one there.
 - **stdout belongs to the protocol, and that is why nothing starts it through `pnpm`.**
   Every frame is a line of JSON there, so one stray line ends the session: the process's
   logger is `StderrLogger` (`src/common/logging`) because Nest's own writes everything but
   errors to stdout, and there is no package script because `pnpm run` echoes the command it
   runs on stdout before the server has said a word. Anything added to that process logs
   through the logger, and nothing in it may write to `process.stdout`.
-- **It is not `AppModule`, and its environment is not held to the API's contract.**
-  `MeetingToolsStdioModule` is the config files, the database, and `TasksModule` — no HTTP,
-  no worker, no Claude: importing `MeetingToolsModule` instead would bring the toolkit
-  loader and the command bus into a process that only searches. It reads `.env.local` and
-  `.env` **from its working directory**, so a client starts it in `apps/api` or hands it
-  `DATABASE_URL`, the one variable it needs; `PrismaService` refuses to start without it.
-  The contract in `env.validation.ts` would refuse over a signing key this process never
-  touches.
-- **Whoever can start it already has the database.** It authenticates nobody: it is a local
-  subprocess holding `DATABASE_URL`, an operator's tool. Put behind a transport that takes
-  connections, it would be `TaskService.search` answering anybody — which is the thing that
-  module's guide says to narrow by `visibleTo` first.
+- **It is not `AppModule`, and its environment is held to a contract of its own.**
+  `MeetingToolsStdioModule` is the config files, the database, `TasksModule`, and the two
+  narrow modules that decide who may ask — `AccessTokenModule` and `MeetingQueriesModule` —
+  no HTTP, no worker, no Claude: importing `AuthModule`, `MeetingsModule`, or
+  `MeetingToolsModule` instead would bring the credential routes, the rate limit, the
+  toolkit loader, and the command bus into a process that keeps tasks. It reads `.env.local`
+  and `.env` **from its working directory**, so a client starts it in `apps/api` or hands it
+  the variables itself. The contract is `env.validation.meeting-tools-stdio.ts`:
+  `DATABASE_URL`, `JWT_SECRET`, and the token, and a process it refuses does not boot —
+  after the usage line for a missing meeting, before anything connects to the database. The API's own would refuse over an upload directory or a CORS origin this
+  process never touches. **`JWT_SECRET` is held to the API's rule there** (`IsJwtSecret`, in
+  `env-contract.ts`, the one statement of it): a verifier started on the published
+  placeholder takes a token anybody who has read this repository can mint, for any user.
+- **The check is not a defence against whoever starts it.** That operator holds
+  `DATABASE_URL` and the signing key, and so every meeting and every identity already. What
+  the token decides is whose meetings a correctly installed server will serve — the user's
+  own, not whichever id ended up in a client's configuration. Put behind a transport that
+  takes connections, the same check is what would stand between `TaskService` and anybody:
+  it is `visibleTo`, as that module's guide asks.
 - **It ends when its client does, and the transport does not see to that.** The SDK's stdio
   transport listens for data on stdin and not for its end, so a client that closed the pipe
   left a process holding a database connection for good. The entry point closes the server
@@ -1644,9 +1749,10 @@ nothing else.
   transport close itself and stop reading stdin, after which the pipe's end is never seen;
   and `server.close()` reports the close it has just made to that same callback before it
   returns, so anything less than a flag closes the application twice.
-- **What the tool answers with is what people said in a meeting, and its reader may hold
+- **What a tool answers with is what people said in a meeting, and its reader may hold
   more than the digest's model does.** A task's title is text a run's model took from a
-  transcript, stored as given. In this process's twin that text is read by a Claude with no
+  transcript — or, now, text a member's own client wrote through `upsert_task` — stored as
+  given, and read back by the next digest's run through `find_tasks` like any other. In this process's twin that text is read by a Claude with no
   tool that touches its host; over stdio it is read by whatever client the operator
   configured, which may hold a shell. The answer is data — the README says so to whoever
   wires the server up — and nothing here can make a client treat it as that.
@@ -1656,12 +1762,21 @@ nothing else.
   brought it in, because pnpm's strict layout lets a package import only what it declares —
   and it is pinned to the version the Agent SDK resolves, so the two share one copy and one
   `CallToolResult`. Bump them together.
-- **Two specs, for two different things.** `stdio/meeting-tools-stdio.server.spec.ts` joins
-  a real MCP client to the real `McpServer` in memory: what is listed, what a call does,
-  what is refused. `test/meeting-tools-stdio.e2e-spec.ts` starts the entry point as a
-  subprocess — through `ts-node`, so no build has to exist — and is the only place that can
-  show stdout carrying nothing but frames, the meeting on the command line being the one
-  searched, and the process ending by itself when the pipe closes.
+- **Unit specs and two e2e specs, for different things.** The three specs in `stdio/` —
+  the server's tools, its resources, its prompts — join a real MCP client to the real
+  `McpServer` in memory (`meeting-tools-stdio.fixture.ts`), over a faked `TaskService` and
+  a faked access check: what is listed, what a call or a read does, what is refused, and
+  that the check comes first every time. The other two start the entry point as a subprocess —
+  through `ts-node`, so no build has to exist — with a real MCP client on the other end of
+  the pipe (`test/utils/meeting-tools-stdio.ts`). `test/meeting-tools-stdio.e2e-spec.ts` is
+  the only place that can show stdout carrying nothing but frames, the meeting on the
+  command line being the one searched, and the process ending by itself when the pipe
+  closes. `test/mcp-server.e2e-spec.ts` is the server as its client meets it: the tools,
+  the resources, and the prompts against a real database, and who is answered at all — the
+  host and a participant with the tokens the API issued them, and not a stranger, a forged
+  or expired token, no token, or a participant removed while it is up. **Both hand the subprocess
+  `JWT_SECRET` and the token explicitly**: the environment wins over the env files, so it
+  verifies with the key the suite's API signs with, not the one in a developer's `.env`.
 
 **The hooks — `meeting-hooks.ts`**
 
@@ -1793,6 +1908,14 @@ settings are `TranscriptionEnvironmentVariables` in `env.validation.transcriptio
 `EnvironmentVariables` extends — class-validator and class-transformer both inherit a
 parent's decorators. That is a file-size split, not a second contract: a new variable goes
 where its feature's are, and a third feature's would extend the chain.
+
+**There is a second contract, for a second process.** The meeting tools' stdio server is
+not `AppModule` and validates `env.validation.meeting-tools-stdio.ts` instead: three
+variables, of which `MEETING_TOOLS_ACCESS_TOKEN` is read by nothing else, is deliberately
+absent from the API's contract and from the value lines of `.env.example`, and is the one
+variable in this package that an env file cannot set — it is its client's to hand over,
+per user. What the two contracts share is `env-contract.ts`:
+`checkedAgainst`, which validates and words the error, and `IsJwtSecret`.
 
 **A rule the contract cannot express with a type is still the contract's job.** `JWT_SECRET`
 is rejected when it is one of the placeholders this repository has published, not only when it

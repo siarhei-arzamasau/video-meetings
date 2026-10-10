@@ -1,5 +1,5 @@
 import { PrismaService } from '../../prisma/prisma.service';
-import { TASK_SEARCH_LIMIT } from '../task.constants';
+import { OPEN_TASKS_LIMIT, TASK_SEARCH_LIMIT } from '../task.constants';
 import { TaskService } from './task.service';
 
 const MEETING_ID = '44444444-4444-4444-8444-444444444444';
@@ -20,13 +20,20 @@ const TASK = {
  */
 describe('TaskService', () => {
   const queryRaw = jest.fn();
-  const tasks = new TaskService({ $queryRaw: queryRaw } as unknown as PrismaService);
+  const findMany = jest.fn();
+  const findUnique = jest.fn();
+  const tasks = new TaskService({
+    $queryRaw: queryRaw,
+    task: { findMany, findUnique },
+  } as unknown as PrismaService);
 
   /** The values bound into the one statement that was run, in the order it names them. */
   const boundValues = (): unknown[] => (queryRaw.mock.calls[0] as unknown[]).slice(1);
 
   beforeEach(() => {
     queryRaw.mockReset().mockResolvedValue([TASK]);
+    findMany.mockReset().mockResolvedValue([TASK]);
+    findUnique.mockReset().mockResolvedValue(TASK);
   });
 
   describe('search', () => {
@@ -97,6 +104,34 @@ describe('TaskService', () => {
       await expect(tasks.upsert({ title: TASK.title, sourceMeetingId: MEETING_ID })).rejects.toBe(
         failure,
       );
+    });
+  });
+
+  describe('open', () => {
+    it("answers the meeting's open tasks, the oldest first, and no more than the limit", async () => {
+      await expect(tasks.open(MEETING_ID)).resolves.toEqual([TASK]);
+
+      // The whole argument: a status or a meeting dropped from it is every task, or everyone's.
+      expect(findMany).toHaveBeenCalledWith({
+        where: { sourceMeetingId: MEETING_ID, status: 'OPEN' },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        take: OPEN_TASKS_LIMIT,
+      });
+    });
+  });
+
+  describe('get', () => {
+    it('answers the task of that id', async () => {
+      await expect(tasks.get(TASK.id)).resolves.toEqual(TASK);
+
+      expect(findUnique).toHaveBeenCalledWith({ where: { id: TASK.id } });
+    });
+
+    it('resolves to null for an id no task has, rather than throwing', async () => {
+      findUnique.mockResolvedValue(null);
+
+      // What a miss means is the caller's — as is whose meeting the task came out of.
+      await expect(tasks.get(TASK.id)).resolves.toBeNull();
     });
   });
 });

@@ -2,6 +2,12 @@
 export const TASK_SEARCH_LIMIT = 20;
 
 /**
+ * The most open tasks of one meeting that are listed at once, the oldest first. A bound at
+ * all because a member's client can add tasks without limit, and the list is one answer.
+ */
+export const OPEN_TASKS_LIMIT = 100;
+
+/**
  * As long as a digest's action item may be, which is what a task is a record of. A bound at
  * all because the title is half of a unique index, and PostgreSQL refuses an index entry
  * past a third of a page.

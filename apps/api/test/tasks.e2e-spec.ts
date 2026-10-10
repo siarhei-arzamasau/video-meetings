@@ -16,9 +16,9 @@ interface TaskRow {
 }
 
 /**
- * The two statements of `TaskService`, run against the database: what a search matches and
- * in what order, and what an upsert writes. Both are raw SQL over `pg_trgm` and
- * `ON CONFLICT`, so a stubbed client can show neither.
+ * `TaskService` run against the database: what a search matches and in what order, what an
+ * upsert writes, and what the two plain reads answer. The first two are raw SQL over
+ * `pg_trgm` and `ON CONFLICT`, so a stubbed client can show neither.
  */
 describe('tasks, against the database', () => {
   const suite = useApiSuite();
@@ -176,6 +176,37 @@ describe('tasks, against the database', () => {
       await seed('Rewrite the launch emails');
 
       await expect(titlesFound("%' OR 1=1 --")).resolves.toEqual([]);
+    });
+  });
+
+  describe('open and get', () => {
+    it("lists a meeting's open tasks, the oldest first, and none of another meeting's", async () => {
+      const host = await registerUser(suite, EMAIL);
+      const [first, second] = [await createMeeting(suite, host), await createMeeting(suite, host)];
+      const oldest = await tasks().upsert({ title: 'Book the venue', sourceMeetingId: first.id });
+      await tasks().upsert({ title: 'Send the invitations', sourceMeetingId: first.id });
+      // Two upserts can land in the one millisecond the column keeps, and the order of a tie
+      // is the ids': the first is dated back so that "oldest" is something the rows say.
+      await suite.prisma().$executeRaw`
+        UPDATE "tasks" SET created_at = now() - interval '1 minute' WHERE id = ${oldest.id}::uuid
+      `;
+      await tasks().upsert({ title: 'Print the badges', sourceMeetingId: first.id, status: DONE });
+      await tasks().upsert({ title: 'Call Bob', sourceMeetingId: second.id });
+
+      const open = await tasks().open(first.id);
+
+      expect(open.map(({ title }) => title)).toEqual(['Book the venue', 'Send the invitations']);
+      expect(open.every(({ status }) => status === OPEN)).toBe(true);
+    });
+
+    it('reads one task by its id, whichever meeting it came out of, and null for an id no task has', async () => {
+      const stored = await tasks().upsert({
+        title: 'Book the venue',
+        sourceMeetingId: await newMeeting(),
+      });
+
+      await expect(tasks().get(stored.id)).resolves.toEqual(stored);
+      await expect(tasks().get('99999999-9999-4999-8999-999999999999')).resolves.toBeNull();
     });
   });
 

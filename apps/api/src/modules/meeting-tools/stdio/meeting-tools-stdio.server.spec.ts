@@ -1,40 +1,37 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { Logger } from '@nestjs/common';
 
-import type { TaskService } from '../../tasks/services/task.service';
 import { MAX_TASK_TITLE_LENGTH } from '../../tasks/task.constants';
 import { FIND_TASKS_TOOL } from '../find-tasks.tool';
-import { MEETING_ID, OTHER_MEETING_ID, TASK, TASK_AS_ANSWERED } from '../meeting-tools.fixture';
-import { MEETING_TOOLS_STDIO_VERSION, MeetingToolsStdioServer } from './meeting-tools-stdio.server';
-
-interface ToolAnswer {
-  isError?: boolean;
-  content: Array<{ type: string; text: string }>;
-}
+import { MEETING_ID, OTHER_MEETING_ID, TASK_AS_ANSWERED } from '../meeting-tools.fixture';
+import { UPSERT_TASK_TOOL } from '../upsert-task.tool';
+import { MeetingToolsStdioAccessOutcome } from './meeting-tools-stdio.access';
+import {
+  ACCESS_TOKEN,
+  answerOf,
+  connectStdioServer,
+  refusedAs,
+} from './meeting-tools-stdio.fixture';
+import type { StdioServerHarness } from './meeting-tools-stdio.fixture';
+import { MEETING_TOOLS_STDIO_VERSION } from './meeting-tools-stdio.server';
 
 /**
- * The server as a client meets it: a real MCP client and the real `McpServer`, joined in
- * memory instead of over a pipe. What a subprocess adds — stdout kept for the protocol, the
- * meeting on the command line, ending with its client — is `test/meeting-tools-stdio.e2e-spec.ts`'s.
+ * The server's tools as a client meets them (`meeting-tools-stdio.fixture.ts`). Its
+ * resources and its prompts have specs of their own beside this one; what a subprocess
+ * adds — stdout kept for the protocol, the meeting on the command line, a real token
+ * checked against a real meeting, ending with its client — is the two e2e specs'.
  */
 describe('MeetingToolsStdioServer', () => {
-  const search = jest.fn();
+  let server: StdioServerHarness;
   let client: Client;
-
-  const call = async (input: object): Promise<ToolAnswer> =>
-    (await client.callTool({ name: 'find_tasks', arguments: { ...input } })) as ToolAnswer;
+  let search: jest.Mock;
+  let upsert: jest.Mock;
+  let check: jest.Mock;
+  const call: StdioServerHarness['callTool'] = (name, input) => server.callTool(name, input);
 
   beforeEach(async () => {
-    search.mockReset().mockResolvedValue([TASK]);
-    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-
-    const tasks = { search } as unknown as TaskService;
-    const server = new MeetingToolsStdioServer(tasks).create(MEETING_ID);
-    const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
-
-    client = new Client({ name: 'spec', version: '0.0.0' });
-    await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
+    server = await connectStdioServer();
+    ({ client, search, upsert, check } = server);
   });
 
   afterEach(async () => {
@@ -47,15 +44,20 @@ describe('MeetingToolsStdioServer', () => {
       name: 'meeting',
       version: MEETING_TOOLS_STDIO_VERSION,
     });
-    expect(client.getServerCapabilities()).toMatchObject({ tools: {} });
+    expect(client.getServerCapabilities()).toMatchObject({
+      tools: {},
+      resources: {},
+      prompts: {},
+    });
   });
 
-  it('offers find_tasks and no other tool, described as the in-process server describes it', async () => {
+  it('offers find_tasks, which reads, and upsert_task, which does not — and no other tool', async () => {
     const { tools } = await client.listTools();
 
-    expect(tools).toHaveLength(1);
+    expect(tools).toHaveLength(2);
     expect(tools[0]).toMatchObject({
       name: 'find_tasks',
+      // Described as the in-process server describes it: it is that server's tool.
       description: FIND_TASKS_TOOL.description,
       annotations: { readOnlyHint: true },
       // The Zod shape, as the JSON Schema a client is shown: one text, required and bounded.
@@ -65,42 +67,174 @@ describe('MeetingToolsStdioServer', () => {
         properties: { query: { type: 'string', maxLength: MAX_TASK_TITLE_LENGTH } },
       },
     });
-  });
-
-  it('searches the one meeting it was made for, and answers with the tasks it found', async () => {
-    const answer = await call({ query: '  launch emails ' });
-
-    expect(search).toHaveBeenCalledWith('launch emails', MEETING_ID);
-    expect(answer.isError ?? false).toBe(false);
-    expect(JSON.parse(answer.content[0]?.text ?? 'null')).toEqual({ tasks: [TASK_AS_ANSWERED] });
-  });
-
-  it('has no meeting among its arguments for a caller to aim it at another', async () => {
-    await call({ query: 'launch', meetingId: OTHER_MEETING_ID, sourceMeetingId: OTHER_MEETING_ID });
-
-    expect(search).toHaveBeenCalledTimes(1);
-    expect(search).toHaveBeenCalledWith('launch', MEETING_ID);
-  });
-
-  it.each([
-    ['no query', {}],
-    ['a blank query', { query: '   ' }],
-    ['a query past the bound', { query: 'a'.repeat(MAX_TASK_TITLE_LENGTH + 1) }],
-    ['a query that is not text', { query: 7 }],
-  ])('refuses %s, and searches nothing', async (_case, input) => {
-    const answer = await call(input);
-
-    expect(answer.isError).toBe(true);
-    expect(search).not.toHaveBeenCalled();
-  });
-
-  it('answers a failed search as an error of its own wording, and logs the cause', async () => {
-    search.mockRejectedValue(new Error('relation "tasks" does not exist'));
-
-    await expect(call({ query: 'launch' })).resolves.toMatchObject({
-      isError: true,
-      content: [{ type: 'text', text: 'The tasks could not be searched.' }],
+    expect(tools[1]).toMatchObject({
+      name: 'upsert_task',
+      description: UPSERT_TASK_TOOL.description,
+      annotations: { readOnlyHint: false },
+      inputSchema: { type: 'object', required: ['title'] },
     });
-    expect(Logger.prototype.error).toHaveBeenCalledTimes(1);
+  });
+
+  it('takes a title and a status for a task, and nothing that names a meeting', async () => {
+    const { tools } = await client.listTools();
+    const properties = tools[1]?.inputSchema.properties ?? {};
+
+    // A task manager's tool: the meeting is the process's, and no argument can be one.
+    expect(Object.keys(properties)).toEqual(['title', 'status']);
+    expect(properties).toMatchObject({
+      title: { type: 'string', maxLength: MAX_TASK_TITLE_LENGTH },
+      status: { enum: ['OPEN', 'DONE'] },
+    });
+  });
+
+  describe('find_tasks', () => {
+    it('searches the one meeting it was made for, and answers with the tasks it found', async () => {
+      const answer = await call('find_tasks', { query: '  launch emails ' });
+
+      expect(search).toHaveBeenCalledWith('launch emails', MEETING_ID);
+      expect(answer.isError ?? false).toBe(false);
+      expect(answerOf(answer)).toEqual({ tasks: [TASK_AS_ANSWERED] });
+    });
+
+    it('has no meeting among its arguments for a caller to aim it at another', async () => {
+      await call('find_tasks', {
+        query: 'launch',
+        meetingId: OTHER_MEETING_ID,
+        sourceMeetingId: OTHER_MEETING_ID,
+      });
+
+      expect(search).toHaveBeenCalledTimes(1);
+      expect(search).toHaveBeenCalledWith('launch', MEETING_ID);
+    });
+
+    it.each([
+      ['no query', {}],
+      ['a blank query', { query: '   ' }],
+      ['a query past the bound', { query: 'a'.repeat(MAX_TASK_TITLE_LENGTH + 1) }],
+      ['a query that is not text', { query: 7 }],
+    ])('refuses %s, and searches nothing', async (_case, input) => {
+      const answer = await call('find_tasks', input);
+
+      expect(answer.isError).toBe(true);
+      expect(search).not.toHaveBeenCalled();
+    });
+
+    it('answers a failed search as an error of its own wording, and logs the cause', async () => {
+      search.mockRejectedValue(new Error('relation "tasks" does not exist'));
+
+      await expect(call('find_tasks', { query: 'launch' })).resolves.toMatchObject({
+        isError: true,
+        content: [{ type: 'text', text: 'The tasks could not be searched.' }],
+      });
+      expect(Logger.prototype.error).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('upsert_task', () => {
+    it('hands the task service the title, trimmed, the status, and the one meeting', async () => {
+      const answer = await call('upsert_task', {
+        title: '  Rewrite the launch emails ',
+        status: 'DONE',
+      });
+
+      expect(upsert).toHaveBeenCalledWith({
+        title: 'Rewrite the launch emails',
+        status: 'DONE',
+        sourceMeetingId: MEETING_ID,
+      });
+      expect(answer.isError ?? false).toBe(false);
+      expect(answerOf(answer)).toEqual({ task: TASK_AS_ANSWERED });
+    });
+
+    it('passes no status when none is given, so an existing task keeps the one it has', async () => {
+      await call('upsert_task', { title: 'Rewrite the launch emails' });
+
+      expect(upsert).toHaveBeenCalledWith({
+        title: 'Rewrite the launch emails',
+        status: undefined,
+        sourceMeetingId: MEETING_ID,
+      });
+    });
+
+    it('writes to the one meeting it was made for, whatever a caller sends beside the task', async () => {
+      await call('upsert_task', {
+        title: 'Rewrite the launch emails',
+        meetingId: OTHER_MEETING_ID,
+        sourceMeetingId: OTHER_MEETING_ID,
+      });
+
+      expect(upsert).toHaveBeenCalledTimes(1);
+      expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ sourceMeetingId: MEETING_ID }));
+    });
+
+    it.each([
+      ['no title', { status: 'OPEN' }],
+      ['a title too short to be a task', { title: ' QA ' }],
+      ['a title past the bound', { title: 'a'.repeat(MAX_TASK_TITLE_LENGTH + 1) }],
+      ['a status a task cannot have', { title: 'Rewrite the launch emails', status: 'CANCELLED' }],
+    ])('refuses %s, and writes nothing', async (_case, input) => {
+      const answer = await call('upsert_task', input);
+
+      expect(answer.isError).toBe(true);
+      expect(upsert).not.toHaveBeenCalled();
+    });
+
+    it('answers a failed write as an error of its own wording, and logs the cause', async () => {
+      upsert.mockRejectedValue(
+        new Error('violates foreign key constraint "tasks_source_meeting_id_fkey"'),
+      );
+
+      await expect(
+        call('upsert_task', { title: 'Rewrite the launch emails' }),
+      ).resolves.toMatchObject({
+        isError: true,
+        content: [{ type: 'text', text: 'The task could not be saved.' }],
+      });
+      expect(Logger.prototype.error).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe.each([
+    ['find_tasks', { query: 'launch' }],
+    ['upsert_task', { title: 'Rewrite the launch emails' }],
+  ])('%s, for the user the server answers for', (tool, input) => {
+    it('checks the user against the meeting before every call, not once', async () => {
+      await call(tool, input);
+      await call(tool, input);
+
+      // A process outlives a token: the answer to the first call says nothing about the second.
+      expect(check).toHaveBeenCalledTimes(2);
+      expect(check).toHaveBeenCalledWith(ACCESS_TOKEN, MEETING_ID);
+    });
+
+    it.each([
+      [MeetingToolsStdioAccessOutcome.TOKEN_REFUSED, /access token was refused/],
+      [MeetingToolsStdioAccessOutcome.MEETING_NOT_FOUND, /no such meeting/],
+    ] as const)(
+      'answers %s as an error that says so, and reaches no task',
+      async (outcome, reason) => {
+        check.mockResolvedValue(refusedAs(outcome));
+
+        const answer = await call(tool, input);
+
+        expect(answer.isError).toBe(true);
+        expect(answer.content[0]?.text).toMatch(reason);
+        expect(search).not.toHaveBeenCalled();
+        expect(upsert).not.toHaveBeenCalled();
+      },
+    );
+
+    it('stays closed when the check itself fails, and logs the cause', async () => {
+      check.mockRejectedValue(new Error('relation "meetings" does not exist'));
+
+      // Failing open here would hand the tasks to a user nobody managed to check.
+      await expect(call(tool, input)).resolves.toMatchObject({
+        isError: true,
+        content: [{ type: 'text', text: 'Access to the tasks could not be checked.' }],
+      });
+      expect(search).not.toHaveBeenCalled();
+      expect(upsert).not.toHaveBeenCalled();
+      expect(Logger.prototype.error).toHaveBeenCalledTimes(1);
+    });
   });
 });
