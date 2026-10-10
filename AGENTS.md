@@ -329,6 +329,19 @@ scope, and a subagent that encodes one person's habits belongs there.
   what retires it — read it before upgrading the package that pins the older version. One lifts
   multer past what Nest 11 pins (the API guide's meeting-files section has what that costs);
   the other floors the js-yaml 3 copy Jest's coverage loader uses, leaving the 4.x line alone.
+- **`pnpm audit` is not clean, and what it still lists is left on purpose.** A fix inside
+  the range a dependant already asks for is taken with
+  `pnpm update --recursive --depth 99 <package>`: the lockfile then holds it, and no override
+  is needed. What remains is pinned exactly by a tool and cannot be reached from here, so it
+  is not forced onto that tool: `mysql2` and `deepmerge-ts` inside the Prisma CLI — the
+  datasource is PostgreSQL, and what is merged is this repository's own `prisma.config.ts` —
+  which go with the Prisma upgrade; `tinypool` inside `oxfmt`, a gadget that needs a
+  prototype already polluted in a formatter that only reads this repository, which goes with
+  the `oxfmt` upgrade; `sprintf-js` under Jest's coverage loader, which has no patched release
+  in the line `argparse` 1 asks for; and `file-type`, whose advisory is closed in code
+  ([the API guide](apps/api/AGENTS.md#meeting-files-srcmodulesmeeting-files)). **An advisory
+  that names anything else is new** — and one that reaches code a request can run is forced
+  with an override whatever pins it, as multer was.
 - **Env files are gitignored** except `*.env.example`. When adding a variable, update the
   matching `.env.example` and, for the API, `apps/api/src/config/env.validation.ts`.
 
