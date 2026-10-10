@@ -213,6 +213,28 @@ not there yet — answers 409, and so does every digest while the flag is off.
 - **`docker compose` does not pass these two variables to its `api` service**: the digest is
   set up for an API run with `pnpm dev`.
 
+### Meeting tools over MCP (optional)
+
+The API can also serve a meeting's tasks to an MCP client — Claude Code, Claude Desktop, or
+any other — as a server on the stdio transport, started by the client as a subprocess. It
+has one tool, `find_tasks`, which finds the tasks of one meeting whose title is similar to a
+text; the meeting is fixed when the process starts.
+
+```bash
+pnpm build
+cd apps/api
+node dist/meeting-tools-stdio.main.js <meeting-id>
+```
+
+An MCP client's configuration names that command, with `apps/api` as its working directory
+so the server finds `DATABASE_URL` in the env files there — or with `DATABASE_URL` in its
+environment. **Start it with `node`, not through `pnpm`**: the protocol is spoken over
+stdout, and `pnpm run` writes a line of its own there first. The server authenticates
+nobody; whoever can start it already holds the database's connection string. **What it
+answers with is text taken from meetings** — a task's title is whatever was said — so a
+client that can also run commands or edit files should treat the answer as data, never as
+instructions.
+
 ## Scripts
 
 Run from the repository root:

@@ -19,15 +19,23 @@ pnpm --filter=@repo/api prisma:migrate   # prisma migrate dev
 pnpm --filter=@repo/api prisma:studio
 ```
 
+One thing here is started by another program and never through `pnpm`: the meeting's tools
+as an MCP server on stdio, `node dist/meeting-tools-stdio.main.js <meeting-id>` from this
+directory, after a build (_Meeting tools_, below, has why there is no script for it).
+
 ## Layout
 
 ```
 src/
   main.ts               Process bootstrap: create app, configureApp, shutdown hooks, listen
+  meeting-tools-stdio.main.ts
+                        A second process, not part of the API's: the meeting's tools as an
+                        MCP server on stdio, started by its client as a subprocess
   configure-app.ts      Every global that shapes request handling
   app.module.ts         Root module — register new feature modules here
   config/               Environment contract
-  common/               Cross-cutting: the exception filter, logging/ for the request log,
+  common/               Cross-cutting: the exception filter, logging/ for the request log
+                        and for a logger that keeps off stdout,
                         shutdown/ for what the process does with its connections when it
                         is stopped, and processing/ for what every polling worker shares
   modules/<feature>/    One directory per feature: module, controller, specs, and
@@ -1528,8 +1536,9 @@ still what the digest stores and serves. **A task has no assignee, on purpose**;
 item's owner is not one.
 
 The module is `TaskService` and nothing else: no controller and no command. It exports the
-service for its one caller, `meeting-tools`, which offers both methods to an agent; no route
-reaches a task.
+service for the two modules that hand it to an agent as tools — `meeting-tools`, which
+offers both methods to a digest's run, and that module's stdio twin, which offers the
+search to a client outside the process; no route reaches a task.
 
 - **`upsert` is keyed on the meeting and the title**, as given: the model's one `@@unique`
   is the `ON CONFLICT` target. A reworded title is therefore another task, and the caller
@@ -1589,6 +1598,70 @@ shape, and the three are gathered with `createSdkMcpServer`.
   spec with everything behind a tool real — and **the SDK's own `tool` and
   `createSdkMcpServer` run only in `test:live`**, where the real model calls the real
   server over a `TaskService` held in memory.
+
+**Over stdio — `stdio/` and `src/meeting-tools-stdio.main.ts`**
+
+The same tools as an MCP server of its own, for a client that is not this process: built
+with `@modelcontextprotocol/sdk` — `McpServer`, one tool registered with `registerTool`
+over its Zod shape, the stdio transport — and started by its client as a subprocess,
+`node dist/meeting-tools-stdio.main.js <meeting-id>`. Today it serves `find_tasks` and
+nothing else.
+
+- **The tool is the in-process server's, not a second one like it.** Its name, description,
+  shape, and behaviour are `FIND_TASKS_TOOL` and `findTasksOf` (`find-tasks.tool.ts`), which
+  `MeetingTools` hands a digest's run as well; what differs is only which SDK serves it. A
+  tool added to the stdio server is described the same way, in a file both servers read —
+  and **`upsert_task` and `update_meeting` are not there on purpose**: they write, and who
+  may start a process that writes to a meeting is a decision nobody has made yet.
+- **A process is started for one meeting, named on its command line, and reaches no other**
+  — the in-process server's rule, for its reason: the meeting is not an argument of the
+  tool, so nothing a model sends can widen the search. An id that is missing or is not a
+  UUID is a usage line on stderr and exit code 1, before anything connects to the database.
+- **stdout belongs to the protocol, and that is why nothing starts it through `pnpm`.**
+  Every frame is a line of JSON there, so one stray line ends the session: the process's
+  logger is `StderrLogger` (`src/common/logging`) because Nest's own writes everything but
+  errors to stdout, and there is no package script because `pnpm run` echoes the command it
+  runs on stdout before the server has said a word. Anything added to that process logs
+  through the logger, and nothing in it may write to `process.stdout`.
+- **It is not `AppModule`, and its environment is not held to the API's contract.**
+  `MeetingToolsStdioModule` is the config files, the database, and `TasksModule` — no HTTP,
+  no worker, no Claude: importing `MeetingToolsModule` instead would bring the toolkit
+  loader and the command bus into a process that only searches. It reads `.env.local` and
+  `.env` **from its working directory**, so a client starts it in `apps/api` or hands it
+  `DATABASE_URL`, the one variable it needs; `PrismaService` refuses to start without it.
+  The contract in `env.validation.ts` would refuse over a signing key this process never
+  touches.
+- **Whoever can start it already has the database.** It authenticates nobody: it is a local
+  subprocess holding `DATABASE_URL`, an operator's tool. Put behind a transport that takes
+  connections, it would be `TaskService.search` answering anybody — which is the thing that
+  module's guide says to narrow by `visibleTo` first.
+- **It ends when its client does, and the transport does not see to that.** The SDK's stdio
+  transport listens for data on stdin and not for its end, so a client that closed the pipe
+  left a process holding a database connection for good. The entry point closes the server
+  and then the application when stdin ends, or on either signal — and exits because nothing
+  is left listening, not because it was told to. **The server's own close is a fourth way
+  in, and it is why closing is a flag set first**: a frame too large to be one makes the
+  transport close itself and stop reading stdin, after which the pipe's end is never seen;
+  and `server.close()` reports the close it has just made to that same callback before it
+  returns, so anything less than a flag closes the application twice.
+- **What the tool answers with is what people said in a meeting, and its reader may hold
+  more than the digest's model does.** A task's title is text a run's model took from a
+  transcript, stored as given. In this process's twin that text is read by a Claude with no
+  tool that touches its host; over stdio it is read by whatever client the operator
+  configured, which may hold a shell. The answer is data — the README says so to whoever
+  wires the server up — and nothing here can make a client treat it as that.
+- **This SDK is imported at the top of a file, and the Claude Agent SDK still is not.**
+  `@modelcontextprotocol/sdk` ships a CommonJS build beside its ESM one, which Node, Nest's
+  build, and Jest all load directly. It is a direct dependency, though the Agent SDK already
+  brought it in, because pnpm's strict layout lets a package import only what it declares —
+  and it is pinned to the version the Agent SDK resolves, so the two share one copy and one
+  `CallToolResult`. Bump them together.
+- **Two specs, for two different things.** `stdio/meeting-tools-stdio.server.spec.ts` joins
+  a real MCP client to the real `McpServer` in memory: what is listed, what a call does,
+  what is refused. `test/meeting-tools-stdio.e2e-spec.ts` starts the entry point as a
+  subprocess — through `ts-node`, so no build has to exist — and is the only place that can
+  show stdout carrying nothing but frames, the meeting on the command line being the one
+  searched, and the process ending by itself when the pipe closes.
 
 **The hooks — `meeting-hooks.ts`**
 
