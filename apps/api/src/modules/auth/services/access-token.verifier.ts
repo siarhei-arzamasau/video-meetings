@@ -4,8 +4,8 @@ import { JwtService } from '@nestjs/jwt';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * How an access token is verified, stated once for whatever takes one. Today that is the
- * guard on every route, `/api/mcp` among them.
+ * How an access token is verified, stated once for whatever takes one. Today that is two
+ * guards: `JwtAuthGuard` on the API's routes, and `McpAuthGuard` on `/api/mcp`.
  */
 @Injectable()
 export class AccessTokenVerifier {

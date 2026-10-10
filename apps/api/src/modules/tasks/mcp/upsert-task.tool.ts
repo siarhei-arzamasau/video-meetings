@@ -50,7 +50,7 @@ export type UpsertTaskInput = z.infer<z.ZodObject<typeof UPSERT_TASK_INPUT>>;
 export const UPSERT_TASK_TOOL = {
   name: TaskToolName.UPSERT_TASK,
   description:
-    'Creates a task, or updates the status of the task that already exists under the same title.',
+    'Creates a task of yours, or updates the status of the task you already have under the same title.',
   inputSchema: UPSERT_TASK_INPUT,
   annotations: { readOnlyHint: false },
 } as const;
@@ -60,6 +60,9 @@ export const UPSERT_TASK_TOOL = {
  * upsert and nothing of its own — the title is the shape's to normalise, the rest the
  * service's.
  *
+ * **The owner is who the server answers, and the shape has no field for one.** A task is
+ * found by its owner, so an owner a caller could name would be a write to that user's task.
+ *
  * **It never throws**, as no tool does: the failure is logged through the caller's logger
  * and answered in a sentence of this file's own.
  */
@@ -67,11 +70,12 @@ export async function upsertTaskOf(
   tasks: TaskService,
   logger: Logger,
   meetingId: string,
+  ownerId: string,
   { title, status }: UpsertTaskInput,
 ): Promise<ToolResult> {
   try {
     return answered({
-      task: taskOf(await tasks.upsert({ title, status, sourceMeetingId: meetingId })),
+      task: taskOf(await tasks.upsert({ title, status, sourceMeetingId: meetingId, ownerId })),
     });
   } catch (error) {
     logger.error(`Tool ${UPSERT_TASK_TOOL.name} failed`, describeError(error));

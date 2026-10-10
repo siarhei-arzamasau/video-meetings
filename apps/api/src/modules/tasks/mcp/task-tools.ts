@@ -2,14 +2,14 @@ import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { ReadResourceResult } from '@modelcontextprotocol/sdk/types.js';
-import { Injectable, Logger } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 import type { OnModuleInit } from '@nestjs/common';
 import { z } from 'zod';
 
 import { describeError } from '../../../common/error-message';
 import { TaskService } from '../services/task.service';
 import { OPEN_TASKS_LIMIT } from '../task.constants';
-import { FIND_TASKS_TOOL, findTasksOf } from './find-tasks.tool';
+import { FIND_TASKS_TOOL, OWN_TASKS_DESCRIPTION, findTasksOf } from './find-tasks.tool';
 import { admissionOf } from '../../mcp-registry/mcp-scope';
 import type { McpRequester, McpScope } from '../../mcp-registry/mcp-scope';
 import { refused } from '../../mcp-registry/mcp-tool-parts';
@@ -24,6 +24,15 @@ import { UPSERT_TASK_TOOL, upsertTaskOf } from './upsert-task.tool';
 const JSON_MIME_TYPE = 'application/json';
 const NO_SUCH_TASK = 'There is no such task.';
 const NOT_READ = 'The tasks could not be read.';
+const NOT_YOUR_TASK = 'This task is not yours.';
+
+/**
+ * The code a read of somebody else's task is refused with. JSON-RPC has no code for
+ * "forbidden" and MCP adds none, so it is HTTP's number, which a client already knows how
+ * to read — in the error of the message, since the transport answers every message it could
+ * parse with a 200.
+ */
+const FORBIDDEN = HttpStatus.FORBIDDEN;
 
 /**
  * What the tasks domain offers over MCP, and the domain's own registrar for it: two tools,
@@ -37,7 +46,11 @@ const NOT_READ = 'The tasks could not be read.';
  * why, and refuses a registrar that comes late).
  *
  * **Everything is registered for a scope: one meeting, and a gate asked before every call
- * and every read** (`mcp-scope.ts`). What these answer with is a meeting's tasks.
+ * and every read** (`mcp-scope.ts`). **What these answer with is the requester's own tasks
+ * of that meeting**: the gate's answer names who is asking, and every handler is handed it
+ * — `find_tasks` and `tasks://open` read that user's tasks, `upsert_task` writes a task as
+ * theirs, `task://{id}` refuses anybody else's. An id among the arguments says what to
+ * look for; it is never the permission to see it.
  *
  * **Nothing here throws at a client in words it did not choose.** A tool answers `isError`
  * with a sentence of this domain's own; a resource throws an `McpError` made here, because
@@ -65,10 +78,11 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
   }
 
   /**
-   * `find_tasks` is the in-process server's tool, not a second one like it: its name,
-   * description, shape and behaviour are `FIND_TASKS_TOOL` and `findTasksOf`, which
-   * `MeetingTools` hands a digest's run as well. `upsert_task` is the same service under a
-   * shape with no meeting in it (`upsert-task.tool.ts`).
+   * `find_tasks` is the in-process server's tool, not a second one like it: its name, shape
+   * and behaviour are `FIND_TASKS_TOOL` and `findTasksOf`, which `MeetingTools` hands a
+   * digest's run as well — narrowed here to the requester's tasks, and described as that.
+   * `upsert_task` is the same service under a shape with no meeting and no owner in it
+   * (`upsert-task.tool.ts`): the one is the scope's, the other the requester.
    */
   private registerTools(server: McpServer, scope: McpScope): void {
     const { meetingId } = scope;
@@ -76,11 +90,14 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
     server.registerTool(
       FIND_TASKS_TOOL.name,
       {
-        description: FIND_TASKS_TOOL.description,
+        description: OWN_TASKS_DESCRIPTION,
         inputSchema: FIND_TASKS_TOOL.inputSchema,
         annotations: FIND_TASKS_TOOL.annotations,
       },
-      (input) => this.call(scope, () => findTasksOf(this.tasks, this.logger, meetingId, input)),
+      (input) =>
+        this.call(scope, ({ userId }) =>
+          findTasksOf(this.tasks, this.logger, { meetingId, ownerId: userId }, input),
+        ),
     );
     server.registerTool(
       UPSERT_TASK_TOOL.name,
@@ -89,14 +106,17 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
         inputSchema: UPSERT_TASK_TOOL.inputSchema,
         annotations: UPSERT_TASK_TOOL.annotations,
       },
-      (input) => this.call(scope, () => upsertTaskOf(this.tasks, this.logger, meetingId, input)),
+      (input) =>
+        this.call(scope, ({ userId }) =>
+          upsertTaskOf(this.tasks, this.logger, meetingId, userId, input),
+        ),
     );
   }
 
   /**
-   * The list is the scope's meeting's. A task is addressed by an id its reader chose, so it
-   * is answered only when it came out of that meeting — otherwise an id from anywhere would
-   * read a task of a meeting its reader cannot see.
+   * The list is the requester's, of the scope's meeting. A task is addressed by an id its
+   * reader chose, so it is answered only when it came out of that meeting and is theirs —
+   * otherwise an id from anywhere would read a task its reader has no claim to.
    */
   private registerResources(server: McpServer, scope: McpScope): void {
     server.registerResource(
@@ -104,37 +124,38 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
       OPEN_TASKS_RESOURCE_URI,
       {
         title: 'Open tasks',
-        description: `The tasks that are still open, the oldest first — at most ${OPEN_TASKS_LIMIT}.`,
+        description: `Your tasks that are still open, the oldest first — at most ${OPEN_TASKS_LIMIT}.`,
         mimeType: JSON_MIME_TYPE,
       },
-      (uri) => this.read(scope, uri, () => this.openTasks(scope.meetingId)),
+      (uri) => this.read(scope, uri, (requester) => this.openTasks(scope.meetingId, requester)),
     );
     server.registerResource(
       'task',
       // `list: undefined` is the SDK's way to say the template lists nothing, said on purpose.
       new ResourceTemplate(TASK_RESOURCE_URI_TEMPLATE, { list: undefined }),
-      { title: 'Task', description: 'One task, by its id.', mimeType: JSON_MIME_TYPE },
+      { title: 'Task', description: 'One task of yours, by its id.', mimeType: JSON_MIME_TYPE },
       (uri, { taskId }) =>
         this.read(scope, uri, (requester) => this.task(scope.meetingId, String(taskId), requester)),
     );
   }
 
-  private async openTasks(meetingId: string): Promise<object> {
-    return { tasks: (await this.tasks.open(meetingId)).map(taskOf) };
+  private async openTasks(meetingId: string, { userId }: McpRequester): Promise<object> {
+    return { tasks: (await this.tasks.open(meetingId, userId)).map(taskOf) };
   }
 
   /**
-   * One task of the meeting, or `null` for an id that is not a task of it — not a UUID, no
-   * such task, or another meeting's, which are one answer on purpose.
+   * One task of the requester's, or `null` for an id that is not a task of the meeting —
+   * not a UUID, no such task, or another meeting's, which are one answer on purpose.
    *
-   * `_requester` is who is asking. Nothing is decided by it yet: whoever may read the
-   * meeting may read each of its tasks, a task having no assignee. It is here for the rule
-   * that will.
+   * **A task of the meeting that is somebody else's, or nobody's, is refused as forbidden**
+   * — checked on the task that was read, after it was read: the id says which task, and
+   * who owns it is the row's to say. It is told apart from "no such task" only inside a
+   * meeting the requester is in; another meeting's task stays one they cannot tell exists.
    */
   private async task(
     meetingId: string,
     taskId: string,
-    _requester: McpRequester,
+    requester: McpRequester,
   ): Promise<object | null> {
     if (!z.uuid().safeParse(taskId).success) {
       return null;
@@ -142,14 +163,25 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
 
     const task = await this.tasks.get(taskId);
 
-    return task === null || task.sourceMeetingId !== meetingId ? null : { task: taskOf(task) };
+    if (task === null || task.sourceMeetingId !== meetingId) {
+      return null;
+    }
+
+    if (task.ownerId !== requester.userId) {
+      throw new McpError(FORBIDDEN, NOT_YOUR_TASK);
+    }
+
+    return { task: taskOf(task) };
   }
 
-  /** A tool's own work, run for whoever the gate lets in and refused to anybody else. */
-  private async call(scope: McpScope, run: () => Promise<ToolResult>): Promise<ToolResult> {
+  /** A tool's own work, run as whoever the gate lets in and refused to anybody else. */
+  private async call(
+    scope: McpScope,
+    runAs: (requester: McpRequester) => Promise<ToolResult>,
+  ): Promise<ToolResult> {
     const admission = await admissionOf(scope, this.logger);
 
-    return 'requester' in admission ? run() : refused(admission.refusal);
+    return 'requester' in admission ? runAs(admission.requester) : refused(admission.refusal);
   }
 
   /** The gate, the read, and the answer as the JSON text of one resource. */
@@ -169,6 +201,11 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
     try {
       answer = await answerFor(admission.requester);
     } catch (error) {
+      if (error instanceof McpError) {
+        // A refusal made here, in words chosen here: the client's to read as it is.
+        throw error;
+      }
+
       this.logger.error('A resource could not be read', describeError(error));
 
       throw new McpError(ErrorCode.InternalError, NOT_READ);

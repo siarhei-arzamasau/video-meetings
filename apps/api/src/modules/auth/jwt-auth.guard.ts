@@ -5,6 +5,7 @@ import type { Request } from 'express';
 
 import { FindUserByIdQuery } from '../user/queries/find-user-by-id.query';
 import { AuthenticatedRequest } from './authenticated-request';
+import { bearerTokenOf } from './bearer-token';
 import { AccessTokenVerifier } from './services/access-token.verifier';
 
 /** Requires a `Bearer` token that verifies and still names an existing user. */
@@ -17,7 +18,7 @@ export class JwtAuthGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
-    const token = bearerToken(request.headers.authorization);
+    const token = bearerTokenOf(request.headers.authorization);
     const userId = token === undefined ? null : await this.tokens.subjectOf(token);
 
     if (userId === null) {
@@ -40,18 +41,4 @@ export class JwtAuthGuard implements CanActivate {
 
     return true;
   }
-}
-
-function bearerToken(header: string | undefined): string | undefined {
-  if (header === undefined) {
-    return undefined;
-  }
-
-  const [scheme, value, ...rest] = header.split(' ');
-
-  if (scheme !== 'Bearer' || value === undefined || value.length === 0 || rest.length > 0) {
-    return undefined;
-  }
-
-  return value;
 }

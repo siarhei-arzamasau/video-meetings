@@ -1,8 +1,8 @@
 import { EventEmitter } from 'node:events';
 
-import type { User } from '@repo/shared';
 import type { Request, Response } from 'express';
 
+import type { McpRequester } from '../mcp-registry/mcp-scope';
 import { McpController } from './mcp.controller';
 import type { McpService } from './mcp.service';
 
@@ -21,7 +21,7 @@ function fakeResponse(): Response & { status: jest.Mock; set: jest.Mock; json: j
 
 const requestOf = (method: string, body?: object): Request => ({ method, body }) as Request;
 
-const USER = { id: '11111111-1111-4111-8111-111111111111' } as User;
+const REQUESTER: McpRequester = { userId: '11111111-1111-4111-8111-111111111111' };
 const MEETING_ID = '44444444-4444-4444-8444-444444444444';
 
 describe('McpController', () => {
@@ -45,11 +45,11 @@ describe('McpController', () => {
     const req = requestOf('POST', body);
     const res = fakeResponse();
 
-    await controller.handle(req, res, USER, MEETING_ID);
+    await controller.handle(req, res, REQUESTER, MEETING_ID);
 
-    // For the user the guard let in and the meeting the URL names — nothing from the body.
+    // For the requester the guard let in and the meeting the URL names — nothing from the body.
     expect(openTransport).toHaveBeenCalledTimes(1);
-    expect(openTransport).toHaveBeenCalledWith({ userId: USER.id }, MEETING_ID);
+    expect(openTransport).toHaveBeenCalledWith(REQUESTER, MEETING_ID);
     expect(handleRequest).toHaveBeenCalledWith(req, res, body);
     // The transport writes the response; the controller writes nothing beside it.
     expect(res.status).not.toHaveBeenCalled();
@@ -57,8 +57,8 @@ describe('McpController', () => {
   });
 
   it('opens a transport for each request', async () => {
-    await controller.handle(requestOf('POST', {}), fakeResponse(), USER, MEETING_ID);
-    await controller.handle(requestOf('POST', {}), fakeResponse(), USER, MEETING_ID);
+    await controller.handle(requestOf('POST', {}), fakeResponse(), REQUESTER, MEETING_ID);
+    await controller.handle(requestOf('POST', {}), fakeResponse(), REQUESTER, MEETING_ID);
 
     expect(openTransport).toHaveBeenCalledTimes(2);
   });
@@ -66,7 +66,7 @@ describe('McpController', () => {
   it('lets go of the transport when the response closes, and not before', async () => {
     const res = fakeResponse();
 
-    await controller.handle(requestOf('POST', {}), res, USER, MEETING_ID);
+    await controller.handle(requestOf('POST', {}), res, REQUESTER, MEETING_ID);
 
     expect(closeTransport).not.toHaveBeenCalled();
 
@@ -79,7 +79,9 @@ describe('McpController', () => {
     const res = fakeResponse();
     handleRequest.mockRejectedValue(new Error('the body was not a message'));
 
-    await expect(controller.handle(requestOf('POST', {}), res, USER, MEETING_ID)).rejects.toThrow();
+    await expect(
+      controller.handle(requestOf('POST', {}), res, REQUESTER, MEETING_ID),
+    ).rejects.toThrow();
 
     res.emit('close');
 
@@ -94,7 +96,7 @@ describe('McpController', () => {
       { jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 1 } },
     ];
 
-    await controller.handle(requestOf('POST', batch), res, USER, MEETING_ID);
+    await controller.handle(requestOf('POST', batch), res, REQUESTER, MEETING_ID);
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({
@@ -108,7 +110,7 @@ describe('McpController', () => {
   it('lets go of the transport at once for a client that hung up while it was opened', async () => {
     const res = Object.assign(fakeResponse(), { destroyed: true });
 
-    await controller.handle(requestOf('POST', {}), res, USER, MEETING_ID);
+    await controller.handle(requestOf('POST', {}), res, REQUESTER, MEETING_ID);
 
     // `close` has already been emitted, so waiting for it would keep the transport for good.
     expect(closeTransport).toHaveBeenCalledWith(transport);
@@ -120,9 +122,9 @@ describe('McpController', () => {
     openTransport.mockRejectedValue(new Error('Meeting not found'));
 
     // The refusal is the service's to throw and the exception filter's to word.
-    await expect(controller.handle(requestOf('POST', {}), res, USER, MEETING_ID)).rejects.toThrow(
-      'Meeting not found',
-    );
+    await expect(
+      controller.handle(requestOf('POST', {}), res, REQUESTER, MEETING_ID),
+    ).rejects.toThrow('Meeting not found');
     expect(handleRequest).not.toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
   });
@@ -132,7 +134,7 @@ describe('McpController', () => {
     async (method) => {
       const res = fakeResponse();
 
-      await controller.handle(requestOf(method), res, USER, MEETING_ID);
+      await controller.handle(requestOf(method), res, REQUESTER, MEETING_ID);
 
       expect(res.status).toHaveBeenCalledWith(405);
       expect(res.set).toHaveBeenCalledWith('Allow', 'POST');

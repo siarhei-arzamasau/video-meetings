@@ -44,7 +44,8 @@ describe('MeetingTools', () => {
     it('searches through TaskService, and answers with the tasks it found', async () => {
       const answer = await call(MeetingToolName.FIND_TASKS, { query: '  launch emails ' });
 
-      expect(search).toHaveBeenCalledWith('launch emails', MEETING_ID);
+      // Nobody's tasks: a run answers no user, and what it finds can reach a whole meeting.
+      expect(search).toHaveBeenCalledWith('launch emails', MEETING_ID, null);
       expect(answer.isError).toBeUndefined();
       expect(answerOf(answer)).toEqual({ tasks: [TASK_AS_ANSWERED] });
     });

@@ -23,18 +23,18 @@ const GROUND_RULES = [
 ].join('\n');
 
 const OVERVIEW_PROMPT = [
-  'Collect what is known about this meeting from its tasks, and report it.',
+  'Collect what is known about this meeting from your tasks of it, and report it.',
   '',
-  `1. Read the resource \`${OPEN_TASKS_RESOURCE_URI}\`: every task of the meeting that is still open.`,
+  `1. Read the resource \`${OPEN_TASKS_RESOURCE_URI}\`: every task of yours in this meeting that is still open.`,
   `2. For anything the open tasks leave unclear, call \`${TaskToolName.FIND_TASKS}\` with a few words of it — it finds the tasks that are done as well. \`${TASK_RESOURCE_URI_TEMPLATE}\` reads one task by its id.`,
-  '3. Answer with what the meeting still has to do, what it has finished, and what the tasks do not say.',
+  '3. Answer with what is still to do, what is finished, and what the tasks do not say.',
   '',
   GROUND_RULES,
 ].join('\n');
 
 const topicPrompt = (topic: string): string =>
   [
-    `Collect what this meeting's tasks say about the following topic, and report it: ${JSON.stringify(topic)}`,
+    `Collect what your tasks of this meeting say about the following topic, and report it: ${JSON.stringify(topic)}`,
     '',
     `1. Call \`${TaskToolName.FIND_TASKS}\` with the topic, and again with other words for it if little comes back.`,
     `2. Read \`${OPEN_TASKS_RESOURCE_URI}\` for open tasks that bear on it under another wording.`,
@@ -50,7 +50,7 @@ const asUserMessage = (text: string): GetPromptResult => ({
 /**
  * The tasks domain's prompts: two ways for a client to gather what is known about the
  * meeting, as a whole or on one topic — from this domain's own tools and resources and
- * nothing else, since tasks are all it holds.
+ * nothing else, since tasks are all it holds, and so from the tasks of whoever is asking.
  *
  * **A prompt is text and carries no data**: not a task, not the meeting's id, nothing read
  * from the database. That is why none of them asks the scope's gate who is calling, unlike
@@ -62,7 +62,7 @@ export function registerTaskPrompts(server: McpServer): void {
     {
       title: 'Meeting overview',
       description:
-        'Gathers what the meeting still has to do and what it has finished, from its tasks.',
+        'Gathers what is still to do in the meeting and what is finished, from your tasks of it.',
     },
     () => asUserMessage(OVERVIEW_PROMPT),
   );
@@ -70,7 +70,7 @@ export function registerTaskPrompts(server: McpServer): void {
     TaskPromptName.TOPIC,
     {
       title: 'Meeting topic',
-      description: "Gathers what the meeting's tasks say about one topic.",
+      description: 'Gathers what your tasks of the meeting say about one topic.',
       argsSchema: {
         topic: textUpTo(MAX_TASK_TITLE_LENGTH).describe('What to collect information about.'),
       },

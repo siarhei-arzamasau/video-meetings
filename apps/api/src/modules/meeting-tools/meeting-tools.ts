@@ -102,7 +102,9 @@ export class MeetingTools {
           FIND_TASKS_TOOL.name,
           FIND_TASKS_TOOL.description,
           FIND_TASKS_TOOL.inputSchema,
-          (input) => findTasksOf(this.tasks, this.logger, meetingId, input),
+          // Nobody's tasks: the ones a run like this one writes. What a run finds can end up
+          // in a digest every member reads, and a user's own tasks are theirs alone.
+          (input) => findTasksOf(this.tasks, this.logger, { meetingId, ownerId: null }, input),
           { annotations: FIND_TASKS_TOOL.annotations },
         ),
         tool(

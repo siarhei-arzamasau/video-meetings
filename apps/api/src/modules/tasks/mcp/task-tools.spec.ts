@@ -1,7 +1,13 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
 import type { McpAdmission } from '../../mcp-registry/mcp-scope';
-import { MEETING_ID, TASK, TASK_AS_ANSWERED, connectTaskTools } from './task-tools.fixture';
+import {
+  MEETING_ID,
+  REQUESTER,
+  TASK,
+  TASK_AS_ANSWERED,
+  connectTaskTools,
+} from './task-tools.fixture';
 import type { TaskToolsHarness } from './task-tools.fixture';
 
 /**
@@ -42,19 +48,22 @@ describe('TaskTools', () => {
     expect(prompts.map(({ name }) => name)).toEqual(['meeting_overview', 'meeting_topic']);
   });
 
-  it("answers each with the injected task service's own method, for the scope's meeting", async () => {
+  it("answers each with the injected task service's own method, for the scope's meeting and its requester", async () => {
     await server.callTool('find_tasks', { query: 'launch emails' });
     await server.callTool('upsert_task', { title: TASK.title, status: 'DONE' });
     await server.readJson('tasks://open');
     const one = await server.readJson(`task://${TASK.id}`);
 
-    expect(server.search).toHaveBeenCalledWith('launch emails', MEETING_ID);
+    // Who the gate let in reaches all four: three as the owner to read or write for, and
+    // the fourth as who the task it read has to belong to.
+    expect(server.search).toHaveBeenCalledWith('launch emails', MEETING_ID, REQUESTER.userId);
     expect(server.upsert).toHaveBeenCalledWith({
       title: TASK.title,
       status: 'DONE',
       sourceMeetingId: MEETING_ID,
+      ownerId: REQUESTER.userId,
     });
-    expect(server.open).toHaveBeenCalledWith(MEETING_ID);
+    expect(server.open).toHaveBeenCalledWith(MEETING_ID, REQUESTER.userId);
     expect(server.get).toHaveBeenCalledWith(TASK.id);
     expect(one.json).toEqual({ task: TASK_AS_ANSWERED });
     // Once for each of the four: the gate is in front of every call and every read.

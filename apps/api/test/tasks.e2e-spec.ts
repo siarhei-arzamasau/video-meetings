@@ -19,6 +19,9 @@ interface TaskRow {
  * `TaskService` run against the database: what a search matches and in what order, what an
  * upsert writes, and what the two plain reads answer. The first two are raw SQL over
  * `pg_trgm` and `ON CONFLICT`, so a stubbed client can show neither.
+ *
+ * Every task here but the open ones is nobody's, as a digest's generation writes them.
+ * Whose task is whose is `task-owners.e2e-spec.ts`.
  */
 describe('tasks, against the database', () => {
   const suite = useApiSuite();
@@ -47,6 +50,7 @@ describe('tasks, against the database', () => {
         id: expect.any(String),
         title: 'Rewrite the emails',
         sourceMeetingId: meetingId,
+        ownerId: null,
         status: OPEN,
         createdAt: expect.any(Date),
         updatedAt: expect.any(Date),
@@ -180,20 +184,30 @@ describe('tasks, against the database', () => {
   });
 
   describe('open and get', () => {
-    it("lists a meeting's open tasks, the oldest first, and none of another meeting's", async () => {
+    it("lists an owner's open tasks of a meeting, the oldest first, and none of another meeting's", async () => {
       const host = await registerUser(suite, EMAIL);
+      const ownerId = host.id;
       const [first, second] = [await createMeeting(suite, host), await createMeeting(suite, host)];
-      const oldest = await tasks().upsert({ title: 'Book the venue', sourceMeetingId: first.id });
-      await tasks().upsert({ title: 'Send the invitations', sourceMeetingId: first.id });
+      const oldest = await tasks().upsert({
+        title: 'Book the venue',
+        sourceMeetingId: first.id,
+        ownerId,
+      });
+      await tasks().upsert({ title: 'Send the invitations', sourceMeetingId: first.id, ownerId });
       // Two upserts can land in the one millisecond the column keeps, and the order of a tie
       // is the ids': the first is dated back so that "oldest" is something the rows say.
       await suite.prisma().$executeRaw`
         UPDATE "tasks" SET created_at = now() - interval '1 minute' WHERE id = ${oldest.id}::uuid
       `;
-      await tasks().upsert({ title: 'Print the badges', sourceMeetingId: first.id, status: DONE });
-      await tasks().upsert({ title: 'Call Bob', sourceMeetingId: second.id });
+      await tasks().upsert({
+        title: 'Print the badges',
+        sourceMeetingId: first.id,
+        ownerId,
+        status: DONE,
+      });
+      await tasks().upsert({ title: 'Call Bob', sourceMeetingId: second.id, ownerId });
 
-      const open = await tasks().open(first.id);
+      const open = await tasks().open(first.id, ownerId);
 
       expect(open.map(({ title }) => title)).toEqual(['Book the venue', 'Send the invitations']);
       expect(open.every(({ status }) => status === OPEN)).toBe(true);

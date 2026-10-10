@@ -4,7 +4,9 @@ import { Logger } from '@nestjs/common';
 import {
   MEETING_ID,
   OTHER_MEETING_ID,
+  OTHER_USER_ID,
   REFUSAL,
+  REQUESTER,
   TASK,
   TASK_AS_ANSWERED,
   connectTaskTools,
@@ -56,13 +58,21 @@ describe("TaskTools' resources", () => {
   });
 
   describe('tasks://open', () => {
-    it("answers the task service's open tasks of the one meeting, as JSON", async () => {
+    it("answers the task service's open tasks of the requester in the one meeting, as JSON", async () => {
       await expect(server.readJson(OPEN_TASKS)).resolves.toEqual({
         uri: OPEN_TASKS,
         mimeType: 'application/json',
         json: { tasks: [TASK_AS_ANSWERED] },
       });
-      expect(open).toHaveBeenCalledWith(MEETING_ID);
+      expect(open).toHaveBeenCalledWith(MEETING_ID, REQUESTER.userId);
+    });
+
+    it('answers whoever the gate let in this time with theirs', async () => {
+      admit.mockResolvedValue({ requester: { userId: OTHER_USER_ID } });
+
+      await server.readJson(OPEN_TASKS);
+
+      expect(open).toHaveBeenCalledWith(MEETING_ID, OTHER_USER_ID);
     });
 
     it('answers an empty list for a meeting with nothing open', async () => {
@@ -73,7 +83,7 @@ describe("TaskTools' resources", () => {
   });
 
   describe('task://{taskId}', () => {
-    it('answers the task of that id from the task service, as JSON', async () => {
+    it("answers the task of that id from the task service when it is the requester's, as JSON", async () => {
       await expect(server.readJson(TASK_URI)).resolves.toEqual({
         uri: TASK_URI,
         mimeType: 'application/json',
@@ -84,12 +94,31 @@ describe("TaskTools' resources", () => {
 
     it.each([
       ['a task of another meeting', { ...TASK, sourceMeetingId: OTHER_MEETING_ID }],
+      [
+        "another meeting's task that is somebody else's",
+        { ...TASK, sourceMeetingId: OTHER_MEETING_ID, ownerId: OTHER_USER_ID },
+      ],
       ['no task at all', null],
     ])('refuses an id that names %s, in one sentence for both', async (_case, found) => {
       get.mockResolvedValue(found);
 
       // An id is its reader's to choose: answered, it would read a meeting they cannot see.
       await expect(server.readJson(TASK_URI)).rejects.toThrow('There is no such task.');
+    });
+
+    it.each([
+      ["somebody else's", OTHER_USER_ID],
+      ["nobody's", null],
+    ])('refuses a task of the meeting that is %s as forbidden', async (_case, ownerId) => {
+      get.mockResolvedValue({ ...TASK, ownerId });
+
+      const read = server.readJson(TASK_URI);
+
+      // The id said which task to look for; whose it is was read off the task.
+      await expect(read).rejects.toMatchObject({ code: 403 });
+      await expect(read).rejects.toThrow('This task is not yours.');
+      // A refusal, not a failure: nothing went wrong that a log should hold.
+      expect(Logger.prototype.error).not.toHaveBeenCalled();
     });
 
     it('refuses an id that is not one without asking the task service', async () => {

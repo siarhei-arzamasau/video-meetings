@@ -101,7 +101,7 @@ describe('the MCP server over HTTP', () => {
 
     expect(answer.body).toMatchObject({ jsonrpc: '2.0', error: { code: -32_600 }, id: null });
     // Refused whole: no call in it ran.
-    await expect(tasks().open(meeting.id)).resolves.toEqual([]);
+    await expect(tasks().open(meeting.id, host.id)).resolves.toEqual([]);
   });
 
   it('answers a body that is not a message as a JSON-RPC error, not a 500', async () => {

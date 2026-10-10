@@ -8,12 +8,12 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import type { User } from '@repo/shared';
 import type { Request, Response } from 'express';
 
-import { CurrentUser } from '../auth/current-user.decorator';
-import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import type { McpRequester } from '../mcp-registry/mcp-scope';
+import { McpAuthGuard } from './mcp-auth.guard';
 import { McpService } from './mcp.service';
+import { Requester } from './requester.decorator';
 
 const POST = 'POST';
 const UUID_V4 = new ParseUUIDPipe({ version: '4' });
@@ -37,10 +37,10 @@ const BATCH_NOT_SUPPORTED = {
  * which writes the response itself — hence `@Res` without passthrough, so Nest sends
  * nothing after it.
  *
- * **Behind `JwtAuthGuard`, like every route that answers with a meeting**: the client sends
- * the access token as `Authorization: Bearer`, in its configuration's headers. **The
- * meeting is in the URL and never among a tool's arguments**: fixed by whoever configured
- * the client, out of reach of whatever a model sends.
+ * **Behind `McpAuthGuard`**: the client sends the access token every other route takes, as
+ * `Authorization: Bearer`, in its configuration's headers, and the guard leaves who it
+ * names on the request. **The meeting is in the URL and never among a tool's arguments**:
+ * fixed by whoever configured the client, out of reach of whatever a model sends.
  *
  * **Only `POST` reaches the transport.** In Streamable HTTP a `GET` opens an event stream
  * for what the server sends unasked, and `DELETE` ends a session. This server keeps no
@@ -57,7 +57,7 @@ const BATCH_NOT_SUPPORTED = {
  * sends one.
  */
 @Controller('mcp')
-@UseGuards(JwtAuthGuard)
+@UseGuards(McpAuthGuard)
 export class McpController {
   constructor(private readonly mcp: McpService) {}
 
@@ -65,7 +65,7 @@ export class McpController {
   async handle(
     @Req() req: Request,
     @Res({ passthrough: false }) res: Response,
-    @CurrentUser() user: User,
+    @Requester() requester: McpRequester,
     @Query('meetingId', UUID_V4) meetingId: string,
   ): Promise<void> {
     if (req.method !== POST) {
@@ -80,7 +80,7 @@ export class McpController {
       return;
     }
 
-    const transport = await this.mcp.openTransport({ userId: user.id }, meetingId);
+    const transport = await this.mcp.openTransport(requester, meetingId);
 
     if (res.destroyed) {
       // The client hung up while the meeting was looked up: `close` has been and gone, so

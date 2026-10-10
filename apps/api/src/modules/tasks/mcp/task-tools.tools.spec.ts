@@ -2,11 +2,13 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { Logger } from '@nestjs/common';
 
 import { MAX_TASK_TITLE_LENGTH } from '../task.constants';
-import { FIND_TASKS_TOOL } from './find-tasks.tool';
+import { OWN_TASKS_DESCRIPTION } from './find-tasks.tool';
 import {
   MEETING_ID,
   OTHER_MEETING_ID,
+  OTHER_USER_ID,
   REFUSAL,
+  REQUESTER,
   TASK_AS_ANSWERED,
   answerOf,
   connectTaskTools,
@@ -39,8 +41,8 @@ describe("TaskTools' tools", () => {
     expect(tools).toHaveLength(2);
     expect(tools[0]).toMatchObject({
       name: 'find_tasks',
-      // Described once, for this server and for a digest's run alike.
-      description: FIND_TASKS_TOOL.description,
+      // This server's own words for it: a digest's run searches a meeting, a user their own.
+      description: OWN_TASKS_DESCRIPTION,
       annotations: { readOnlyHint: true },
       // The Zod shape, as the JSON Schema a client is shown: one text, required and bounded.
       inputSchema: {
@@ -57,7 +59,7 @@ describe("TaskTools' tools", () => {
     });
   });
 
-  it('takes a title and a status for a task, and nothing that names a meeting', async () => {
+  it('takes a title and a status for a task, and nothing that names a meeting or an owner', async () => {
     const { tools } = await client.listTools();
     const properties = tools[1]?.inputSchema.properties ?? {};
 
@@ -70,23 +72,33 @@ describe("TaskTools' tools", () => {
   });
 
   describe('find_tasks', () => {
-    it('searches the one meeting it was made for, and answers with the tasks it found', async () => {
+    it("searches the requester's tasks of the one meeting, and answers with the tasks it found", async () => {
       const answer = await call('find_tasks', { query: '  launch emails ' });
 
-      expect(search).toHaveBeenCalledWith('launch emails', MEETING_ID);
+      expect(search).toHaveBeenCalledWith('launch emails', MEETING_ID, REQUESTER.userId);
       expect(answer.isError ?? false).toBe(false);
       expect(answerOf(answer)).toEqual({ tasks: [TASK_AS_ANSWERED] });
     });
 
-    it('has no meeting among its arguments for a caller to aim it at another', async () => {
+    it('has no meeting and no owner among its arguments for a caller to aim it at another', async () => {
       await call('find_tasks', {
         query: 'launch',
         meetingId: OTHER_MEETING_ID,
         sourceMeetingId: OTHER_MEETING_ID,
+        ownerId: OTHER_USER_ID,
+        userId: OTHER_USER_ID,
       });
 
       expect(search).toHaveBeenCalledTimes(1);
-      expect(search).toHaveBeenCalledWith('launch', MEETING_ID);
+      expect(search).toHaveBeenCalledWith('launch', MEETING_ID, REQUESTER.userId);
+    });
+
+    it('searches the tasks of whoever the gate let in this time', async () => {
+      admit.mockResolvedValue({ requester: { userId: OTHER_USER_ID } });
+
+      await call('find_tasks', { query: 'launch' });
+
+      expect(search).toHaveBeenCalledWith('launch', MEETING_ID, OTHER_USER_ID);
     });
 
     it.each([
@@ -113,7 +125,7 @@ describe("TaskTools' tools", () => {
   });
 
   describe('upsert_task', () => {
-    it('hands the task service the title, trimmed, the status, and the one meeting', async () => {
+    it('hands the task service the title, trimmed, the status, the one meeting, and the requester as the owner', async () => {
       const answer = await call('upsert_task', {
         title: '  Rewrite the launch emails ',
         status: 'DONE',
@@ -123,6 +135,7 @@ describe("TaskTools' tools", () => {
         title: 'Rewrite the launch emails',
         status: 'DONE',
         sourceMeetingId: MEETING_ID,
+        ownerId: REQUESTER.userId,
       });
       expect(answer.isError ?? false).toBe(false);
       expect(answerOf(answer)).toEqual({ task: TASK_AS_ANSWERED });
@@ -135,18 +148,23 @@ describe("TaskTools' tools", () => {
         title: 'Rewrite the launch emails',
         status: undefined,
         sourceMeetingId: MEETING_ID,
+        ownerId: REQUESTER.userId,
       });
     });
 
-    it('writes to the one meeting it was made for, whatever a caller sends beside the task', async () => {
+    it('writes to the one meeting, as the requester, whatever a caller sends beside the task', async () => {
       await call('upsert_task', {
         title: 'Rewrite the launch emails',
         meetingId: OTHER_MEETING_ID,
         sourceMeetingId: OTHER_MEETING_ID,
+        ownerId: OTHER_USER_ID,
       });
 
+      // The owner is who was let in: one taken from here would be a write to their task.
       expect(upsert).toHaveBeenCalledTimes(1);
-      expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ sourceMeetingId: MEETING_ID }));
+      expect(upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceMeetingId: MEETING_ID, ownerId: REQUESTER.userId }),
+      );
     });
 
     it.each([

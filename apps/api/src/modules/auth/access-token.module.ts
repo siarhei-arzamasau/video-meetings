@@ -9,10 +9,8 @@ import { AccessTokenVerifier } from './services/access-token.verifier';
  * process needs in order to take a token, and nothing a process needs in order to give one.
  *
  * It is a module of its own so that something which only takes a token can import it
- * alone. `AuthModule` adds to it everything that issues one: the credential routes, argon2,
- * the rate limit. Nothing imports it without `AuthModule` today — the process it was split
- * out for, an MCP server on stdio, is gone — and the split is kept because it costs nothing
- * and says which half is which.
+ * alone, as `McpModule` does for the guard on `/api/mcp`. `AuthModule` adds to it everything
+ * that issues one: the credential routes, argon2, the rate limit.
  *
  * **A token's lifetime is not configured here.** It is `TokenService`'s, set as it signs, so
  * that importing this module asks for `JWT_SECRET` and no other variable.

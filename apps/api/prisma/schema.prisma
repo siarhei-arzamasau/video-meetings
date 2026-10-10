@@ -48,6 +48,7 @@ model User {
   uploadedFiles          MeetingFile[]
   fileUploads            MeetingFileUpload[]
   ownedDigestActionItems MeetingDigestActionItem[] @relation("MeetingDigestActionItemOwner")
+  ownedTasks             Task[]                    @relation("TaskOwner")
 
   @@map("users")
 }
@@ -373,14 +374,16 @@ enum TaskStatus {
 /// One thing to be done that came out of a meeting, as a record of its own — unlike a
 /// `MeetingDigestActionItem`, which every successful generation replaces whole and which
 /// therefore cannot carry a status from one generation to the next.
-///
-/// No assignee, deliberately: a task has nobody responsible for it yet.
 model Task {
-  id              String @id @default(uuid()) @db.Uuid
-  /// As the caller gave it. With `sourceMeetingId` it is the task's identity — what
-  /// `TaskService.upsert` finds an existing task by — so a reworded title is another task.
+  id              String  @id @default(uuid()) @db.Uuid
+  /// As the caller gave it. With `sourceMeetingId` and `ownerId` it is the task's identity —
+  /// what `TaskService.upsert` finds an existing task by — so a reworded title is another task.
   title           String
-  sourceMeetingId String @map("source_meeting_id") @db.Uuid
+  sourceMeetingId String  @map("source_meeting_id") @db.Uuid
+  /// Whose task it is: the user an MCP client wrote it as, and the only one it is then read
+  /// or changed by over MCP. Null for a task nobody owns — one a digest's generation wrote,
+  /// or one older than this column. Not an assignee: nothing says who is to do the task.
+  ownerId         String? @map("owner_id") @db.Uuid
 
   status TaskStatus @default(OPEN)
 
@@ -391,11 +394,19 @@ model Task {
 
   // Cascade, as for a digest: a task holds nothing on disk that has to outlive the meeting.
   sourceMeeting Meeting @relation("TaskSourceMeeting", fields: [sourceMeetingId], references: [id], onDelete: Cascade)
+  // Cascade as well: a user's tasks are nobody else's to read, so they go with the account.
+  // `SetNull` would hand them to nobody, and fail the delete wherever the meeting already
+  // has a task nobody owns under the same title.
+  owner         User?   @relation("TaskOwner", fields: [ownerId], references: [id], onDelete: Cascade)
 
-  /// One task per title within a meeting, and what the upsert's `ON CONFLICT` names.
-  @@unique([sourceMeetingId, title])
-  /// The foreign key's index, as the rules ask for one by this name.
+  /// One task per title for each owner within a meeting, and what the upsert's `ON CONFLICT`
+  /// names. **`NULLS NOT DISTINCT` in the database**, written into the migration by hand
+  /// because Prisma has no word for it: without it two tasks nobody owns never conflict, and
+  /// every upsert of one inserts another.
+  @@unique([sourceMeetingId, ownerId, title])
+  /// The foreign keys' indexes, as the rules ask for one each.
   @@index([sourceMeetingId])
+  @@index([ownerId])
   /// Trigrams of the title, for `TaskService.search`. Needs the `pg_trgm` extension, which
   /// the migration creates by hand: Prisma does not manage extensions here.
   @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)

@@ -215,23 +215,24 @@ not there yet — answers 409, and so does every digest while the flag is off.
 
 ### Meeting tasks over MCP
 
-The running API serves a meeting's tasks to an MCP client — Claude Code, Claude Desktop, or
-any other — at `/api/mcp?meetingId=<meeting-id>` (Streamable HTTP, stateless, JSON
-responses). There is nothing to start beside the API.
+The running API serves a user their own tasks of a meeting to an MCP client — Claude Code,
+Claude Desktop, or any other — at `/api/mcp?meetingId=<meeting-id>` (Streamable HTTP,
+stateless, JSON responses). There is nothing to start beside the API.
 
-| Kind     | Name               | Does                                                                 |
-| -------- | ------------------ | -------------------------------------------------------------------- |
-| Tool     | `find_tasks`       | Finds the tasks whose title is similar to a text (read-only)         |
-| Tool     | `upsert_task`      | Creates a task, or updates the status of the one with the same title |
-| Resource | `tasks://open`     | The tasks that are still open, as JSON                               |
-| Resource | `task://{taskId}`  | One task by its id, as JSON                                          |
-| Prompt   | `meeting_overview` | Gathers what the meeting still has to do and what it has finished    |
-| Prompt   | `meeting_topic`    | Gathers what the meeting's tasks say about one topic                 |
+| Kind     | Name               | Does                                                                        |
+| -------- | ------------------ | --------------------------------------------------------------------------- |
+| Tool     | `find_tasks`       | Finds your tasks whose title is similar to a text (read-only)               |
+| Tool     | `upsert_task`      | Creates a task of yours, or updates the status of yours with the same title |
+| Resource | `tasks://open`     | Your tasks that are still open, as JSON                                     |
+| Resource | `task://{taskId}`  | One task of yours by its id, as JSON; somebody else's is an error, code 403 |
+| Prompt   | `meeting_overview` | Gathers what is still to do in the meeting and what is finished             |
+| Prompt   | `meeting_topic`    | Gathers what your tasks of the meeting say about one topic                  |
 
 **The server answers only a user who can see the meeting** — its host or one of its
-participants. The meeting is in the URL, and the client sends the `accessToken` that
-`POST /api/auth/login` responds with as `Authorization: Bearer <access-token>`. In Claude
-Code:
+participants — **and each of them only with their own tasks**: a task belongs to the user
+whose client wrote it, and two members of one meeting share the URL and no task. The
+meeting is in the URL, and the client sends the `accessToken` that `POST /api/auth/login`
+responds with as `Authorization: Bearer <access-token>`. In Claude Code:
 
 ```bash
 claude mcp add --transport http meeting-tasks "http://localhost:3001/api/mcp?meetingId=<meeting-id>" --header "Authorization: Bearer <access-token>"

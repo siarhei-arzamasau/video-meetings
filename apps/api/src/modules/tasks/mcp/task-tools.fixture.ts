@@ -12,11 +12,14 @@ import { TaskTools } from './task-tools';
 export const MEETING_ID = '44444444-4444-4444-8444-444444444444';
 export const OTHER_MEETING_ID = '77777777-7777-4777-8777-777777777777';
 export const REQUESTER = { userId: '11111111-1111-4111-8111-111111111111' };
+export const OTHER_USER_ID = '22222222-2222-4222-8222-222222222222';
 
 export const TASK = {
   id: '55555555-5555-4555-8555-555555555555',
   title: 'Rewrite the launch emails',
   sourceMeetingId: MEETING_ID,
+  // The requester's own, as every task these answer with has to be.
+  ownerId: REQUESTER.userId as string | null,
   status: 'OPEN' as const,
   createdAt: new Date('2026-10-01T10:00:00.000Z'),
   updatedAt: new Date('2026-10-01T10:00:00.000Z'),

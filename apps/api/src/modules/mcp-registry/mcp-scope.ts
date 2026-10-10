@@ -4,8 +4,8 @@ import { describeError } from '../../common/error-message';
 
 /**
  * Who an MCP server is answering: the user its client was let in as. What a tool or a
- * resource is handed for a rule about them that is finer than "may read the meeting" —
- * there is none yet.
+ * resource is handed for a rule about them that is finer than "may read the meeting" — as
+ * the tasks domain's is, which answers each user with their own tasks.
  */
 export interface McpRequester {
   userId: string;

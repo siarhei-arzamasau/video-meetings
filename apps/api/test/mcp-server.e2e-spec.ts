@@ -20,7 +20,8 @@ const inAnHour = (): number => Math.floor(Date.now() / 1_000) + 60 * 60;
  * meeting and the user's access token in a header — against the API's real tokens and a
  * real database. Its tools, its resources, its prompts, and who it answers at all. The
  * token is what `POST /api/auth/register` answered with — the API's own, not one minted
- * here — except where the case is a token the API would never give.
+ * here — except where the case is a token the API would never give. That each member of a
+ * meeting is answered with their own tasks and nobody else's is `mcp-task-owners.e2e-spec.ts`.
  *
  * What is the transport's rather than the server's — one message per request, the methods
  * it takes, one client after another — is `mcp-http.e2e-spec.ts`.
@@ -59,11 +60,11 @@ describe('the MCP server, for the user whose access token reaches it', () => {
     const other = await registerUser(suite, OTHER_EMAIL);
     const meeting = await createMeeting(suite, host);
     const elsewhere = await createMeeting(suite, other);
-    const taskOf = (title: string, status: 'OPEN' | 'DONE', sourceMeetingId = meeting.id) =>
-      tasks().upsert({ title, status, sourceMeetingId });
+    const taskOf = (title: string, status: 'OPEN' | 'DONE', of = { meeting, owner: host }) =>
+      tasks().upsert({ title, status, sourceMeetingId: of.meeting.id, ownerId: of.owner.id });
     const open = await taskOf('Book the venue', 'OPEN');
     const done = await taskOf('Print the badges', 'DONE');
-    const foreign = await taskOf('Call Bob', 'OPEN', elsewhere.id);
+    const foreign = await taskOf('Call Bob', 'OPEN', { meeting: elsewhere, owner: other });
 
     await withMcpClient(suite, meeting.id, host, async ({ client, readJson }) => {
       const { resources } = await client.listResources();
@@ -72,7 +73,7 @@ describe('the MCP server, for the user whose access token reaches it', () => {
       expect(resources.map(({ uri }) => uri)).toEqual([OPEN_TASKS]);
       expect(resourceTemplates.map(({ uriTemplate }) => uriTemplate)).toEqual(['task://{taskId}']);
 
-      // Open, and this meeting's: neither the task that is done nor the other meeting's.
+      // Open, theirs, and this meeting's: neither the task that is done nor the other meeting's.
       await expect(readJson(OPEN_TASKS)).resolves.toEqual({
         mimeType: JSON_TYPE,
         json: {
@@ -210,5 +211,20 @@ describe('the MCP server, for the user whose access token reaches it', () => {
     await postToMcp(suite, meeting.id, participant.token).expect(404);
     // Read as the tool would have written it: through the task service, and nothing is there.
     await expect(tasks().search(TASK_TITLE, meeting.id)).resolves.toEqual([]);
+  });
+
+  it('opens nothing for a token that has outlived its account', async () => {
+    const host = await registerUser(suite, EMAIL);
+    const participant = await registerUser(suite, OTHER_EMAIL);
+    const meeting = await createMeeting(suite, host, [participant.id]);
+
+    // Straight to the table: no route deletes an account yet.
+    await suite.prisma().user.delete({ where: { id: participant.id } });
+
+    // The guard reads the token's claims and no user, so the token still says who is asking
+    // — somebody who is in no meeting any more, answered as a stranger is.
+    const refused = await postToMcp(suite, meeting.id, participant.token).expect(404);
+
+    expect(messageOf(refused)).toBe('Meeting not found');
   });
 });

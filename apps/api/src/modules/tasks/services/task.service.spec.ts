@@ -4,10 +4,13 @@ import { TaskService } from './task.service';
 
 const MEETING_ID = '44444444-4444-4444-8444-444444444444';
 
+const OWNER_ID = '11111111-1111-4111-8111-111111111111';
+
 const TASK = {
   id: '55555555-5555-4555-8555-555555555555',
   title: 'Rewrite the launch emails',
   sourceMeetingId: MEETING_ID,
+  ownerId: OWNER_ID,
   status: 'OPEN' as const,
   createdAt: new Date('2026-10-01T10:00:00.000Z'),
   updatedAt: new Date('2026-10-01T10:00:00.000Z'),
@@ -60,6 +63,23 @@ describe('TaskService', () => {
       expect(boundTo()).not.toContain('source_meeting_id =');
     });
 
+    it('binds the owner it is narrowed to, asks for the tasks nobody owns, or does neither', async () => {
+      // The fragments the statement was put together from, with what each one binds.
+      const narrowedBy = (): string => JSON.stringify(boundValues());
+
+      await tasks.search('launch emails', MEETING_ID, OWNER_ID);
+      expect(narrowedBy()).toContain('owner_id = ');
+      expect(narrowedBy()).toContain(OWNER_ID);
+
+      queryRaw.mockClear();
+      await tasks.search('launch emails', MEETING_ID, null);
+      expect(narrowedBy()).toContain('owner_id IS NULL');
+
+      queryRaw.mockClear();
+      await tasks.search('launch emails', MEETING_ID);
+      expect(narrowedBy()).not.toContain('AND owner_id');
+    });
+
     it.each(['', '   ', '\n\t'])(
       'finds nothing for the blank text %j, without asking',
       async (text) => {
@@ -77,16 +97,33 @@ describe('TaskService', () => {
       ).resolves.toEqual(TASK);
     });
 
-    it('binds the title as given, the meeting, and the status for both branches', async () => {
-      await tasks.upsert({ title: ' Call Bob ', sourceMeetingId: MEETING_ID, status: 'DONE' });
+    it('binds the title as given, the meeting, the owner, and the status for both branches', async () => {
+      await tasks.upsert({
+        title: ' Call Bob ',
+        sourceMeetingId: MEETING_ID,
+        ownerId: OWNER_ID,
+        status: 'DONE',
+      });
 
-      expect(boundValues().slice(0, 4)).toEqual([' Call Bob ', MEETING_ID, 'DONE', 'DONE']);
+      expect(boundValues().slice(0, 5)).toEqual([
+        ' Call Bob ',
+        MEETING_ID,
+        OWNER_ID,
+        'DONE',
+        'DONE',
+      ]);
     });
 
     it('binds no status when none is given, so an existing task keeps its own', async () => {
       await tasks.upsert({ title: TASK.title, sourceMeetingId: MEETING_ID });
 
-      expect(boundValues().slice(2, 4)).toEqual([null, null]);
+      expect(boundValues().slice(3, 5)).toEqual([null, null]);
+    });
+
+    it("binds no owner when none is given: the task is nobody's", async () => {
+      await tasks.upsert({ title: TASK.title, sourceMeetingId: MEETING_ID });
+
+      expect(boundValues()[2]).toBeNull();
     });
 
     it('throws rather than answer with nothing when the statement returns no row', async () => {
@@ -108,12 +145,13 @@ describe('TaskService', () => {
   });
 
   describe('open', () => {
-    it("answers the meeting's open tasks, the oldest first, and no more than the limit", async () => {
-      await expect(tasks.open(MEETING_ID)).resolves.toEqual([TASK]);
+    it("answers the owner's open tasks of the meeting, the oldest first, and no more than the limit", async () => {
+      await expect(tasks.open(MEETING_ID, OWNER_ID)).resolves.toEqual([TASK]);
 
-      // The whole argument: a status or a meeting dropped from it is every task, or everyone's.
+      // The whole argument: a status, a meeting or an owner dropped from it is every task,
+      // or everyone's.
       expect(findMany).toHaveBeenCalledWith({
-        where: { sourceMeetingId: MEETING_ID, status: 'OPEN' },
+        where: { sourceMeetingId: MEETING_ID, ownerId: OWNER_ID, status: 'OPEN' },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         take: OPEN_TASKS_LIMIT,
       });
