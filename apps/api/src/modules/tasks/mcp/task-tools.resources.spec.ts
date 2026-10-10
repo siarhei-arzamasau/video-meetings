@@ -106,11 +106,16 @@ describe("TaskTools' resources", () => {
       await expect(server.readJson(TASK_URI)).rejects.toThrow('There is no such task.');
     });
 
-    it.each([
-      ["somebody else's", OTHER_USER_ID],
-      ["nobody's", null],
-    ])('refuses a task of the meeting that is %s as forbidden', async (_case, ownerId) => {
-      get.mockResolvedValue({ ...TASK, ownerId });
+    it("answers a task of the meeting that nobody owns: it is the meeting's", async () => {
+      get.mockResolvedValue({ ...TASK, ownerId: null });
+
+      await expect(server.readJson(TASK_URI)).resolves.toMatchObject({
+        json: { task: TASK_AS_ANSWERED },
+      });
+    });
+
+    it("refuses a task of the meeting that is another user's as forbidden", async () => {
+      get.mockResolvedValue({ ...TASK, ownerId: OTHER_USER_ID });
 
       const read = server.readJson(TASK_URI);
 

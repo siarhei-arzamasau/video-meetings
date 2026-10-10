@@ -3,8 +3,13 @@ import { z } from 'zod';
 
 import { describeError } from '../../../common/error-message';
 import { TaskStatus } from '../../../generated/prisma/enums';
+import { TaskLimitReachedError } from '../services/task.service';
 import type { TaskService } from '../services/task.service';
-import { MAX_TASK_TITLE_LENGTH, MIN_TASK_TITLE_LENGTH } from '../task.constants';
+import {
+  MAX_TASKS_PER_OWNER,
+  MAX_TASK_TITLE_LENGTH,
+  MIN_TASK_TITLE_LENGTH,
+} from '../task.constants';
 import { answered, refused, textUpTo } from '../../mcp-registry/mcp-tool-parts';
 import type { ToolResult } from '../../mcp-registry/mcp-tool-parts';
 import { TaskToolName, taskOf } from './task-tool-parts';
@@ -55,6 +60,8 @@ export const UPSERT_TASK_TOOL = {
   annotations: { readOnlyHint: false },
 } as const;
 
+const TOO_MANY_TASKS = `You already have ${MAX_TASKS_PER_OWNER} tasks in this meeting, which is as many as it keeps for one user. Update one of them instead.`;
+
 /**
  * What that `upsert_task` does, for the one meeting its server was made for: `TaskService`'s
  * upsert and nothing of its own — the title is the shape's to normalise, the rest the
@@ -63,8 +70,12 @@ export const UPSERT_TASK_TOOL = {
  * **The owner is who the server answers, and the shape has no field for one.** A task is
  * found by its owner, so an owner a caller could name would be a write to that user's task.
  *
+ * So a title the meeting's digest already wrote a task under becomes a task of the user's
+ * own beside it: the digest's is every member's to read and no member's to change.
+ *
  * **It never throws**, as no tool does: the failure is logged through the caller's logger
- * and answered in a sentence of this file's own.
+ * and answered in a sentence of this file's own. One task too many is a refusal and not a
+ * failure, so it is answered and not logged.
  */
 export async function upsertTaskOf(
   tasks: TaskService,
@@ -78,6 +89,10 @@ export async function upsertTaskOf(
       task: taskOf(await tasks.upsert({ title, status, sourceMeetingId: meetingId, ownerId })),
     });
   } catch (error) {
+    if (error instanceof TaskLimitReachedError) {
+      return refused(TOO_MANY_TASKS);
+    }
+
     logger.error(`Tool ${UPSERT_TASK_TOOL.name} failed`, describeError(error));
 
     return refused('The task could not be saved.');

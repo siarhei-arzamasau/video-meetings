@@ -54,8 +54,8 @@ describe('TaskTools', () => {
     await server.readJson('tasks://open');
     const one = await server.readJson(`task://${TASK.id}`);
 
-    // Who the gate let in reaches all four: three as the owner to read or write for, and
-    // the fourth as who the task it read has to belong to.
+    // Who the gate let in reaches all four: two as the reader, one as the owner to write
+    // for, and the fourth as who the task it read may not be kept from.
     expect(server.search).toHaveBeenCalledWith('launch emails', MEETING_ID, REQUESTER.userId);
     expect(server.upsert).toHaveBeenCalledWith({
       title: TASK.title,

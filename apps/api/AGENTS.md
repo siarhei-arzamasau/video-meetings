@@ -1549,14 +1549,18 @@ replaced whole by every generation that succeeds, which is exactly why they cann
 status, and they are still what the digest stores and serves.
 
 **A task has an owner, `ownerId`, and it is an access rule, not an assignee.** It is the
-user an MCP client wrote the task as, and over MCP that user alone reads or changes it.
-**Null is a task nobody owns**: what a digest's generation writes, since a run answers no
-user, and every task older than the column. Nobody's tasks are a digest's run's to find
-and nobody's to read over MCP — so what a generation writes is, today, read by later
-generations and by no person; showing them to a meeting's members is a rule nobody has
-written, and is one line in `TaskTools` when somebody does. A user's tasks go with their
-account (`onDelete: Cascade`); `SetNull` would hand them to nobody and fail the delete
-wherever the meeting already had a task nobody owns under that title.
+user an MCP client wrote the task as, and nobody else's client reads or changes it.
+**Null is a task nobody owns, which makes it the meeting's**: what a digest's generation
+writes, since a run answers no user, and every task older than the column. **One rule says
+what a reader may see, stated in each read of `TaskService`: the tasks nobody owns, and
+their own.** A member's client reads the meeting's tasks beside the member's and cannot
+change one — a write is always as its requester, so the same title becomes a task of the
+member's own beside the digest's. A digest's run reads as no user, so it sees the meeting's
+tasks and never a member's: what a run finds can end up in a digest every member reads.
+**The cost is twins**: a run does not know a member already tracks something, and writes
+the meeting's task of it anyway. A user's tasks go with their account
+(`onDelete: Cascade`); `SetNull` would hand them to the whole meeting and fail the delete
+wherever it already had a task nobody owns under that title.
 
 The module is `TaskService` and nothing else: no controller and no command. It exports the
 service for `meeting-tools`, which offers the search and the upsert to a digest's run as
@@ -1578,20 +1582,29 @@ route reaches a task.
   way, so a database built from the schema alone is quietly wrong —
   `test/task-owners.e2e-spec.ts` and the concurrent upsert in `tasks.e2e-spec.ts` are what
   would say so. PostgreSQL 15 or later.
+- **An owner has at most `MAX_TASKS_PER_OWNER` tasks in a meeting, and nobody counts as
+  one owner.** A task cannot be deleted and a member's client can write as fast as it can
+  send, so without it one loop fills the table and the index every search reads. The
+  count is in the upsert's own statement — `INSERT ... SELECT ... WHERE` — so a task that
+  is new and one too many is never selected to insert, while one that exists still
+  reaches the conflict and is updated. No row back is therefore exactly that case, and
+  `upsert` throws `TaskLimitReachedError`, which each tool answers as a refusal in its own
+  words and does not log. **It is a bound to within a few**: the count and the insert are
+  one statement and not one lock, so simultaneous writes can each pass under it.
+  `/api/mcp` has no rate limit beside it, as no route but the credential ones has.
 - **`search` is trigram similarity, not a substring match**: `pg_trgm`'s `%` over the whole
   title or `<%` over a stretch of it, at Postgres' default thresholds, best first, at most
-  `TASK_SEARCH_LIMIT`. **Without a meeting it searches every task, and without an owner
-  everybody's, whoever asks.** The owner is three-valued on purpose: a user's id, `null`
-  for the tasks nobody owns, or left out for no narrowing at all — which no caller in
-  `src` does. Whatever answers a user narrows it to a meeting they can see and to
-  themselves; a digest's run passes `null`.
+  `TASK_SEARCH_LIMIT`. **It takes a meeting and a reader, both required, and there is no
+  search of everything.** They were optional once, and a caller that left one out
+  searched every meeting's tasks or every user's while still compiling; now forgetting is
+  a type error. `readerId: null` is a reader who is no user — a digest's run.
 - **A title's bounds, `MIN_TASK_TITLE_LENGTH` and `MAX_TASK_TITLE_LENGTH`, are the
   caller's to enforce**, like its trimming. The first is what tells a task from a fragment.
-  The second is there because the title is half of a unique index, and PostgreSQL refuses
+  The second is there because the title is part of a unique index, and PostgreSQL refuses
   an entry past a third of a page.
-- **`open` and `get` are the two plain reads, through the client**: one owner's tasks of a
-  meeting that are still `OPEN`, the oldest first, at most `OPEN_TASKS_LIMIT` — a bound at
-  all because a member's client can add tasks without limit and the list is one answer —
+- **`open` and `get` are the two plain reads, through the client**: the tasks of a
+  meeting a reader may see that are still `OPEN`, the oldest first, at most
+  `OPEN_TASKS_LIMIT` — a bound of its own because the list is one answer —
   and one task by its id, `null` for none. **`get` answers whichever meeting the task came
   out of and whoever owns it**: an id says which task to look for and is no permission to
   see it, so a caller that answers a user checks `sourceMeetingId` and `ownerId` on the
@@ -1614,9 +1627,9 @@ are `TaskService`'s two methods, and `update_meeting`, which is the digest's rev
 shape, and the three are gathered with `createSdkMcpServer`.
 
 - **A server is made for one meeting, and its tools reach no other.** `createServer`
-  takes the meeting's id. `find_tasks` searches that meeting's tasks that nobody owns —
-  the ones such runs write, never a member's own, since what a run finds can end up in a
-  digest every member reads — and the two that
+  takes the meeting's id. `find_tasks` searches that meeting's tasks as no user — the
+  ones nobody owns, which such runs write, and never a member's own, since what a run
+  finds can end up in a digest every member reads — and the two that
   write refuse any other id with an error — in the handlers, whatever a run's instructions
   say. The ids are arguments, so the model chooses them, and what the model reads is what
   people said: without this a transcript naming another meeting could write there, and
@@ -1696,20 +1709,21 @@ registry: the HTTP one (_MCP over HTTP_, below).
 `TaskService`'s, and nothing of the meeting itself — its title, its files, its digest — is
 served.
 
-- **Every handler is handed the requester, and answers with that user's tasks alone.**
+- **Every handler is handed the requester, and answers with what that user may see.**
   The gate's answer names who was let in (`admissionOf`), and `call` and `read` pass it
-  on: `find_tasks` and `tasks://open` read the requester's tasks, `upsert_task` writes a
-  task as theirs, `task://{taskId}` refuses anybody else's. It is `req.requester` — the
-  token's subject, set by `McpAuthGuard` — and nothing a client sent: **an id among the
-  arguments says what to look for, never who may see it**, and no shape has a field for
-  an owner at all. Two members of one meeting therefore share a URL and no task;
+  on: `find_tasks` and `tasks://open` read as the requester — their own tasks and the
+  meeting's — `upsert_task` writes a task as theirs, `task://{taskId}` refuses another
+  user's. It is `req.requester` — the token's subject, set by `McpAuthGuard` — and
+  nothing a client sent: **an id among the arguments says what to look for, never who
+  may see it**, and no shape has a field for an owner at all. Two members of one meeting
+  therefore share a URL, the meeting's tasks, and none of each other's;
   `test/mcp-task-owners.e2e-spec.ts` is that, with a client each.
 - **`find_tasks` is the in-process server's tool, not a second one like it.** Its name,
   shape, and behaviour are `FIND_TASKS_TOOL` and `findTasksOf` (`find-tasks.tool.ts`),
   which `MeetingTools` hands a digest's run as well. What differs is which SDK serves it
-  and whose tasks are searched — said every time, `TasksSearched.ownerId` having no
-  default: the requester's here, under a description of this server's own
-  (`OWN_TASKS_DESCRIPTION`), and nobody's for a run.
+  and who reads — said every time, `TasksSearched.readerId` having no default: the
+  requester here, under a description of this server's own (`OWN_TASKS_DESCRIPTION`),
+  and no user for a run.
 - **`upsert_task` is the same service under a shape of its own** (`upsert-task.tool.ts`): a
   title and an optional status, and **no meeting and no owner among its arguments**. A
   digest's run is given the meeting's id and passes it back, checked; an MCP client was
@@ -1724,11 +1738,11 @@ served.
   `TaskService.get` behind a `ResourceTemplate` whose `list` is `undefined` — said on
   purpose: a task is found by search and then read by its id, and the template lists
   nothing. **A task is answered only when it came out of the scope's meeting and is the
-  requester's**, both read off the task after it was loaded. The id is its reader's to
+  requester's or nobody's**, both read off the task after it was loaded. The id is its reader's to
   choose, so without the first check an id from anywhere reads a task of a meeting its
   reader cannot see; an id that is not a UUID, one no task has, and another meeting's task
   are one error, as they are one 404 on a route.
-- **A task of the meeting that is somebody else's, or nobody's, is refused with code 403.** JSON-RPC has no code for "forbidden" and MCP adds none, so it is HTTP's number in
+- **A task of the meeting that is another user's is refused with code 403.** JSON-RPC has no code for "forbidden" and MCP adds none, so it is HTTP's number in
   the message's `error` — the response itself is a 200, as for every message the transport
   could parse. **It is told apart from "no such task" only inside a meeting the requester
   is in**: there the id of another member's task is confirmed to exist, which was asked
@@ -1738,7 +1752,7 @@ served.
   missing task, somebody else's task, and a failed read are each an `McpError` made there,
   and the cause is the log's.
 - **The prompts are `meeting_overview` and `meeting_topic`** (`task-prompts.ts`):
-  instructions for the client's model to collect what its user's tasks of the meeting say, as a whole
+  instructions for the client's model to collect what the tasks its user can see say, as a whole
   or about one topic, from this domain's own resources and tools. Each ends by telling the
   model to change nothing and to read task titles as data, since the server cannot make a
   client do either. **A prompt is text and carries no data** — no task, not the meeting's
@@ -2012,6 +2026,16 @@ already in `process.env`, which is what lets the root `pnpm dev` decide `PORT` �
   stops the stack before an API boots on a schema it does not match. An image started any
   other way needs it run first — `node_modules/.bin/prisma migrate deploy` in
   `/repo/apps/api`.
+- **`20261010120000_add_task_owner` is not backward compatible, and could not be made
+  so.** The build before it upserts with `ON CONFLICT (source_meeting_id, title)`, which
+  needs the unique index that migration drops — and the index cannot stay, because it is
+  exactly what forbids two owners one title. So it goes out with the build that names the
+  new index, the API stopped while it runs, which is what every way of starting it above
+  already does. **A build rolled back past it fails every task upsert** (a digest's run is
+  answered "could not be saved" and carries on) until the old index is put back by hand,
+  which needs every meeting's titles to be unique again first. The file itself says none
+  of this: a migration that has been applied is not edited, since `migrate dev` reads a
+  changed checksum as a reason to reset the database.
 - The `datasource` block has **no `url`**. The CLI reads the connection string from
   `prisma.config.ts`; the runtime client receives it through the `PrismaPg` driver adapter
   constructed in `PrismaService`.

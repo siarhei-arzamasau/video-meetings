@@ -20,8 +20,8 @@ interface TaskRow {
  * upsert writes, and what the two plain reads answer. The first two are raw SQL over
  * `pg_trgm` and `ON CONFLICT`, so a stubbed client can show neither.
  *
- * Every task here but the open ones is nobody's, as a digest's generation writes them.
- * Whose task is whose is `task-owners.e2e-spec.ts`.
+ * Every task here but the open ones is nobody's, as a digest's generation writes them, and
+ * is searched as no user would. Whose task is whose is `task-owners.e2e-spec.ts`.
  */
 describe('tasks, against the database', () => {
   const suite = useApiSuite();
@@ -34,8 +34,10 @@ describe('tasks, against the database', () => {
       .$queryRawUnsafe<TaskRow[]>(
         'SELECT id, title, source_meeting_id, status::text FROM "tasks" ORDER BY title',
       );
+  /** The meeting `seed` filled, which is the one `titlesFound` then searches. */
+  let seededMeetingId = '';
   const titlesFound = async (query: string): Promise<string[]> =>
-    (await tasks().search(query)).map(({ title }) => title);
+    (await tasks().search(query, seededMeetingId, null)).map(({ title }) => title);
 
   describe('upsert', () => {
     it('creates an open task of the meeting, and answers with the row it stored', async () => {
@@ -118,10 +120,10 @@ describe('tasks, against the database', () => {
 
   describe('search', () => {
     const seed = async (...titles: string[]): Promise<void> => {
-      const meetingId = await newMeeting();
+      seededMeetingId = await newMeeting();
 
       await Promise.all(
-        titles.map((title) => tasks().upsert({ title, sourceMeetingId: meetingId })),
+        titles.map((title) => tasks().upsert({ title, sourceMeetingId: seededMeetingId })),
       );
     };
 
@@ -157,16 +159,17 @@ describe('tasks, against the database', () => {
       ]);
     });
 
-    it("narrowed to a meeting, finds only that meeting's tasks", async () => {
+    it('finds only the tasks of the meeting it is asked about', async () => {
       const host = await registerUser(suite, EMAIL);
       const [first, second] = [await createMeeting(suite, host), await createMeeting(suite, host)];
       await tasks().upsert({ title: 'Call Bob about the venue', sourceMeetingId: first.id });
       await tasks().upsert({ title: 'Call Bob about the budget', sourceMeetingId: second.id });
 
-      const found = await tasks().search('Call Bob', second.id);
+      const titlesIn = async (meetingId: string): Promise<string[]> =>
+        (await tasks().search('Call Bob', meetingId, null)).map(({ title }) => title);
 
-      expect(found.map(({ title }) => title)).toEqual(['Call Bob about the budget']);
-      await expect(tasks().search('Call Bob')).resolves.toHaveLength(2);
+      await expect(titlesIn(second.id)).resolves.toEqual(['Call Bob about the budget']);
+      await expect(titlesIn(first.id)).resolves.toEqual(['Call Bob about the venue']);
     });
 
     it('finds nothing for a blank text, or for one no task resembles', async () => {
@@ -184,7 +187,7 @@ describe('tasks, against the database', () => {
   });
 
   describe('open and get', () => {
-    it("lists an owner's open tasks of a meeting, the oldest first, and none of another meeting's", async () => {
+    it("lists a reader's open tasks of a meeting, the oldest first, and none of another meeting's", async () => {
       const host = await registerUser(suite, EMAIL);
       const ownerId = host.id;
       const [first, second] = [await createMeeting(suite, host), await createMeeting(suite, host)];

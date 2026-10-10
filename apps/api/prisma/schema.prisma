@@ -380,9 +380,10 @@ model Task {
   /// what `TaskService.upsert` finds an existing task by — so a reworded title is another task.
   title           String
   sourceMeetingId String  @map("source_meeting_id") @db.Uuid
-  /// Whose task it is: the user an MCP client wrote it as, and the only one it is then read
-  /// or changed by over MCP. Null for a task nobody owns — one a digest's generation wrote,
-  /// or one older than this column. Not an assignee: nothing says who is to do the task.
+  /// Whose task it is: the user an MCP client wrote it as, and the only one whose client
+  /// then changes it. Null for a task nobody owns, which is the meeting's and every member's
+  /// to read — one a digest's generation wrote, or one older than this column. Not an
+  /// assignee: nothing says who is to do the task.
   ownerId         String? @map("owner_id") @db.Uuid
 
   status TaskStatus @default(OPEN)

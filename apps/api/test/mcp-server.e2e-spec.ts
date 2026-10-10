@@ -152,7 +152,7 @@ describe('the MCP server, for the user whose access token reaches it', () => {
 
     // The write landed in the URL's meeting, as a task of its own; the other is untouched.
     await expect(tasks().get(foreign.id)).resolves.toMatchObject({ status: 'OPEN' });
-    await expect(tasks().search('Call Bob', meeting.id)).resolves.toMatchObject([
+    await expect(tasks().search('Call Bob', meeting.id, host.id)).resolves.toMatchObject([
       { title: 'Call Bob', status: 'DONE', sourceMeetingId: meeting.id },
     ]);
   });
@@ -210,7 +210,7 @@ describe('the MCP server, for the user whose access token reaches it', () => {
 
     await postToMcp(suite, meeting.id, participant.token).expect(404);
     // Read as the tool would have written it: through the task service, and nothing is there.
-    await expect(tasks().search(TASK_TITLE, meeting.id)).resolves.toEqual([]);
+    await expect(tasks().search(TASK_TITLE, meeting.id, participant.id)).resolves.toEqual([]);
   });
 
   it('opens nothing for a token that has outlived its account', async () => {

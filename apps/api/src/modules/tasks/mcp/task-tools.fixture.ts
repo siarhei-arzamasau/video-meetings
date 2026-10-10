@@ -18,7 +18,7 @@ export const TASK = {
   id: '55555555-5555-4555-8555-555555555555',
   title: 'Rewrite the launch emails',
   sourceMeetingId: MEETING_ID,
-  // The requester's own, as every task these answer with has to be.
+  // The requester's own: what these answer with is theirs, or nobody's.
   ownerId: REQUESTER.userId as string | null,
   status: 'OPEN' as const,
   createdAt: new Date('2026-10-01T10:00:00.000Z'),

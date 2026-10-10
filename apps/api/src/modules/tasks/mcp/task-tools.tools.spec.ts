@@ -1,7 +1,8 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { Logger } from '@nestjs/common';
 
-import { MAX_TASK_TITLE_LENGTH } from '../task.constants';
+import { TaskLimitReachedError } from '../services/task.service';
+import { MAX_TASKS_PER_OWNER, MAX_TASK_TITLE_LENGTH } from '../task.constants';
 import { OWN_TASKS_DESCRIPTION } from './find-tasks.tool';
 import {
   MEETING_ID,
@@ -72,7 +73,7 @@ describe("TaskTools' tools", () => {
   });
 
   describe('find_tasks', () => {
-    it("searches the requester's tasks of the one meeting, and answers with the tasks it found", async () => {
+    it('searches the one meeting as the requester, and answers with the tasks it found', async () => {
       const answer = await call('find_tasks', { query: '  launch emails ' });
 
       expect(search).toHaveBeenCalledWith('launch emails', MEETING_ID, REQUESTER.userId);
@@ -93,7 +94,7 @@ describe("TaskTools' tools", () => {
       expect(search).toHaveBeenCalledWith('launch', MEETING_ID, REQUESTER.userId);
     });
 
-    it('searches the tasks of whoever the gate let in this time', async () => {
+    it('searches as whoever the gate let in this time', async () => {
       admit.mockResolvedValue({ requester: { userId: OTHER_USER_ID } });
 
       await call('find_tasks', { query: 'launch' });
@@ -177,6 +178,16 @@ describe("TaskTools' tools", () => {
 
       expect(answer.isError).toBe(true);
       expect(upsert).not.toHaveBeenCalled();
+    });
+
+    it('answers one task too many as a refusal that says so, and logs nothing', async () => {
+      upsert.mockRejectedValue(new TaskLimitReachedError());
+
+      const answer = await call('upsert_task', { title: 'Rewrite the launch emails' });
+
+      expect(answer.isError).toBe(true);
+      expect(answer.content[0]?.text).toContain(`${MAX_TASKS_PER_OWNER} tasks`);
+      expect(Logger.prototype.error).not.toHaveBeenCalled();
     });
 
     it('answers a failed write as an error of its own wording, and logs the cause', async () => {

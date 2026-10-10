@@ -14,7 +14,7 @@ import {
   MAX_DIGEST_ITEM_LENGTH,
   MAX_DIGEST_SUMMARY_LENGTH,
 } from '../meeting-digests/meeting-digest.constants';
-import { TaskService } from '../tasks/services/task.service';
+import { TaskLimitReachedError, TaskService } from '../tasks/services/task.service';
 import { answered, refused, textUpTo } from '../mcp-registry/mcp-tool-parts';
 import type { ToolResult } from '../mcp-registry/mcp-tool-parts';
 import { FIND_TASKS_TOOL, findTasksOf } from '../tasks/mcp/find-tasks.tool';
@@ -59,6 +59,8 @@ const UPDATE_REFUSALS: Record<
 
 /** What a tool that writes says to an id other than the one its server was made for. */
 const OTHER_MEETING = 'These tools work on one meeting, and that is not its id.';
+const MEETING_TASKS_FULL =
+  'This meeting already has as many tasks as it keeps. Update one of them instead.';
 
 const sameMeeting = (given: string, bound: string): boolean =>
   given.toLowerCase() === bound.toLowerCase();
@@ -104,7 +106,7 @@ export class MeetingTools {
           FIND_TASKS_TOOL.inputSchema,
           // Nobody's tasks: the ones a run like this one writes. What a run finds can end up
           // in a digest every member reads, and a user's own tasks are theirs alone.
-          (input) => findTasksOf(this.tasks, this.logger, { meetingId, ownerId: null }, input),
+          (input) => findTasksOf(this.tasks, this.logger, { meetingId, readerId: null }, input),
           { annotations: FIND_TASKS_TOOL.annotations },
         ),
         tool(
@@ -136,6 +138,10 @@ export class MeetingTools {
         task: taskOf(await this.tasks.upsert({ title, status, sourceMeetingId: meetingId })),
       });
     } catch (error) {
+      if (error instanceof TaskLimitReachedError) {
+        return refused(MEETING_TASKS_FULL);
+      }
+
       // A meeting that is gone ends here too: it is the foreign key's error, like any other.
       return this.failed(
         MeetingToolName.UPSERT_TASK,

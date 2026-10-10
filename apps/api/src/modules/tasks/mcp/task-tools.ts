@@ -46,10 +46,11 @@ const FORBIDDEN = HttpStatus.FORBIDDEN;
  * why, and refuses a registrar that comes late).
  *
  * **Everything is registered for a scope: one meeting, and a gate asked before every call
- * and every read** (`mcp-scope.ts`). **What these answer with is the requester's own tasks
- * of that meeting**: the gate's answer names who is asking, and every handler is handed it
- * — `find_tasks` and `tasks://open` read that user's tasks, `upsert_task` writes a task as
- * theirs, `task://{id}` refuses anybody else's. An id among the arguments says what to
+ * and every read** (`mcp-scope.ts`). **What these answer with is what the requester may see
+ * of that meeting's tasks: their own, and the ones nobody owns, which a digest wrote for
+ * the whole meeting.** The gate's answer names who is asking, and every handler is handed
+ * it — `find_tasks` and `tasks://open` read as that user, `upsert_task` writes a task as
+ * theirs, `task://{id}` refuses another user's. An id among the arguments says what to
  * look for; it is never the permission to see it.
  *
  * **Nothing here throws at a client in words it did not choose.** A tool answers `isError`
@@ -80,7 +81,7 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
   /**
    * `find_tasks` is the in-process server's tool, not a second one like it: its name, shape
    * and behaviour are `FIND_TASKS_TOOL` and `findTasksOf`, which `MeetingTools` hands a
-   * digest's run as well — narrowed here to the requester's tasks, and described as that.
+   * digest's run as well — read here as the requester, and described as that.
    * `upsert_task` is the same service under a shape with no meeting and no owner in it
    * (`upsert-task.tool.ts`): the one is the scope's, the other the requester.
    */
@@ -96,7 +97,7 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
       },
       (input) =>
         this.call(scope, ({ userId }) =>
-          findTasksOf(this.tasks, this.logger, { meetingId, ownerId: userId }, input),
+          findTasksOf(this.tasks, this.logger, { meetingId, readerId: userId }, input),
         ),
     );
     server.registerTool(
@@ -114,9 +115,10 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
   }
 
   /**
-   * The list is the requester's, of the scope's meeting. A task is addressed by an id its
-   * reader chose, so it is answered only when it came out of that meeting and is theirs —
-   * otherwise an id from anywhere would read a task its reader has no claim to.
+   * The list is what the requester may see of the scope's meeting. A task is addressed by
+   * an id its reader chose, so it is answered only when it came out of that meeting and is
+   * theirs or nobody's — otherwise an id from anywhere would read a task its reader has no
+   * claim to.
    */
   private registerResources(server: McpServer, scope: McpScope): void {
     server.registerResource(
@@ -124,7 +126,7 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
       OPEN_TASKS_RESOURCE_URI,
       {
         title: 'Open tasks',
-        description: `Your tasks that are still open, the oldest first — at most ${OPEN_TASKS_LIMIT}.`,
+        description: `Your tasks and the meeting's that are still open, the oldest first — at most ${OPEN_TASKS_LIMIT}.`,
         mimeType: JSON_MIME_TYPE,
       },
       (uri) => this.read(scope, uri, (requester) => this.openTasks(scope.meetingId, requester)),
@@ -133,7 +135,11 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
       'task',
       // `list: undefined` is the SDK's way to say the template lists nothing, said on purpose.
       new ResourceTemplate(TASK_RESOURCE_URI_TEMPLATE, { list: undefined }),
-      { title: 'Task', description: 'One task of yours, by its id.', mimeType: JSON_MIME_TYPE },
+      {
+        title: 'Task',
+        description: "One task by its id: yours, or the meeting's.",
+        mimeType: JSON_MIME_TYPE,
+      },
       (uri, { taskId }) =>
         this.read(scope, uri, (requester) => this.task(scope.meetingId, String(taskId), requester)),
     );
@@ -144,12 +150,12 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
   }
 
   /**
-   * One task of the requester's, or `null` for an id that is not a task of the meeting —
+   * One task the requester may see, or `null` for an id that is not a task of the meeting —
    * not a UUID, no such task, or another meeting's, which are one answer on purpose.
    *
-   * **A task of the meeting that is somebody else's, or nobody's, is refused as forbidden**
-   * — checked on the task that was read, after it was read: the id says which task, and
-   * who owns it is the row's to say. It is told apart from "no such task" only inside a
+   * **A task of the meeting that is another user's is refused as forbidden** — checked on
+   * the task that was read, after it was read: the id says which task, and who owns it is
+   * the row's to say. One nobody owns is the meeting's, and every member's to read. It is told apart from "no such task" only inside a
    * meeting the requester is in; another meeting's task stays one they cannot tell exists.
    */
   private async task(
@@ -167,7 +173,7 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
       return null;
     }
 
-    if (task.ownerId !== requester.userId) {
+    if (task.ownerId !== null && task.ownerId !== requester.userId) {
       throw new McpError(FORBIDDEN, NOT_YOUR_TASK);
     }
 
