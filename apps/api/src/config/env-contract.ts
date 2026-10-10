@@ -6,10 +6,9 @@ import { IsNotIn, IsString, MinLength, validateSync } from 'class-validator';
 import { GENERATE_SECRET_ADVICE, PUBLISHED_JWT_SECRETS } from './env-values';
 
 /**
- * What every environment contract in this package is made of. There are two: the API's
- * (`env.validation.ts`) and the meeting tools' stdio server's
- * (`env.validation.meeting-tools-stdio.ts`), a process of its own that needs three variables
- * and is not held to the rest.
+ * What an environment contract in this package is made of, apart from the contract itself
+ * (`env.validation.ts`): the one rule worth a name of its own, and the check that words a
+ * refusal. A second process with a contract of its own would be held to both.
  */
 
 const MIN_JWT_SECRET_LENGTH = 32;

@@ -1,25 +1,30 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { Logger } from '@nestjs/common';
 
-import { MEETING_ID, OTHER_MEETING_ID, TASK, TASK_AS_ANSWERED } from '../meeting-tools.fixture';
-import { MeetingToolsStdioAccessOutcome } from './meeting-tools-stdio.access';
-import { ACCESS_TOKEN, connectStdioServer, refusedAs } from './meeting-tools-stdio.fixture';
-import type { StdioServerHarness } from './meeting-tools-stdio.fixture';
+import {
+  MEETING_ID,
+  OTHER_MEETING_ID,
+  REFUSAL,
+  TASK,
+  TASK_AS_ANSWERED,
+  connectTaskTools,
+} from './task-tools.fixture';
+import type { TaskToolsHarness } from './task-tools.fixture';
 
 const OPEN_TASKS = 'tasks://open';
 const TASK_URI = `task://${TASK.id}`;
 
-/** The server's two resources, read by a real MCP client (`meeting-tools-stdio.fixture.ts`). */
-describe("MeetingToolsStdioServer's resources", () => {
-  let server: StdioServerHarness;
+/** The domain's two resources, read by a real MCP client (`task-tools.fixture.ts`). */
+describe("TaskTools' resources", () => {
+  let server: TaskToolsHarness;
   let client: Client;
   let open: jest.Mock;
   let get: jest.Mock;
-  let check: jest.Mock;
+  let admit: TaskToolsHarness['admit'];
 
   beforeEach(async () => {
-    server = await connectStdioServer();
-    ({ client, open, get, check } = server);
+    server = await connectTaskTools();
+    ({ client, open, get, admit } = server);
   });
 
   afterEach(async () => {
@@ -96,43 +101,34 @@ describe("MeetingToolsStdioServer's resources", () => {
   describe.each([
     ['tasks://open', OPEN_TASKS],
     ['task://{taskId}', TASK_URI],
-  ])('%s, for the user the server answers for', (_resource, uri) => {
-    it('checks the user against the meeting before every read, not once', async () => {
+  ])("%s, behind the scope's gate", (_resource, uri) => {
+    it('asks the gate before every read, not once', async () => {
       await server.readJson(uri);
       await server.readJson(uri);
 
-      expect(check).toHaveBeenCalledTimes(2);
-      expect(check).toHaveBeenCalledWith(ACCESS_TOKEN, MEETING_ID);
+      expect(admit).toHaveBeenCalledTimes(2);
     });
 
-    it.each([
-      [MeetingToolsStdioAccessOutcome.TOKEN_REFUSED, /access token was refused/],
-      [MeetingToolsStdioAccessOutcome.MEETING_NOT_FOUND, /no such meeting/],
-    ] as const)(
-      'answers %s as an error that says so, and reads no task',
-      async (outcome, reason) => {
-        check.mockResolvedValue(refusedAs(outcome));
+    it("answers a refusal as an error in the gate's own words, and reads no task", async () => {
+      admit.mockResolvedValue({ refusal: REFUSAL });
 
-        await expect(server.readJson(uri)).rejects.toThrow(reason);
-        expect(open).not.toHaveBeenCalled();
-        expect(get).not.toHaveBeenCalled();
-      },
-    );
+      await expect(server.readJson(uri)).rejects.toThrow(REFUSAL);
+      expect(open).not.toHaveBeenCalled();
+      expect(get).not.toHaveBeenCalled();
+    });
 
-    it('stays closed when the check itself fails', async () => {
-      check.mockRejectedValue(new Error('relation "meetings" does not exist'));
+    it('stays closed when the gate itself fails', async () => {
+      admit.mockRejectedValue(new Error('relation "meetings" does not exist'));
 
-      await expect(server.readJson(uri)).rejects.toThrow(
-        'Access to the tasks could not be checked.',
-      );
+      await expect(server.readJson(uri)).rejects.toThrow('Access could not be checked.');
       expect(open).not.toHaveBeenCalled();
       expect(get).not.toHaveBeenCalled();
     });
 
     it('lets in only an answer that names a requester, not one that merely refuses nothing', async () => {
-      check.mockResolvedValue({ outcome: 'SOMETHING_NEW' });
+      admit.mockResolvedValue({} as never);
 
-      await expect(server.readJson(uri)).rejects.toThrow();
+      await expect(server.readJson(uri)).rejects.toThrow('Access could not be checked.');
       expect(open).not.toHaveBeenCalled();
       expect(get).not.toHaveBeenCalled();
     });

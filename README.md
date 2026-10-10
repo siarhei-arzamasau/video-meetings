@@ -213,11 +213,11 @@ not there yet — answers 409, and so does every digest while the flag is off.
 - **`docker compose` does not pass these two variables to its `api` service**: the digest is
   set up for an API run with `pnpm dev`.
 
-### Meeting tools over MCP (optional)
+### Meeting tasks over MCP
 
-The API can also serve a meeting's tasks to an MCP client — Claude Code, Claude Desktop, or
-any other — as a server on the stdio transport, started by the client as a subprocess. The
-meeting is fixed when the process starts, and so is the user it answers for.
+The running API serves a meeting's tasks to an MCP client — Claude Code, Claude Desktop, or
+any other — at `/api/mcp?meetingId=<meeting-id>` (Streamable HTTP, stateless, JSON
+responses). There is nothing to start beside the API.
 
 | Kind     | Name               | Does                                                                 |
 | -------- | ------------------ | -------------------------------------------------------------------- |
@@ -228,27 +228,20 @@ meeting is fixed when the process starts, and so is the user it answers for.
 | Prompt   | `meeting_overview` | Gathers what the meeting still has to do and what it has finished    |
 | Prompt   | `meeting_topic`    | Gathers what the meeting's tasks say about one topic                 |
 
+**The server answers only a user who can see the meeting** — its host or one of its
+participants. The meeting is in the URL, and the client sends the `accessToken` that
+`POST /api/auth/login` responds with as `Authorization: Bearer <access-token>`. In Claude
+Code:
+
 ```bash
-pnpm build
-cd apps/api
-MEETING_TOOLS_ACCESS_TOKEN=<access-token> node dist/meeting-tools-stdio.main.js <meeting-id>
+claude mcp add --transport http meeting-tasks "http://localhost:3001/api/mcp?meetingId=<meeting-id>" --header "Authorization: Bearer <access-token>"
 ```
 
-**The server answers only a user who can see the meeting** — its host or one of its
-participants. The access token is the `accessToken` that `POST /api/auth/login` responds
-with, and it goes in the `MEETING_TOOLS_ACCESS_TOKEN` environment variable of the client's
-configuration — never on the command line, and it is not read from an env file. The server
-refuses to start on a token it cannot verify or for a meeting that user is not in, and
-checks again on every call and every read: when the token expires
-(`JWT_EXPIRES_IN_SECONDS`, an hour by default) the tools and resources answer with an
-error, and the client is restarted with a new one.
-
-An MCP client's configuration names that command, with `apps/api` as its working directory
-so the server finds `DATABASE_URL` and `JWT_SECRET` in the env files there — or with both in
-its environment. **Start it with `node`, not through `pnpm`**: the protocol is spoken over
-stdout, and `pnpm run` writes a line of its own there first. **What it answers with is text
-taken from meetings** — a task's title is whatever was said — so a client that can also run
-commands or edit files should treat the answer as data, never as instructions.
+A request without a valid token is a 401, and a meeting the user is not in is a 404. The
+token expires (`JWT_EXPIRES_IN_SECONDS`, an hour by default); after that every request is a
+401 until the client is given a new one. **What the server answers with is text taken from
+meetings** — a task's title is whatever was said — so a client that can also run commands
+or edit files should treat the answer as data, never as instructions.
 
 ## Scripts
 

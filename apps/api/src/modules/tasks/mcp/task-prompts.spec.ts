@@ -1,9 +1,8 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 
-import { MAX_TASK_TITLE_LENGTH } from '../../tasks/task.constants';
-import { TASK } from '../meeting-tools.fixture';
-import { connectStdioServer } from './meeting-tools-stdio.fixture';
-import type { StdioServerHarness } from './meeting-tools-stdio.fixture';
+import { MAX_TASK_TITLE_LENGTH } from '../task.constants';
+import { TASK, connectTaskTools } from './task-tools.fixture';
+import type { TaskToolsHarness } from './task-tools.fixture';
 
 /** The one text a prompt is: its single message, which is the user's. */
 async function textOf(
@@ -20,13 +19,13 @@ async function textOf(
   return message?.content.type === 'text' ? message.content.text : '';
 }
 
-/** The server's prompts, asked for by a real MCP client (`meeting-tools-stdio.fixture.ts`). */
-describe("MeetingToolsStdioServer's prompts", () => {
-  let server: StdioServerHarness;
+/** The domain's two prompts, asked for by a real MCP client (`task-tools.fixture.ts`). */
+describe("TaskTools' prompts", () => {
+  let server: TaskToolsHarness;
   let client: Client;
 
   beforeEach(async () => {
-    server = await connectStdioServer();
+    server = await connectTaskTools();
     ({ client } = server);
   });
 
@@ -82,7 +81,7 @@ describe("MeetingToolsStdioServer's prompts", () => {
 
     // Why a prompt needs no gate. One that quoted a task would have to go through it.
     expect(text).not.toContain(TASK.title);
-    expect(server.check).not.toHaveBeenCalled();
+    expect(server.admit).not.toHaveBeenCalled();
     expect(server.open).not.toHaveBeenCalled();
     expect(server.search).not.toHaveBeenCalled();
   });

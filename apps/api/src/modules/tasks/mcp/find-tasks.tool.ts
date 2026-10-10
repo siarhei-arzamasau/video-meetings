@@ -1,12 +1,12 @@
 import type { Logger } from '@nestjs/common';
 import type { z } from 'zod';
 
-import { describeError } from '../../common/error-message';
-import type { TaskService } from '../tasks/services/task.service';
-import { MAX_TASK_TITLE_LENGTH } from '../tasks/task.constants';
-import { MeetingToolName } from './meeting-tool-names';
-import { answered, refused, taskOf, textUpTo } from './meeting-tool-parts';
-import type { ToolResult } from './meeting-tool-parts';
+import { describeError } from '../../../common/error-message';
+import type { TaskService } from '../services/task.service';
+import { MAX_TASK_TITLE_LENGTH } from '../task.constants';
+import { answered, refused, textUpTo } from '../../mcp-registry/mcp-tool-parts';
+import type { ToolResult } from '../../mcp-registry/mcp-tool-parts';
+import { TaskToolName, taskOf } from './task-tool-parts';
 
 const FIND_TASKS_INPUT = {
   query: textUpTo(MAX_TASK_TITLE_LENGTH).describe('What the task is about, or its title.'),
@@ -19,11 +19,11 @@ export type FindTasksInput = z.infer<z.ZodObject<typeof FIND_TASKS_INPUT>>;
  * it is for, the Zod shape its input is held to, and that it only reads.
  *
  * **One description for two servers** — the one a digest's run is handed in this process,
- * and the one a process of its own serves over stdio — so the tool a model meets is the same
+ * and the MCP server a client reaches at `/api/mcp` — so the tool a model meets is the same
  * tool whichever way it is reached, and a change to it is made once.
  */
 export const FIND_TASKS_TOOL = {
-  name: MeetingToolName.FIND_TASKS,
+  name: TaskToolName.FIND_TASKS,
   description:
     'Finds the tasks this meeting already has whose title is similar to the text, the most similar first. Use it before creating a task, to see whether it already exists.',
   inputSchema: FIND_TASKS_INPUT,

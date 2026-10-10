@@ -4,9 +4,8 @@ import { JwtService } from '@nestjs/jwt';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * How an access token is verified, stated once for everything that takes one: the guard on
- * every route, and the meeting tools' stdio server, which is handed a token by its client
- * instead of a request.
+ * How an access token is verified, stated once for whatever takes one. Today that is the
+ * guard on every route, `/api/mcp` among them.
  */
 @Injectable()
 export class AccessTokenVerifier {
@@ -15,7 +14,7 @@ export class AccessTokenVerifier {
   /**
    * The id of the user the token names, or `null` for a token that does not verify — forged,
    * expired, or naming nothing that can be a user. What a refusal means belongs to the
-   * caller: a 401 on a route, a process that does not start elsewhere.
+   * caller: on a route, a 401.
    *
    * That the user still exists is not decided here: this class reaches no database.
    */

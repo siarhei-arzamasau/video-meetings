@@ -1,54 +1,36 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { Logger } from '@nestjs/common';
 
-import { MAX_TASK_TITLE_LENGTH } from '../../tasks/task.constants';
-import { FIND_TASKS_TOOL } from '../find-tasks.tool';
-import { MEETING_ID, OTHER_MEETING_ID, TASK_AS_ANSWERED } from '../meeting-tools.fixture';
-import { UPSERT_TASK_TOOL } from '../upsert-task.tool';
-import { MeetingToolsStdioAccessOutcome } from './meeting-tools-stdio.access';
+import { MAX_TASK_TITLE_LENGTH } from '../task.constants';
+import { FIND_TASKS_TOOL } from './find-tasks.tool';
 import {
-  ACCESS_TOKEN,
+  MEETING_ID,
+  OTHER_MEETING_ID,
+  REFUSAL,
+  TASK_AS_ANSWERED,
   answerOf,
-  connectStdioServer,
-  refusedAs,
-} from './meeting-tools-stdio.fixture';
-import type { StdioServerHarness } from './meeting-tools-stdio.fixture';
-import { MEETING_TOOLS_STDIO_VERSION } from './meeting-tools-stdio.server';
+  connectTaskTools,
+} from './task-tools.fixture';
+import type { TaskToolsHarness } from './task-tools.fixture';
+import { UPSERT_TASK_TOOL } from './upsert-task.tool';
 
-/**
- * The server's tools as a client meets them (`meeting-tools-stdio.fixture.ts`). Its
- * resources and its prompts have specs of their own beside this one; what a subprocess
- * adds — stdout kept for the protocol, the meeting on the command line, a real token
- * checked against a real meeting, ending with its client — is the two e2e specs'.
- */
-describe('MeetingToolsStdioServer', () => {
-  let server: StdioServerHarness;
+/** The domain's two tools, called by a real MCP client (`task-tools.fixture.ts`). */
+describe("TaskTools' tools", () => {
+  let server: TaskToolsHarness;
   let client: Client;
   let search: jest.Mock;
   let upsert: jest.Mock;
-  let check: jest.Mock;
-  const call: StdioServerHarness['callTool'] = (name, input) => server.callTool(name, input);
+  let admit: TaskToolsHarness['admit'];
+  const call: TaskToolsHarness['callTool'] = (name, input) => server.callTool(name, input);
 
   beforeEach(async () => {
-    server = await connectStdioServer();
-    ({ client, search, upsert, check } = server);
+    server = await connectTaskTools();
+    ({ client, search, upsert, admit } = server);
   });
 
   afterEach(async () => {
     await client.close();
     jest.restoreAllMocks();
-  });
-
-  it('says what it is, and that tools are what it serves', () => {
-    expect(client.getServerVersion()).toMatchObject({
-      name: 'meeting',
-      version: MEETING_TOOLS_STDIO_VERSION,
-    });
-    expect(client.getServerCapabilities()).toMatchObject({
-      tools: {},
-      resources: {},
-      prompts: {},
-    });
   });
 
   it('offers find_tasks, which reads, and upsert_task, which does not — and no other tool', async () => {
@@ -57,7 +39,7 @@ describe('MeetingToolsStdioServer', () => {
     expect(tools).toHaveLength(2);
     expect(tools[0]).toMatchObject({
       name: 'find_tasks',
-      // Described as the in-process server describes it: it is that server's tool.
+      // Described once, for this server and for a digest's run alike.
       description: FIND_TASKS_TOOL.description,
       annotations: { readOnlyHint: true },
       // The Zod shape, as the JSON Schema a client is shown: one text, required and bounded.
@@ -197,40 +179,33 @@ describe('MeetingToolsStdioServer', () => {
   describe.each([
     ['find_tasks', { query: 'launch' }],
     ['upsert_task', { title: 'Rewrite the launch emails' }],
-  ])('%s, for the user the server answers for', (tool, input) => {
-    it('checks the user against the meeting before every call, not once', async () => {
+  ])("%s, behind the scope's gate", (tool, input) => {
+    it('asks the gate before every call, not once', async () => {
       await call(tool, input);
       await call(tool, input);
 
-      // A process outlives a token: the answer to the first call says nothing about the second.
-      expect(check).toHaveBeenCalledTimes(2);
-      expect(check).toHaveBeenCalledWith(ACCESS_TOKEN, MEETING_ID);
+      // A server may outlive what let its user in: the first answer says nothing of the second.
+      expect(admit).toHaveBeenCalledTimes(2);
     });
 
-    it.each([
-      [MeetingToolsStdioAccessOutcome.TOKEN_REFUSED, /access token was refused/],
-      [MeetingToolsStdioAccessOutcome.MEETING_NOT_FOUND, /no such meeting/],
-    ] as const)(
-      'answers %s as an error that says so, and reaches no task',
-      async (outcome, reason) => {
-        check.mockResolvedValue(refusedAs(outcome));
+    it("answers a refusal as an error in the gate's own words, and reaches no task", async () => {
+      admit.mockResolvedValue({ refusal: REFUSAL });
 
-        const answer = await call(tool, input);
+      const answer = await call(tool, input);
 
-        expect(answer.isError).toBe(true);
-        expect(answer.content[0]?.text).toMatch(reason);
-        expect(search).not.toHaveBeenCalled();
-        expect(upsert).not.toHaveBeenCalled();
-      },
-    );
+      expect(answer.isError).toBe(true);
+      expect(answer.content[0]?.text).toBe(REFUSAL);
+      expect(search).not.toHaveBeenCalled();
+      expect(upsert).not.toHaveBeenCalled();
+    });
 
-    it('stays closed when the check itself fails, and logs the cause', async () => {
-      check.mockRejectedValue(new Error('relation "meetings" does not exist'));
+    it('stays closed when the gate itself fails, and logs the cause', async () => {
+      admit.mockRejectedValue(new Error('relation "meetings" does not exist'));
 
       // Failing open here would hand the tasks to a user nobody managed to check.
       await expect(call(tool, input)).resolves.toMatchObject({
         isError: true,
-        content: [{ type: 'text', text: 'Access to the tasks could not be checked.' }],
+        content: [{ type: 'text', text: 'Access could not be checked.' }],
       });
       expect(search).not.toHaveBeenCalled();
       expect(upsert).not.toHaveBeenCalled();

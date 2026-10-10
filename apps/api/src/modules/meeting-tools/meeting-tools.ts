@@ -15,11 +15,12 @@ import {
   MAX_DIGEST_SUMMARY_LENGTH,
 } from '../meeting-digests/meeting-digest.constants';
 import { TaskService } from '../tasks/services/task.service';
-import { FIND_TASKS_TOOL, findTasksOf } from './find-tasks.tool';
+import { answered, refused, textUpTo } from '../mcp-registry/mcp-tool-parts';
+import type { ToolResult } from '../mcp-registry/mcp-tool-parts';
+import { FIND_TASKS_TOOL, findTasksOf } from '../tasks/mcp/find-tasks.tool';
+import { taskOf } from '../tasks/mcp/task-tool-parts';
+import { taskStatusInput, taskTitleInput } from '../tasks/mcp/upsert-task.tool';
 import { MEETING_TOOLS_SERVER_NAME, MeetingToolName } from './meeting-tool-names';
-import { answered, refused, taskOf, textUpTo } from './meeting-tool-parts';
-import type { ToolResult } from './meeting-tool-parts';
-import { taskStatusInput, taskTitleInput } from './upsert-task.tool';
 
 // Named here as well, where everything that uses the tools has always found them.
 export { MEETING_TOOLS_SERVER_NAME, MeetingToolName };

@@ -1,13 +1,13 @@
 import type { Logger } from '@nestjs/common';
 import { z } from 'zod';
 
-import { describeError } from '../../common/error-message';
-import { TaskStatus } from '../../generated/prisma/enums';
-import type { TaskService } from '../tasks/services/task.service';
-import { MAX_TASK_TITLE_LENGTH, MIN_TASK_TITLE_LENGTH } from '../tasks/task.constants';
-import { MeetingToolName } from './meeting-tool-names';
-import { answered, refused, taskOf, textUpTo } from './meeting-tool-parts';
-import type { ToolResult } from './meeting-tool-parts';
+import { describeError } from '../../../common/error-message';
+import { TaskStatus } from '../../../generated/prisma/enums';
+import type { TaskService } from '../services/task.service';
+import { MAX_TASK_TITLE_LENGTH, MIN_TASK_TITLE_LENGTH } from '../task.constants';
+import { answered, refused, textUpTo } from '../../mcp-registry/mcp-tool-parts';
+import type { ToolResult } from '../../mcp-registry/mcp-tool-parts';
+import { TaskToolName, taskOf } from './task-tool-parts';
 
 /**
  * A task's title as every server that writes one takes it: trimmed, and within the bounds
@@ -37,18 +37,18 @@ const UPSERT_TASK_INPUT = {
 export type UpsertTaskInput = z.infer<z.ZodObject<typeof UPSERT_TASK_INPUT>>;
 
 /**
- * `upsert_task` as the stdio server describes it: a title and a status, and no meeting.
+ * `upsert_task` as an MCP server describes it: a title and a status, and no meeting.
  *
  * **Not the shape a digest's run is handed**, which has the meeting's id among its
  * arguments, for a model that was given it and is checked against it (`MeetingTools`).
- * A client of the stdio server is a task manager's: the meeting is the process's, fixed
- * before anything connects, and nothing in the tool names one.
+ * An MCP client is a task manager's: the meeting is the server's scope, fixed by the URL
+ * the client was configured with, and nothing in the tool names one.
  *
  * `readOnlyHint` is said rather than left to its default: a client that decides what to
  * ask its user about reads it, and this is the tool that writes.
  */
 export const UPSERT_TASK_TOOL = {
-  name: MeetingToolName.UPSERT_TASK,
+  name: TaskToolName.UPSERT_TASK,
   description:
     'Creates a task, or updates the status of the task that already exists under the same title.',
   inputSchema: UPSERT_TASK_INPUT,

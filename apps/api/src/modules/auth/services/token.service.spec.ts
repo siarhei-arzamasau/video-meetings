@@ -38,7 +38,7 @@ describe('TokenService', () => {
   it('gives the token the configured lifetime, as it signs', async () => {
     await tokens.issueToken('any-id');
 
-    // Not left to the module that holds the key: a process that only verifies imports that
+    // Not left to the module that holds the key: whatever only verifies imports that
     // module too, and has no lifetime to configure.
     expect(getOrThrow).toHaveBeenCalledWith('JWT_EXPIRES_IN_SECONDS');
     expect(signAsync).toHaveBeenCalledWith(expect.anything(), { expiresIn: EXPIRES_IN_SECONDS });

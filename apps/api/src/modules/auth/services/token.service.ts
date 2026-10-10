@@ -13,9 +13,9 @@ export class TokenService {
   /**
    * The token is the whole response; `sub` is the only claim this API puts in it.
    *
-   * Its lifetime is set here, not where the key is configured: `AccessTokenModule` is also
-   * imported by a process that verifies tokens and never signs one, and must not ask it for
-   * a variable only signing reads.
+   * Its lifetime is set here, not where the key is configured: `AccessTokenModule` is the
+   * half that only verifies, and importing it must not ask for a variable only signing
+   * reads.
    */
   async issueToken(userId: string): Promise<AuthResponse> {
     const expiresIn = this.config.getOrThrow<number>('JWT_EXPIRES_IN_SECONDS');
