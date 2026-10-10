@@ -149,16 +149,17 @@ describe('the digest on the meeting page', () => {
   });
 
   it('takes a fetched digest over one of the same version it holds', async () => {
-    const renamed = digest(5, { status: 'ready', availableAction: 'generate' });
+    const withoutRetry = digest(5, { status: 'failed' });
     const page = await mount();
-    act(() => stream.digest(digest(5, { status: 'ready' })));
+    act(() => stream.digest(digest(5, { status: 'failed', availableAction: 'retry' })));
 
-    // A linked owner's new name changes the answer and not the version: only a fetch has it.
-    vi.mocked(fetchMeetingDigest).mockResolvedValue(renamed);
+    // A Retry that left with a recording nothing reacted to the delete of changes the answer
+    // and not the version, as a linked owner's new name does: only a fetch has either.
+    vi.mocked(fetchMeetingDigest).mockResolvedValue(withoutRetry);
     act(() => stream.open());
     await settle();
 
-    expect(page.current.digest).toBe(renamed);
+    expect(page.current.digest).toBe(withoutRetry);
   });
 
   it("drops an event about another meeting's digest", async () => {

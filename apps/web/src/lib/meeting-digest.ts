@@ -37,10 +37,10 @@ export type DigestSource = 'fetch' | 'event';
  *
  * **Of two with the same version, a fetch wins and an event does not.** Two changes reach the
  * API's answer without moving the version: a linked owner's new display name, and an
- * `availableAction` that left with the meeting's last recording. Neither is announced, so
- * only a fetch can bring either, and it must be taken over an equal digest already held. An
- * event of a version already held is the same digest announced twice — two writes close
- * together are — and replacing the held one with it would only be a render.
+ * `availableAction` that left with a recording nothing reacted to the delete of. Neither is
+ * announced, so only a fetch can bring either, and it must be taken over an equal digest
+ * already held. An event of a version already held is the same digest announced twice — two
+ * writes close together are — and replacing the held one with it would only be a render.
  *
  * A digest of another meeting is never compared: it replaces whatever is held.
  */
@@ -122,11 +122,12 @@ export interface DigestPresentation {
  * out-of-date digest stays readable beside "Generating digest…", and beside "Digest failed"
  * when its replacement could not be made.
  *
- * **Nothing at all without one of the two** — a meeting with no transcribed recording, a
- * digest withdrawn with a recording and not yet replaced, and a page that has not heard from
- * the API yet all look the same: no section, rather than an empty frame around nothing.
- * That is what a digest says to anybody. What one reader may do about it — the control that
- * two of those states are given — is added by `digestSectionView` in `meeting-digest-action.ts`.
+ * **Nothing at all without one of the two** — a meeting with no transcribed recording, one
+ * whose recordings have no digest yet, a digest withdrawn with a recording and not yet
+ * replaced, and a page that has not heard from the API yet all look the same: no section,
+ * rather than an empty frame around nothing. That is what a digest says to anybody. What one
+ * reader may do about it — Retry, beside a failure — is added by `digestSectionView` in
+ * `meeting-digest-action.ts`.
  *
  * Every string of the content is handed on exactly as it came. It is a model's writing about
  * what was said in a recording, so it is text for React to escape and never markup.

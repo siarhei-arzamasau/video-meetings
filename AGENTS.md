@@ -69,11 +69,23 @@ The API generates a digest when a recording is transcribed, stores it, serves
 it at `GET /api/meetings/:id/digest`, withdraws and replaces it when a recording it was built
 from is deleted, sends every change as a `digest` event on the files stream, reports an
 action item's owner as the participant the spoken name identifies, and takes a request to
-generate or retry one from the host or a transcribed recording's uploader; the meeting
+retry a failed one from the host or a transcribed recording's uploader; the meeting
 page shows the digest and follows it over that stream, for everyone who can see the
-meeting, and offers those two "Generate digest" or "Retry". **It is the first feature to send
+meeting, and offers those two "Retry" beside a failure. **It is the first feature to send
 meeting content to a third party**, which is why `MEETING_DIGEST_ENABLED` ships off; read the
 plan's decisions before changing `src/modules/meeting-digests`.
+
+**Generate is no longer what phases 5 and 7 of that plan describe.** They gave the host and
+a recording's uploader a "Generate digest" control for the digests nothing automatic would
+ever make: recordings transcribed while the setting was off, a request lost with its
+process, a digest a delete emptied. Since 2026-10-10 nobody asks for those. The API asks
+for every digest a meeting is owed once as it boots, the route takes a Retry of a failed
+digest and nothing else, and the page has no control for a digest that is not failed. **So
+the first boot with the setting on sends the transcripts of every meeting that has
+recordings and no current digest to Anthropic**, one paid generation each, with nobody
+asking. The plan and the PRD stay as the record of what was built first; what replaced it
+is under _Retry_ and _Catching up_ in
+[the API guide](apps/api/AGENTS.md#meeting-digests-srcmodulesmeeting-digests).
 
 ## Commands
 

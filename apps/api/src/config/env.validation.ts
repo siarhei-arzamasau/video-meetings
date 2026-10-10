@@ -173,10 +173,12 @@ export class EnvironmentVariables extends TranscriptionEnvironmentVariables {
   MEETING_FILE_UPLOAD_TTL_HOURS: number = 24;
 
   /**
-   * Whether a recording that reaches Transcribed asks for its meeting's digest, and whether
-   * the digest worker claims anything. **Off by default, because switching it on sends
-   * transcript text to Anthropic** — the first thing in this API to send meeting content to a
-   * third party. Off, a digest already stored is still served and a queued one waits for the
+   * Whether a recording that reaches Transcribed asks for its meeting's digest, whether the
+   * digest worker claims anything, and whether a boot asks for the digests that are owed.
+   * **Off by default, because switching it on sends transcript text to Anthropic** — the
+   * first thing in this API to send meeting content to a third party, and on the boot that
+   * switches it on, the transcripts of every meeting that has recordings and no current
+   * digest. Off, a digest already stored is still served and a queued one waits for the
    * setting to come back. Parsed like the worker flag, for the same reason.
    */
   @Transform(({ obj, key }) => parseBoolean((obj as Record<string, unknown>)[key]))

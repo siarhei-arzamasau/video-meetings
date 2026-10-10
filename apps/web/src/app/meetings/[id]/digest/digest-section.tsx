@@ -55,14 +55,15 @@ interface DigestSectionProps {
  * stored — two things, shown side by side, because the API keeps them apart. What each
  * combination shows is `digestSectionView`'s to decide; this draws it.
  *
- * **No digest and no control, no section.** A meeting with no transcribed recording, and one
- * whose digest was withdrawn with a recording, draw nothing here at all for a reader who can
- * do nothing about it: no heading, no empty frame. Only the status region is always in the
- * page, which is why it sits outside the card.
+ * **No digest, no section.** A meeting with no transcribed recording, one whose recordings
+ * have no digest yet, and one whose digest was withdrawn with a recording draw nothing here
+ * at all: no heading, no empty frame, and nothing to press — a digest is generated with
+ * nobody asking. Only the status region is always in the page, which is why it sits outside
+ * the card.
  *
  * It holds no connection and makes no decision: the page holds the stream that keeps the
- * digest current (`useMeetingUpdates`), and who is offered "Generate digest" or "Retry" is
- * `useDigestAction`'s, handed in as `action`.
+ * digest current (`useMeetingUpdates`), and who is offered "Retry" beside a digest that
+ * failed is `useDigestAction`'s, handed in as `action`.
  *
  * **A press moves focus to the heading before anything else.** The control is disabled
  * while its request is on its way and gone once it is taken, and a button removed while it
@@ -126,7 +127,6 @@ export function DigestSection({ digest, action }: DigestSectionProps) {
             {shown.status?.kind === 'failed' && (
               <p className="text-muted mt-3 text-sm">{shown.status.reason}</p>
             )}
-            {shown.notice !== null && <p className="text-muted mt-3 text-sm">{shown.notice}</p>}
             {error !== null && (
               <p className="text-danger-soft-foreground mt-3 text-sm" role="alert">
                 {error}

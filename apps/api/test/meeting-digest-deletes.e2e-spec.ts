@@ -107,9 +107,9 @@ describe('a meeting digest when one of its recordings is deleted', () => {
     await expect(digests.read(host.token, meeting.id)).resolves.toEqual({
       meetingId: meeting.id,
       version: before.version,
+      // Nothing is queued for the recording that is left: the next delete in the meeting
+      // catches up with this one, and so does the next boot.
       status: 'ready',
-      // Nothing is queued for the recording that is left, so somebody may ask.
-      availableAction: 'generate',
     });
 
     // The next delete in the meeting — of a file the digest was never built from — asks

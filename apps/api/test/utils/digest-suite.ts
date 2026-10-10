@@ -6,6 +6,7 @@ import type request from 'supertest';
 import type { ApiSuite } from './api-suite';
 import type { FakeClaudeAgent } from './fake-claude-agent';
 import {
+  MEETING_DIGEST_CATCH_UP_TOKEN,
   MEETING_DIGEST_WORKER_TOKEN,
   PENDING_DIGEST_REQUESTS_TOKEN,
   meetingDigestGenerationUrl,
@@ -30,8 +31,9 @@ export const DIGEST_TOO_LONG_MESSAGE =
 export const digestTimeLimitMessage = (limit: string): string =>
   `Generating the digest took longer than the ${limit} limit.`;
 
-/** The request route's refusals, restated like the copy above. */
+/** The retry route's refusals, restated like the copy above. */
 export const DIGEST_SWITCHED_OFF_MESSAGE = 'Meeting digests are switched off';
+export const DIGEST_NOT_FAILED_MESSAGE = 'The digest has not failed, so there is nothing to retry';
 export const DIGEST_UNDER_WAY_MESSAGE = 'A digest is already queued or being generated';
 export const DIGEST_CURRENT_MESSAGE = 'The digest already covers every transcribed recording';
 export const DIGEST_NO_RECORDING_MESSAGE =
@@ -42,6 +44,14 @@ export const MAX_DIGEST_TRANSCRIPT_CHARACTERS = 1_700_000;
 
 export const digestWorkerOf = (app: INestApplication): WorkerHandle =>
   app.get<WorkerHandle>(MEETING_DIGEST_WORKER_TOKEN);
+
+/**
+ * What an application does once at boot with the digest on, run by hand: asks for every
+ * digest a meeting is owed, and resolves to how many it asked for. The suite's application
+ * boots with the digest off, so nothing but a spec ever runs it there.
+ */
+export const catchUpDigests = (app: INestApplication): Promise<number> =>
+  app.get<{ run(): Promise<number> }>(MEETING_DIGEST_CATCH_UP_TOKEN).run();
 
 export interface DigestSettings {
   enabled?: boolean;
@@ -88,9 +98,11 @@ export interface DigestSuite {
   requested(): Promise<void>;
   /** Changes the suite application's settings for the rest of the test. */
   configure(settings: DigestSettings): void;
+  /** The boot's catch-up, on the suite application — `catchUpDigests`. */
+  catchUp(): Promise<number>;
   read(token: string, meetingId: string): Promise<MeetingDigest>;
   /**
-   * "Generate now" — Generate and Retry are this one request. The response is the caller's
+   * Retry, the one request for a digest that a person makes. The response is the caller's
    * to hold to a status: most of what a spec says about this route is who is refused.
    */
   ask(token: string, meetingId: string): request.Test;
@@ -139,6 +151,7 @@ export function useDigestSuite(
     worker: () => digestWorkerOf(suite.app()),
     requested,
     configure: (settings) => configureDigest(suite.app(), settings),
+    catchUp: () => catchUpDigests(suite.app()),
     read: async (token, meetingId) => {
       const response = await suite
         .get(meetingDigestUrl(meetingId))

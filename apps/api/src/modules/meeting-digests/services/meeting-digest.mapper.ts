@@ -5,7 +5,7 @@ import type {
   MeetingDigestStatus,
 } from '@repo/shared';
 
-import { requestabilityOf } from './meeting-digest-action';
+import { DigestRequestKind, requestabilityFor } from './meeting-digest-action';
 import { DigestStatus } from './meeting-digest-status';
 
 export interface MeetingDigestActionItemRecord {
@@ -72,9 +72,11 @@ const WIRE_STATUS: Record<DigestStatus, MeetingDigestStatus> = {
  * generated and nothing rewritten.
  *
  * `generationEnabled` is the deployment's setting, and all it decides is `availableAction`:
- * what "generate now" would do for the digest as it stands, by the rule the request route
- * refuses by (`requestabilityOf`), and absent whenever the setting is off — nothing is generated
- * then, so nothing is offered. It is the same for every reader; who may ask is the route's.
+ * that a failed digest may be retried, by the rule the request route refuses by
+ * (`requestabilityFor`, as a retry), and absent whenever the setting is off — nothing is
+ * generated then, so nothing is offered. It is the same for every reader; who may ask is the
+ * route's. **A digest that is owed and not failed is offered to nobody**: asking for that
+ * one is the boot's catch-up's, and no person's.
  *
  * Everything the worker owns stays behind — the lease, the claim count, the revision — and
  * so does what a generation cost, which is in the log and in no row. Optional fields are
@@ -88,9 +90,9 @@ export function toMeetingDigest(
   generationEnabled: boolean,
 ): MeetingDigest {
   const transcribed = new Set(transcribedFileIds);
-  const request = requestabilityOf(record, transcribed);
-  const availableAction =
-    generationEnabled && request.allowed ? { availableAction: request.action } : {};
+  const request = requestabilityFor(DigestRequestKind.RETRY, record, transcribed);
+  const availableAction: Pick<MeetingDigest, 'availableAction'> =
+    generationEnabled && request.allowed ? { availableAction: 'retry' } : {};
 
   if (record === null) {
     return { meetingId, version: 0, ...availableAction };

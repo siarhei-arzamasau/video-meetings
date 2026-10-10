@@ -11,9 +11,9 @@ export interface MeetingUpdates {
   files: MeetingFiles;
   /** The meeting's digest; `null` until the API has answered once. */
   digest: MeetingDigest | null;
-  /** Fetch the digest now: what a refused Generate or Retry is answered with. */
+  /** Fetch the digest now: what a refused Retry is answered with. */
   refreshDigest(): void;
-  /** Take the digest the API answered a Generate or a Retry with (`MeetingDigestFeed.accept`). */
+  /** Take the digest the API answered a Retry with (`MeetingDigestFeed.accept`). */
   acceptDigest(digest: MeetingDigest): void;
 }
 

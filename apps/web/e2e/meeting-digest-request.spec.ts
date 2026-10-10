@@ -10,7 +10,6 @@ import {
   digestViaApi,
   expectCurrentDigest,
   failedDigest,
-  generateDigestButton,
   generatingDigest,
   isDigestRequest,
   isStillTheSameLoad,
@@ -29,7 +28,6 @@ import { rowFor, transcriber, transcriptLink } from './transcription';
 
 const LAUNCH = 'Ship the launch on Friday.';
 const PRICING = 'Keep the pricing page as it is.';
-const NO_DIGEST_YET = "This meeting's recordings have no digest yet.";
 
 interface Members {
   host: SignedInUser;
@@ -71,26 +69,19 @@ async function closeAll({ host, uploader, other }: Members): Promise<void> {
   await Promise.all([host, uploader, other].map(({ context }) => context.close()));
 }
 
-test.describe('Generate and Retry on the meeting page', () => {
+test.describe('Retry, and the digests nobody asks for, on the meeting page', () => {
   // Both fakes, at both ends — and `claude.reset` switches the digest back on, so a test
   // that failed with it off does not leave the API generating nothing for every spec after.
   test.beforeEach(() => Promise.all([transcriber.reset(), claude.reset()]));
   test.afterEach(() => Promise.all([transcriber.reset(), claude.reset()]));
 
-  test('offers Generate digest to the host and the uploader of a recording transcribed with the setting off, and ends in a digest', async ({
+  test('gives a recording transcribed with the setting off its digest once the API catches up, with nobody asking', async ({
     browser,
   }) => {
     const members = await meetingOfThree(browser);
     const { host, uploader, other, meeting } = members;
-    const ahead = await createMeetingViaApi(host.token, { title: 'Ahead of it' });
-    const [aheadKey, key] = [claude.key(), claude.key()];
-    await Promise.all([claude.hold(aheadKey), claude.hold(key)]);
-
-    // Another meeting's generation, held: the API writes one digest at a time, so the one
-    // asked for below stays Queued for as long as the test needs to look at it.
-    await host.page.goto(`/meetings/${ahead.id}`);
-    await uploadRecording(host.page, 'ahead.mp3', { holdKey: aheadKey });
-    await expect(generatingDigest(host.page)).toBeVisible();
+    const key = claude.key();
+    await claude.hold(key);
 
     await claude.setting('off');
     await uploader.page.goto(`/meetings/${meeting.id}`);
@@ -98,38 +89,25 @@ test.describe('Generate and Retry on the meeting page', () => {
     await expect(transcriptLink(rowFor(uploader.page, 'launch.mp3'))).toBeVisible();
     await claude.setting('on');
 
-    // Switched on again, nothing starts by itself and nothing is stored: there is a way
-    // forward only for the two who may ask for it.
+    // Switched on again, nothing is stored and nothing is offered: no section for anybody,
+    // and the route has nothing to retry for the two who could retry a failure.
     await openForAll(members);
     expect((await digestViaApi(host.token, meeting.id)).status).toBeUndefined();
-    await expect(generateDigestButton(host.page)).toBeVisible();
-    await expect(generateDigestButton(uploader.page)).toBeVisible();
-    await expect(digestSection(host.page)).toContainText(NO_DIGEST_YET);
-    await expect(digestSection(other.page)).toHaveCount(0);
+    await Promise.all(pagesOf(members).map((page) => expect(digestSection(page)).toHaveCount(0)));
+    expect(await requestDigestStatusViaApi(host.token, meeting.id)).toBe(409);
+    expect(await requestDigestStatusViaApi(uploader.token, meeting.id)).toBe(409);
     expect(await requestDigestStatusViaApi(other.token, meeting.id)).toBe(404);
 
-    await generateDigestButton(host.page).click();
-
-    // Queued, on every page — and with that the control is gone from both that had it.
-    await Promise.all(pagesOf(members).map((page) => expect(queuedDigest(page)).toBeVisible()));
-    await expect(digestButtons(host.page)).toHaveCount(0);
-    await expect(digestButtons(uploader.page)).toHaveCount(0);
-    // The button went while it held focus; the reader is left on the section, not the page.
-    await expect(digestSection(host.page).getByRole('heading', { name: 'Digest' })).toBeFocused();
-    expect(await requestDigestStatusViaApi(uploader.token, meeting.id)).toBe(409);
-
-    await claude.release(aheadKey);
+    // What the restart that switches the setting on does. The generation is held, so every
+    // page can be seen saying so — and none of them has anything to press, then or after.
+    await claude.catchUp();
     await Promise.all(pagesOf(members).map((page) => expect(generatingDigest(page)).toBeVisible()));
-    await expect(digestButtons(host.page)).toHaveCount(0);
-    await expect(digestButtons(uploader.page)).toHaveCount(0);
-    expect(await requestDigestStatusViaApi(host.token, meeting.id)).toBe(409);
+    await Promise.all(pagesOf(members).map((page) => expect(digestButtons(page)).toHaveCount(0)));
 
     await claude.release(key);
     await Promise.all(pagesOf(members).map(expectCurrentDigest));
     await expect(digestPart(other.page, 'Decisions').getByRole('listitem')).toHaveText([LAUNCH]);
-    // Current: there is nothing left to ask for, on the page or from the API.
-    await expect(digestButtons(host.page)).toHaveCount(0);
-    await expect(digestButtons(uploader.page)).toHaveCount(0);
+    await Promise.all(pagesOf(members).map((page) => expect(digestButtons(page)).toHaveCount(0)));
     expect(await requestDigestStatusViaApi(host.token, meeting.id)).toBe(409);
     expect(await Promise.all(pagesOf(members).map(isStillTheSameLoad))).toEqual([true, true, true]);
 
@@ -199,7 +177,7 @@ test.describe('Generate and Retry on the meeting page', () => {
     await closeAll(members);
   });
 
-  test('offers nothing while the setting is off, and Generate for the digest it left out of date', async ({
+  test('offers nothing for a digest the setting left out of date, and the catch-up replaces it', async ({
     browser,
   }) => {
     const host = await signUp(browser);
@@ -220,14 +198,16 @@ test.describe('Generate and Retry on the meeting page', () => {
     await expect(digestButtons(page)).toHaveCount(0);
     expect(await requestDigestStatusViaApi(host.token, meeting.id)).toBe(409);
 
-    // On again, nothing has started by itself; the page that opens now offers it.
+    // On again, nothing has started by itself — and still nothing is offered: bringing it
+    // up to date is nobody's to ask for.
     await claude.setting('on');
     await openMeetingPage(page, meeting.id);
     await markLoaded(page);
     await expect(outOfDateMark(page)).toBeVisible();
-    await expect(generateDigestButton(page)).toBeVisible();
+    await expect(digestButtons(page)).toHaveCount(0);
+    expect(await requestDigestStatusViaApi(host.token, meeting.id)).toBe(409);
 
-    await generateDigestButton(page).click();
+    await claude.catchUp();
 
     await expect(digestPart(page, 'Decisions').getByRole('listitem')).toHaveText([LAUNCH, PRICING]);
     await expectCurrentDigest(page);

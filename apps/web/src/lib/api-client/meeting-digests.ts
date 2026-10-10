@@ -16,13 +16,14 @@ export function fetchMeetingDigest(token: string, meetingId: string): Promise<Me
 }
 
 /**
- * Asks for the meeting's digest to be generated now: the one request behind both "Generate
- * digest" and "Retry". Which of the two it was is the API's to say (`availableAction` on the
- * digest), so it carries no body. The answer is the digest as the request left it — `queued`.
+ * Asks for a digest that failed to be generated again: the request behind "Retry", and the
+ * only one a page makes for a digest — every other one is generated with nobody asking. It
+ * carries no body. The answer is the digest as the request left it — `queued`.
  *
- * A 409 means there is nothing to ask for any more — a generation is under way, the digest
- * already covers every transcribed recording, there is no such recording, or the setting is
- * off — and its message is not page copy: a caller fetches the digest again and shows that.
+ * A 409 means there is nothing to retry any more — a generation is under way, the digest
+ * has not failed or is already replaced, there is no transcribed recording left, or the
+ * setting is off — and its message is not page copy: a caller fetches the digest again and
+ * shows that.
  * A 404 means the caller is neither the host nor the uploader of a transcribed recording.
  */
 export function requestMeetingDigest(token: string, meetingId: string): Promise<MeetingDigest> {

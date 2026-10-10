@@ -8,22 +8,23 @@ import { DigestRequestRefusal } from '../../services/meeting-digest-action';
 import { MeetingDigestAnnouncer } from '../../services/meeting-digest-announcer';
 import { MeetingDigestRepository } from '../../services/meeting-digest.repository';
 import { MEETING_NOT_FOUND, MeetingDigestsService } from '../../services/meeting-digests.service';
-import { RequestMeetingDigestCommand } from '../request-meeting-digest.command';
+import { RetryMeetingDigestCommand } from '../retry-meeting-digest.command';
 
 export const DIGEST_SWITCHED_OFF_MESSAGE = 'Meeting digests are switched off';
 
-/** The 409 for each way a digest refuses a request. Not copy a page shows: it refetches. */
+/** The 409 for each way a digest refuses a retry. Not copy a page shows: it refetches. */
 export const DIGEST_REFUSAL_MESSAGES: Record<DigestRequestRefusal, string> = {
   [DigestRequestRefusal.NO_RECORDING]:
     'The meeting has no transcribed recording to generate a digest from',
   [DigestRequestRefusal.UNDER_WAY]: 'A digest is already queued or being generated',
   [DigestRequestRefusal.CURRENT]: 'The digest already covers every transcribed recording',
+  [DigestRequestRefusal.OTHER_KIND]: 'The digest has not failed, so there is nothing to retry',
 };
 
 /**
- * "Generate now", for Generate and for Retry: the one caller of the edges into `QUEUED`
- * that no recording caused. Everything else that queues a digest is a recording being
- * transcribed or deleted.
+ * Retry: the one request for a digest that a person makes, and the one caller of `FAILED →
+ * QUEUED` that no recording caused. Everything else that queues a digest is a recording
+ * being transcribed or deleted, or the boot's catch-up.
  *
  * Who may ask: the host, or the uploader of one of the meeting's transcribed recordings —
  * the people who may already retry a transcription there — and anyone else gets the 404 a
@@ -35,19 +36,21 @@ export const DIGEST_REFUSAL_MESSAGES: Record<DigestRequestRefusal, string> = {
  * retry there is nothing useful in queueing for the setting's return — a request made with
  * it off would be a paid request made the day somebody switches it on, by nobody.
  *
- * The request itself is `MeetingDigestRepository.requestByHand`: conditional on the digest
+ * The request itself is `MeetingDigestRepository.requestRetry`: conditional on the digest
  * as it stands under its lock, by the rule the read reports `availableAction` with, so a
  * control that was shown and a request that is accepted cannot disagree for longer than
- * the page takes to hear of a change. A refusal is the 409 and writes nothing. An accepted
- * request is every other request's write — `QUEUED`, the claim count back at 0, the reason
- * gone — and the worker claims the row like any other; nothing here calls Claude.
+ * the page takes to hear of a change. A refusal is the 409 and writes nothing — a digest
+ * that is owed and has not failed included, which is the catch-up's to ask for and nobody
+ * else's. An accepted request is every other request's write — `QUEUED`, the claim count
+ * back at 0, the reason gone — and the worker claims the row like any other; nothing here
+ * calls Claude.
  */
-@CommandHandler(RequestMeetingDigestCommand)
-export class RequestMeetingDigestHandler implements ICommandHandler<
-  RequestMeetingDigestCommand,
+@CommandHandler(RetryMeetingDigestCommand)
+export class RetryMeetingDigestHandler implements ICommandHandler<
+  RetryMeetingDigestCommand,
   MeetingDigest
 > {
-  private readonly logger = new Logger(RequestMeetingDigestHandler.name);
+  private readonly logger = new Logger(RetryMeetingDigestHandler.name);
 
   constructor(
     private readonly config: ConfigService,
@@ -56,14 +59,14 @@ export class RequestMeetingDigestHandler implements ICommandHandler<
     private readonly announcer: MeetingDigestAnnouncer,
   ) {}
 
-  async execute({ userId, meetingId }: RequestMeetingDigestCommand): Promise<MeetingDigest> {
+  async execute({ userId, meetingId }: RetryMeetingDigestCommand): Promise<MeetingDigest> {
     const recordings = await this.requireRequestableMeeting(userId, meetingId);
 
     if (!this.config.get<boolean>('MEETING_DIGEST_ENABLED', false)) {
       throw new ConflictException(DIGEST_SWITCHED_OFF_MESSAGE);
     }
 
-    const request = await this.repository.requestByHand(
+    const request = await this.repository.requestRetry(
       meetingId,
       recordings.map(({ id }) => id),
     );
@@ -72,9 +75,7 @@ export class RequestMeetingDigestHandler implements ICommandHandler<
       throw new ConflictException(DIGEST_REFUSAL_MESSAGES[request.refusal]);
     }
 
-    this.logger.log(
-      `Digest of meeting ${meetingId}: requested by user ${userId} (${request.action})`,
-    );
+    this.logger.log(`Digest of meeting ${meetingId}: retry requested by user ${userId}`);
 
     // After the write reported that it was made, never before it: a refusal above changed
     // nothing and announces nothing. And before the answer is built, so that a read that

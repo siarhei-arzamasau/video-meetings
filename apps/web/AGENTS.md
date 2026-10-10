@@ -71,7 +71,7 @@ aliases in sync if either changes.
   (its soft chips and alerts): the same red mixed towards `--foreground`, 6.74:1 on a light
   card and 6.30:1 on a dark one, measured in Chromium. Every inline `role="alert"` on the
   meeting page uses it — a row's download, retry and transcript errors, an upload that failed,
-  the digest's request. It is a class at each call site rather than an override of
+  the digest's retry. It is a class at each call site rather than an override of
   `--danger` in `globals.css`, because darkening the token would darken every danger button
   with it.
   **HeroUI's own form text gets the same colour from `globals.css`, not from a class**: a
@@ -340,8 +340,10 @@ each of which was a bug once:
 
 The meeting's digest — a summary, action items, and decisions, written by Claude from the
 transcripts of its recordings — is the second thing the meeting page follows without a
-reload. `DigestSection` (`meetings/[id]/digest/`) draws it, with one control for the two
-kinds of member who may ask for one: "Generate digest" or "Retry". What its API promises is in
+reload. `DigestSection` (`meetings/[id]/digest/`) draws it, with one control, beside a digest
+that failed, for the two kinds of member who may ask for another try: "Retry". Nobody asks
+for a digest that is simply not there yet — the API generates it when a recording is
+transcribed, or the next time it starts. What its API promises is in
 [the API guide](../api/AGENTS.md#meeting-digests-srcmodulesmeeting-digests); what a reader
 of this side would get wrong:
 
@@ -360,39 +362,41 @@ of this side would get wrong:
   here, no hand-over, and a fetch still in flight when another is asked for is simply let go.
   **Of two with the same version, a fetch wins and an event does not.** Two changes reach the
   API's answer under an unchanged version — a linked owner's new display name, and an
-  `availableAction` that left with the meeting's last recording — and nothing announces
-  either, so only a fetch can bring them; an event of a version already held is the same
-  digest announced twice. Collapse the two cases into one comparison and either a rename
-  never shows, or a duplicate event costs a render.
+  `availableAction` that left with a recording nothing reacted to the delete of — and
+  nothing announces either, so only a fetch can bring them; an event of a version already
+  held is the same digest announced twice. Collapse the two cases into one comparison and
+  either a rename never shows, or a duplicate event costs a render.
 - **A status and content are two things, drawn side by side** — `digestPresentation`, a pure
   function, decides what each combination shows. The status is where the latest generation
   stands; the content is what the last successful one stored. That is how an out-of-date
   digest stays readable beside "Generating digest…", and beside "Digest failed" when its
   replacement could not be made. **`ready` has no chip**: it is said by showing the digest.
-- **No status, no content, and no control is no section** — not an empty card. A meeting
-  with no transcribed recording, a digest withdrawn with a recording, and a page the API has
-  not answered yet all draw nothing for a reader who can do nothing about it.
+- **No status and no content is no section** — not an empty card. A meeting with no
+  transcribed recording, one whose recordings have no digest yet, a digest withdrawn with a
+  recording, and a page the API has not answered yet all draw nothing.
   `digestPresentation` is what a digest says to anybody; `digestSectionView`
   (`src/lib/meeting-digest-action.ts`) adds what this reader may do, and is what the section
-  draws. The two states only a person can end — recordings transcribed while the setting
-  was off, and a digest withheld by a delete nothing reacted to — are drawn for their
-  control alone, with one sentence where a digest would be. `DigestAnnouncement`, the section's polite status region,
-  therefore sits **outside** the card: one of the things it says is that the digest was
-  removed, which a region that went with the section could not. It announces the ends only —
-  ready, updated, failed, removed — and never the page's opening state, the way the files'
-  region does (`digestAnnouncement`).
+  draws. **A digest that is not there has no control, on purpose**: the API generates it
+  with nobody asking, so a button here would be a second way to ask for what is already
+  owed — and a paid one. The one thing a reader can ask for is another try at a digest that
+  failed, and a failure is itself something to show. `DigestAnnouncement`, the section's
+  polite status region, therefore sits **outside** the card: one of the things it says is
+  that the digest was removed, which a region that went with the section could not. It
+  announces the ends only — ready, updated, failed, removed — and never the page's opening
+  state, the way the files' region does (`digestAnnouncement`).
 - **Who is offered the control is decided in one place: `offeredDigestAction`**
   (`src/lib/meeting-digest-action.ts`), called by `useDigestAction` from `MeetingSections`
   — there rather than in the section because it reads both halves of the page. Three things
-  must hold. The digest carries `availableAction`, which says what may be asked for and says
-  it to every reader alike. The reader is the host, or the uploader of a recording the
+  must hold. The digest carries `availableAction`, which says a failed digest may be retried
+  and says it to every reader alike. The reader is the host, or the uploader of a recording the
   page's own list shows as transcribed — the people the API would not answer 404. **And the
   list holds a transcribed recording at all, which binds the host too.** That third one
-  looks like a restatement of the API's rule and is the repair of a gap in it: when a
-  meeting's last transcribed recording is deleted, `availableAction` leaves the digest
-  _without its version moving_, so a page that keeps the higher version goes on holding
-  `generate`. The deleted recording leaves the list by the same stream. A list that is
-  loading or failed offers nothing, rather than a control drawn on a guess.
+  looks like a restatement of the API's rule and is the repair of a gap in it: when the
+  last transcribed recording of a meeting whose digest failed is deleted and nothing reacts
+  to the delete, `availableAction` leaves the digest _without its version moving_, so a
+  page that keeps the higher version goes on holding `retry`. The deleted recording leaves
+  the list by the same stream. A list that is loading or failed offers nothing, rather than
+  a control drawn on a guess.
 - **The request's answer is put on the page, which is the opposite of the row's Retry, and
   the version is why.** A row refetches its list and never writes a retry's answer over
   itself, because a file has nothing to order that answer against the stream by. A digest
@@ -443,9 +447,8 @@ of this side would get wrong:
   is logged and sends nothing — while the file's `deleted` event has already reached the
   page. Gated on the stream, a digest built from a deleted recording stayed on screen until
   the stream next reconnected, minutes later; the API withholds it from the moment the
-  delete commits, so one fetch takes it off. It is also how a page learns Generate is on
-  offer for a recording whose request could not be queued. **That change is
-  asked about twice — at once, and one interval later — and the second is not redundant.**
+  delete commits, so one fetch takes it off. **That change is asked about twice — at once,
+  and one interval later — and the second is not redundant.**
   The API answers a delete, and reports a transcript, before it has decided what either does
   to the digest, so the first answer can be the digest as it was: nothing queued, nothing to
   poll on, and the replacement then generated unseen. It is one more fetch and not a poll,
@@ -762,12 +765,19 @@ one that follows a delete holds only what is left. What to know before writing a
   the same transcripts and ends in a digest. `fails: true` is the failure nothing gets past.
 - **The setting is switched on the same port, because a spec cannot restart the API.**
   `claude.setting('off')` is `MEETING_DIGEST_ENABLED=false` in the running process: a
-  recording transcribed then asks for no digest, which is the only way to reach the state
-  "Generate digest" exists for. **Nothing tells an open page the setting changed** — in a
+  recording transcribed then asks for no digest, which is the only way to reach a meeting
+  that is owed one. **Nothing tells an open page the setting changed** — in a
   deployment it is a restart, which ends every stream — so a spec opens its pages after
   switching. `claude.reset()` switches it back on as well as releasing every key, for the
   reason it releases them: a test that failed with it off would otherwise leave the API
   generating nothing for every spec after it.
+- **Switching it back on is not the restart, so the catch-up is asked for by name.** In a
+  deployment the setting returns with a boot, and the boot asks for every digest a meeting
+  is owed. `claude.catchUp()` runs that in the API the suite started, and resolves once
+  each has been asked for. It is not tied to `setting('on')` because `reset()` calls that
+  around every test, over a database the specs share: it would generate, before each
+  test, for whatever every earlier one left owed. For the same reason a `catchUp()` also
+  asks for what other tests left; those are answered at once, ahead of the spec's own.
 
 The house convention it sets: **a new page starts as a red Playwright spec**, written against
 the routes, copy, and roles the page will have, run and seen failing, then made green by the

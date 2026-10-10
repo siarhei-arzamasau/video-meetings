@@ -58,7 +58,7 @@ Five worked examples, in the order worth reading them:
 
 - **`meeting-digests`** — read after `meeting-files`, whose worker it copies. It is also the
   one module that reaches three others — `meeting-files`, `meetings`, `user` — and imports
-  none of them: four queries, one event in and one out, and the visibility read. It has a
+  none of them: five queries, one event in and one out, and the visibility read. It has a
   section of its own below.
 
 `health` still shows the minimum a module needs when it changes no state and reaches no
@@ -383,16 +383,24 @@ reads sharing one `visibleTo` is the accepted price of the in-module read stayin
 
 ### The third boundary — what meeting-digests asks of the others
 
-`meeting-files` answers two queries for whatever describes a meeting as a whole:
+`meeting-files` answers three queries for whatever describes a meeting as a whole:
 `FindTranscribedRecordingsQuery(meetingId)` — which recordings are transcribed, id and
-uploader — and `FindMeetingTranscriptsQuery(meetingId, maxCharacters)` — what was said in
-them, in upload order. Three things about them:
+uploader — `FindMeetingTranscriptsQuery(meetingId, maxCharacters)` — what was said in
+them, in upload order — and `FindTranscribedRecordingsByMeetingQuery()` — the first of
+those for every meeting at once, ids only. Four things about them:
 
 - **Neither carries a user or checks visibility.** Who may ask about the meeting is the
   caller's to have decided, as it is for `FindUserByIdQuery`; a route that dispatches one
   without `FindVisibleMeetingQuery` first has published a meeting's transcripts.
 - **A storage key never crosses.** The handlers answer ids and text; a path under
   `MEETING_FILES_DIR` is this module's business.
+- **The every-meeting query is never dispatched for a request.** It names every meeting
+  that has a recording, and no visibility check can stand in front of that. Its one caller
+  is the digest's catch-up, at boot. **It reads under exactly the one-meeting query's
+  conditions, from one constant** (`TRANSCRIBED_RECORDING`): the catch-up calls a digest
+  current when its sources are the recordings transcribed now, and a generation's sources
+  are what the one-meeting read answered — so a row only one of the two counts is a digest
+  asked for again at every boot.
 - **The transcripts query stops at `maxCharacters` instead of loading past it**, and answers
   `withinLimit: false` with no text at all rather than part of it. A transcript is checked by
   its size on disk before it is read — UTF-8 never spends more than three bytes on what a
@@ -1034,10 +1042,13 @@ phases are built**: a recording that reaches Transcribed gives its
 meeting a digest, anyone who can see the meeting can read it, a deleted recording takes away
 what was built from it, every change is sent to the meeting's open streams, an action item's
 owner is reported as the member of the meeting the spoken name identifies, and the host or
-a transcribed recording's uploader can ask for a digest that no recording asked for —
+a transcribed recording's uploader can retry a digest that failed —
 `POST /api/meetings/:id/digest/generation`. The meeting page shows the digest, follows
-it over the stream, and is that route's one caller: "Generate digest" or "Retry" in the
-digest's section ([the web guide](../web/AGENTS.md#the-digest)).
+it over the stream, and is that route's one caller: "Retry" in the digest's section
+([the web guide](../web/AGENTS.md#the-digest)). **Phases 5 and 7 built more than that, and
+it has since been taken back**: a "Generate digest" for the digests no recording would ask
+for again. Those are now asked for at boot, with nobody pressing anything (_Catching up_,
+below); the plan is left as the record of what was built first.
 What a reader of the code would get wrong:
 
 **What leaves, and when**
@@ -1059,11 +1070,21 @@ What a reader of the code would get wrong:
 - **The setting stops new work and nothing else**, as the transcription's does. Off, a newly
   transcribed recording asks for nothing, the worker claims nothing, and a `QUEUED` row
   waits; a stored digest is still served, and both rules about recordings still apply to it,
-  because the read applies them. The request route answers 409 and the read offers no
-  `availableAction`. The handlers, the worker, and the read ask `ConfigService` when they
-  run, so the e2e suite flips it between tests. **Nothing is generated when it comes back**
-  for a recording transcribed while it was off: nothing revisits a transcribed recording,
-  and the way forward is somebody asking (_Generate and Retry_, below).
+  because the read applies them. The retry route answers 409 and the read offers no
+  `availableAction`. The handlers, the worker, the catch-up, and the read ask
+  `ConfigService` when they run, so the e2e suite flips it between tests. **What was
+  transcribed while it was off is generated when it comes back** — not by the switch, which
+  nothing watches, but by the boot that makes it: the catch-up asks for every digest a
+  meeting is owed (_Catching up_, below).
+- **So the first boot with it on sends Anthropic the transcripts of every meeting that has
+  a recording and no current digest** — one paid generation each, with nobody asking. That
+  was the owner's decision, on 2026-10-10, in place of a "Generate digest" somebody had to
+  press per meeting. Whoever switches the setting on for a deployment with history is
+  deciding that for all of it at once, and the README and the example env file say so.
+  **It also puts that history in the API's log**: each generation runs under the tools'
+  `auditLog`, which writes a task's title, a summary, and decisions at `log` level
+  (_Meeting tools_, below) — per generation as it always did, and now for every meeting a
+  boot catches up.
 - **With it on, a missing `ANTHROPIC_AUTH_TOKEN` stops the boot** — its presence, never
   whether Anthropic accepts it. A refused token fails a digest, not the process that serves
   every upload.
@@ -1096,7 +1117,7 @@ What a reader of the code would get wrong:
   `outOfDate`, which the read derives. An answer that changed under an unchanged version is
   one a page holding the old answer has no reason to take. **Two changes do that all the
   same**, each said where it is made: a linked owner's new name (_Owners_), and an
-  `availableAction` that left with a meeting's last recording (_Generate and Retry_).
+  `availableAction` that left with a recording nothing reacted to the delete of (_Retry_).
 - **The raw statements set `id` and `updated_at` themselves.** `@default(uuid())` and
   `@updatedAt` are the Prisma client's, and the request and the claim do not go through it —
   hence `gen_random_uuid()`, `now()`, and a database default on `updated_at`.
@@ -1128,7 +1149,7 @@ What a reader of the code would get wrong:
   to streams whose guard has already decided. One method for both is what makes an event the
   answer `GET` would give — an owner's current name reaches the stream by being read there,
   and `availableAction` by being decided there, and nowhere else. `describe` is its second
-  half, for a caller that already holds the row: the request route answers with the row its
+  half, for a caller that already holds the row: the retry route answers with the row its
   own write left.
 
 **Owners**
@@ -1305,37 +1326,37 @@ What a reader of the code would get wrong:
 - **The setting is not asked about.** It decides whether transcripts leave the deployment,
   and a revision sends nothing.
 
-**Generate and Retry**
+**Retry**
 
-- **`POST :id/digest/generation` is the one caller of the edges into `QUEUED` that no
-  recording caused** — from no status, from `READY`, and from `FAILED`. Everything else
-  that queues a digest is a recording being transcribed or deleted. Generate and Retry are
-  this one request, `RequestMeetingDigestCommand`: what differs is the digest it finds, and
-  the digest says which it would be (`availableAction`).
+- **`POST :id/digest/generation` is the one request for a digest that a person makes, and
+  the one caller of `FAILED → QUEUED` that no recording caused** —
+  `RetryMeetingDigestCommand`. Everything else that queues a digest is a recording being
+  transcribed or deleted, or the boot's catch-up. The path still says `generation`: that is
+  what a retry asks for.
 - **The gate, its order, and its 404s are the transcription retry's**: a meeting the caller
   cannot see, then a caller who is neither the host nor the uploader of one of its
   transcribed recordings — another participant included — each the 404 a guessed id gets.
   The 409s come after, so only someone who could have asked ever learns what the digest or
   the deployment refuses.
-- **One rule decides what the read offers and what the route accepts: `requestabilityOf`**
-  (`services/meeting-digest-action.ts`). No transcribed recording refuses everything; a
-  failed digest may always be retried; anything else may be generated unless it is queued,
-  generating, or built from exactly the recordings transcribed now. The mapper reports
-  `availableAction` where it allows and the write refuses where it does not, so change it
-  there and nowhere else. **Generate therefore covers more than "no digest"**: a digest that
-  is out of date with nothing queued, and one withheld by a delete nothing reacted to, are
-  both states nothing else will ever leave.
+- **One rule decides what the read offers, what the route accepts, and what the catch-up
+  asks for: `requestabilityOf`** (`services/meeting-digest-action.ts`). No transcribed
+  recording refuses everything; a failed digest is a person's to retry; anything else is
+  owed a digest — the catch-up's to ask for — unless it is queued, generating, or built
+  from exactly the recordings transcribed now. Each caller is answered through
+  `requestabilityFor`, which makes what is the other's a refusal: the mapper reports
+  `availableAction` only where a retry is allowed, the route answers a digest that is owed
+  and has not failed with a 409 of its own, and the catch-up leaves a failed one alone.
+  Change the rule there and nowhere else.
 - **This request can be refused, and a transcribed recording's cannot — on purpose.** A
   recording that arrives while a generation is out is "one more after it". A person pressing
   a button over a digest that is queued, generating, or current is asking for a second paid
   request for the same recordings, and gets a 409.
-- **It is decided under the row's lock, and a meeting with no row is given an empty one
-  first so that there is a lock to take** (`requestGenerationByHand`). Without it two
-  requests for such a meeting both find nothing, and the second adds a revision to the row
-  the first queued — one more generation than was asked for, if a worker claims it between
-  them. The lock also orders the decision against a generation's `complete`, as a delete's
-  is ordered. What is then written is `requestGeneration`, like every other request: the
-  claim count back at 0, the reason cleared, the content left alone.
+- **It is decided under the row's lock** (`requestGenerationAs`, as a retry), which is what
+  makes two retries at once one generation, and orders the decision against a generation's
+  `complete`, as a delete's is ordered. **It makes no row to lock**: a meeting with no row
+  has no failure to retry, and a row made for a request that is then refused would be
+  committed with the refusal. What is then written is `requestGeneration`, like every other
+  request: the claim count back at 0, the reason cleared, the content left alone.
 - **The recordings it is decided against are read before that lock, and moving the read
   under it is not the fix it looks like.** A recording deleted in between can let through a
   request for a digest the delete has just made current — and leaves the row where the same
@@ -1357,18 +1378,76 @@ What a reader of the code would get wrong:
   the digest allows, not whether this reader may ask. Who is shown the control is the
   page's to work out from the files it holds.
 - **It is the second thing that can change under an unchanged `version`.** When the last
-  transcribed recording of a meeting with nothing stored is deleted, Generate is no longer
-  offered and nothing is written: a meeting with no digest row has no version to move, and
-  a delete never makes a row. The page is expected to offer the action only while its own
-  files list holds a transcribed recording, and to answer a 409 by fetching the digest
-  again. A setting that changed is a restart, which ends every stream and so has every page
-  fetch.
+  transcribed recording of a meeting whose digest failed is deleted and nothing reacts to
+  the delete, Retry is no longer offered and nothing was written — the reaction is what
+  would have cleared the status and moved the version. The page is expected to offer the
+  action only while its own files list holds a transcribed recording, and to answer a 409
+  by fetching the digest again. A setting that changed is a restart, which ends every
+  stream and so has every page fetch.
+
+**Catching up**
+
+- **`MeetingDigestCatchUp` asks, once at boot, for every digest a meeting is owed and
+  nothing else will ask for.** While a process runs, the one thing that asks is a recording
+  being transcribed, and a meeting is left owed a digest all the same: its recordings were
+  transcribed while the setting was off, or before there was a digest; the request after a
+  transcription was lost with its process, or failed; a delete emptied the digest with the
+  setting off, or was never followed. Each of those used to wait for somebody to press
+  "Generate digest". The owner's decision of 2026-10-10 was that nobody should have to.
+- **It is a boot's, not a timer's, and that leaves one gap on purpose.** A change of the
+  setting is a boot, and so is the restart after a crash — between them every case above
+  but one: a request whose write failed in a process that went on running waits for the
+  next boot, or for the meeting's next transcribed recording. A periodic sweep would close
+  it for the price of two whole-table reads on a timer in every replica.
+- **A failed digest is never caught up.** Its way forward is Retry. Asked for again at
+  every boot it would be the automatic retry nothing here makes — one per restart, in a
+  deployment that is crash-looping.
+- **Two looks, and only the second decides.** The first is two statements — every digest's
+  standing (`findStandings`, which reads whether a summary is stored and not its text)
+  beside every meeting's transcribed recordings — and is a list to skip by: a boot with
+  nothing owed costs those two and no more. Each meeting it lets through is then asked
+  about on its own, **with its recordings read again**: the first look is stale by a
+  meeting's turn, and a recording deleted or transcribed meanwhile would have a digest that
+  is current asked for again. Then `requestGenerationAs` decides, as the catch-up, under
+  the row's lock.
+- **That lock is what makes two replicas booting one generation, and a meeting with no row
+  is given an empty one to take it on.** `ON CONFLICT DO NOTHING` waits for the other
+  transaction, and the lock then shows this one what that one wrote. The empty row never
+  outlives the transaction: a row with no status and no content is always owed a digest,
+  and a meeting with no recording was refused before it.
+- **It ends because a digest it caused is, to the next catch-up, current.** A generation's
+  sources are what the one-meeting recordings read answered, and "current" is those
+  against the every-meeting read — which is why the two share their conditions (_The third
+  boundary_). `meeting-digest-catch-up-races.e2e-spec.ts` holds a second run to asking for
+  nothing.
+- **Two orders still cost a generation that was not owed, and both are accepted.** A
+  recording transcribed within moments of the boot asks unconditionally, so if a worker
+  claims the catch-up's request before the recording's lands, the recording's is "one more
+  after it", over the same recordings. And a digest another replica is generating is passed
+  over as under way; if that generation began before a recording whose own request was
+  lost, it ends ready and out of date until the next boot.
+- **It runs where the worker polls, and the boot does not wait for it.**
+  `onApplicationBootstrap` starts it only with `MEETING_FILES_WORKER_ENABLED` and the
+  setting both on, and un-awaited — `listen` must not wait behind a backlog — held by
+  `PendingDigestRequests` for shutdown and for `drain()`. It asks about one meeting at a
+  time, since each is a transaction and a backlog asked about at once would be the pool
+  emptied at boot; it looks at the setting and at shutdown before each; it never rejects;
+  and it logs how many meetings look owed **before it asks for the first** — each being a
+  paid request nobody made, the count is what somebody watching a first boot can still act
+  on — and how many it asked for once it has. Under `nest start --watch` it runs at every
+  save, which with nothing owed is the two reads.
+- **The hook asks the query bus, and the handlers have to be registered by then.**
+  `CqrsModule` registers them in its own `onApplicationBootstrap`, and Nest runs that hook
+  for a module deeper in the import tree first — which `CqrsModule`, imported by this one,
+  always is. Were that order ever lost, the failure would be one caught and logged line and
+  a catch-up that silently asks for nothing; `meeting-digest-catch-up-boot.e2e-spec.ts`
+  boots an application over an owed meeting and is the spec that would notice.
 
 **Announcements**
 
 - **`MeetingDigestAnnouncer` is the one publisher of `MeetingDigestChangedEvent`**, called
   by whoever has just committed a write: the two request handlers — a transcribed
-  recording's, and Generate and Retry's — the delete follower, and the worker's recorder on
+  recording's, and Retry's — the catch-up, the delete follower, and the worker's recorder on
   the branch where its conditional write landed. A write that lost its claim changed nothing
   and announces nothing, as a refused request does. A new write to the row owes a call to
   it — and, if it changes what `GET` answers without changing a status, a version to
@@ -1393,11 +1472,13 @@ What a reader of the code would get wrong:
   recording has just made out of date. The request is a
   second write, after the first committed, so a process killed between them leaves a
   transcribed recording with nothing queued: exactly the state of one transcribed with the
-  setting off. A request that fails is logged and not retried, for the same reason. Closing
-  the window would mean `meeting-files` writing this module's table.
+  setting off, and left the same way — by the next boot's catch-up. A request that fails is
+  logged and not retried, for the same reason. Closing the window would mean `meeting-files`
+  writing this module's table.
 - **`PendingDigestRequests` exists because the bus does not wait for a handler.** It holds
   what the two handlers have started — a request, a delete being followed, and the
-  announcement after each — for shutdown, which must not close the connection under one, and
+  announcement after each — and the boot's catch-up, which nothing awaits either: for
+  shutdown, which must not close the connection under one, and
   for `drain()`, which waits for them before it looks for work. A handler registers its
   work before its first `await`, and that has to stay so: the bus calls it inside
   `publish`, which is what makes "the transcription worker has drained" imply "the request is
@@ -1422,7 +1503,8 @@ What a reader of the code would get wrong:
   generic, the time limit, too long, repeated attempts — chosen in
   `processing/meeting-digest-failure.ts` from what ended the generation. The SDK's and
   Anthropic's words stay in the log. **There is no automatic retry**: every generation is a
-  paid request, and the first error ends it. That includes an answer the database will
+  paid request, and the first error ends it — a failed digest is the one state the boot's
+  catch-up leaves alone, for that reason. That includes an answer the database will
   not store — a NUL in its text is enough: `DigestOutcomeRecorder.complete` records the
   generic failure rather than let the claim lapse and the meeting be sent, and paid for,
   twice more.
@@ -1811,9 +1893,14 @@ Nine things about that setup are easy to get wrong:
   loopback-only control port (3103) that is a listener of the entry point's own, not a route
   of the application. **That port also switches `MEETING_DIGEST_ENABLED` in the running
   process** (`ConfigService.set`, as `configureDigest` does for the specs here), because a
-  recording "transcribed while the setting was off" is the state Generate exists for and a
-  spec cannot restart the API. That stays inside the rule above: what the setting gates in
-  this process is the scripted Claude, whichever way it is switched. Nothing under `test/e2e-web` is covered by `pnpm typecheck`; `ts-node`
+  recording "transcribed while the setting was off" is the state the boot's catch-up exists
+  for and a spec cannot restart the API. That stays inside the rule above: what the setting
+  gates in this process is the scripted Claude, whichever way it is switched. **And it runs
+  the catch-up, as a request of its own** (`POST /control/catch-up`): in a deployment the
+  setting comes back with a boot and the boot catches up, but here `claude.reset()` switches
+  it on around every test over a database the specs share, and a catch-up tied to the switch
+  would generate, before each test, for whatever every earlier one left owed. Nothing under
+  `test/e2e-web` is covered by `pnpm typecheck`; `ts-node`
   type-checks it at every boot, so a changed `src` signature it uses stops the browser suite
   from starting rather than failing a spec.
 - **`maxWorkers: 1` is load-bearing**, for the same reason: Jest parallelises across spec
@@ -1854,8 +1941,11 @@ Nine things about that setup are easy to get wrong:
   both by waiting on `PendingDigestRequests`. `watch` opens the meeting's files stream and
   hands over its `digest` events one at a time, each held to a version above the last — so
   every spec that reads the stream is also a spec of the rule a page relies on. `ask` is
-  "generate now", returned unawaited because most of what a spec says about that route is
-  which status it answers. Every other spec file runs with the digest off.
+  Retry, returned unawaited because most of what a spec says about that route is which
+  status it answers. `catchUp` is the boot's catch-up, run by hand: the suite's application
+  boots with the digest off and so never runs it by itself, and the one spec that boots a
+  second application with it on is `meeting-digest-catch-up-boot`. Every other spec file
+  runs with the digest off.
 - **An environment the contract refuses does not throw when `AppModule` is imported.**
   `ConfigModule.forRoot` is `async`, so the refusal is a rejected promise inside the module's
   `imports` that nothing awaits until Nest compiles it — and an `expect(import(…))` passes

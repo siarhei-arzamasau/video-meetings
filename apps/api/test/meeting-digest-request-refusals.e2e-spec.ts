@@ -1,6 +1,7 @@
 import { useApiSuite } from './utils/api-suite';
 import {
   DIGEST_CURRENT_MESSAGE,
+  DIGEST_NOT_FAILED_MESSAGE,
   DIGEST_NO_RECORDING_MESSAGE,
   DIGEST_SWITCHED_OFF_MESSAGE,
   DIGEST_UNDER_WAY_MESSAGE,
@@ -8,21 +9,30 @@ import {
 } from './utils/digest-suite';
 import { FakeClaudeAgent } from './utils/fake-claude-agent';
 import { EMAIL, OTHER_EMAIL } from './utils/fixtures';
-import { GENERATING, QUEUED, READY, findMeetingDigestRow } from './utils/meeting-digests-table';
+import {
+  FAILED,
+  GENERATING,
+  QUEUED,
+  READY,
+  findMeetingDigestRow,
+  setMeetingDigestState,
+} from './utils/meeting-digests-table';
 import { createMeeting, registerUser } from './utils/meeting-files-suite';
 import type { RegisteredUser } from './utils/meeting-files-suite';
+import { setMeetingFileState } from './utils/meeting-files-table';
 import { useTranscriptionSuite } from './utils/transcription-suite';
 
 const FIRST = 'We decided to move the launch to the fifteenth of April.';
 const SECOND = 'Alice Johnson will rewrite the onboarding emails by Friday.';
 
 /**
- * What "generate now" refuses, each with a 409 that changes nothing: a request is a paid
+ * What the retry route refuses, each with a 409 that changes nothing: a request is a paid
  * generation, and one for a digest that is current, queued, or generating would be a second
- * one for the same recordings. Wherever it is refused the read offers no action, and the
- * two are one rule (`requestabilityOf`).
+ * one for the same recordings — while one for a digest that is owed and has not failed is
+ * the boot's catch-up's to make, and no person's. Wherever it is refused the read offers no
+ * action, and the two are one rule (`requestabilityFor`, as a retry).
  */
-describe('a request for a meeting digest that is refused', () => {
+describe('a retry of a meeting digest that is refused', () => {
   const claude = new FakeClaudeAgent();
   const suite = useApiSuite({ overrides: [claude.override()] });
   const transcription = useTranscriptionSuite(suite);
@@ -114,7 +124,7 @@ describe('a request for a meeting digest that is refused', () => {
     // A digest that failed while it was on is not retried while it is off.
     digests.configure({ enabled: true });
     claude.reply = () => ({ kind: 'error', error: new Error('unreachable') });
-    await digests.ask(host.token, meetingId).expect(200);
+    await digests.catchUp();
     await digests.worker().drain();
     await expect(digests.read(host.token, meetingId)).resolves.toMatchObject({
       status: 'failed',
@@ -126,47 +136,71 @@ describe('a request for a meeting digest that is refused', () => {
     expect(claude.calls).toHaveLength(1);
   });
 
-  it('refuses a meeting with no transcribed recording, and makes no row for it', async () => {
+  it('refuses a digest that is owed and has not failed, and makes no row for the refusal', async () => {
+    const { host, meetingId } = await setUp();
+    digests.configure({ enabled: false });
+    await digests.transcribe(host.token, meetingId, FIRST);
+    digests.configure({ enabled: true });
+
+    // No digest, and a recording to build one from: the catch-up's to ask for.
+    await expectRefused(host, meetingId, DIGEST_NOT_FAILED_MESSAGE);
+    await expect(findMeetingDigestRow(suite.prisma(), meetingId)).resolves.toBeNull();
+
+    // Out of date with nothing queued: readable, marked, and still nobody's to ask for.
+    await digests.catchUp();
+    await digests.worker().drain();
+    digests.configure({ enabled: false });
+    await digests.transcribe(host.token, meetingId, SECOND);
+    digests.configure({ enabled: true });
+    await expect(digests.read(host.token, meetingId)).resolves.toMatchObject({
+      status: 'ready',
+      content: { outOfDate: true },
+    });
+
+    await expectRefused(host, meetingId, DIGEST_NOT_FAILED_MESSAGE);
+    await expect(digests.worker().drain()).resolves.toBe(0);
+    expect(claude.calls).toHaveLength(1);
+  });
+
+  it('refuses a meeting with no transcribed recording, a failed digest of one included', async () => {
     const { host, meetingId } = await setUp();
 
     await expectRefused(host, meetingId, DIGEST_NO_RECORDING_MESSAGE);
     await expect(findMeetingDigestRow(suite.prisma(), meetingId)).resolves.toBeNull();
 
-    // Offered while there is a recording, and gone with it — under the version it was
-    // offered at: a meeting with no digest has none to move, and a delete makes no row.
-    digests.configure({ enabled: false });
+    // A digest that failed, and whose one recording was then deleted with nothing reacting:
+    // the row still says failed, and there is nothing left to retry it from.
     const file = await digests.transcribe(host.token, meetingId, FIRST);
-    digests.configure({ enabled: true });
-    const offered = { meetingId, version: 0, availableAction: 'generate' };
-    await expect(digests.read(host.token, meetingId)).resolves.toEqual(offered);
-    await digests.remove(host.token, meetingId, file.id);
+    await setMeetingDigestState(suite.prisma(), meetingId, { status: FAILED });
+    await expect(digests.read(host.token, meetingId)).resolves.toMatchObject({
+      status: 'failed',
+      availableAction: 'retry',
+    });
+    await setMeetingFileState(suite.prisma(), file.id, { status: 'deleted' });
 
-    await expect(digests.read(host.token, meetingId)).resolves.toEqual({ meetingId, version: 0 });
+    // The offer is gone under the version it was made at: nothing was written for it to move.
     await expectRefused(host, meetingId, DIGEST_NO_RECORDING_MESSAGE);
-    await expect(findMeetingDigestRow(suite.prisma(), meetingId)).resolves.toBeNull();
   });
 
-  it('accepts one of two requests made at once, for one generation', async () => {
+  it('accepts one of three retries made at once, for one generation', async () => {
     const host = await registerUser(suite, EMAIL);
     const uploader = await registerUser(suite, OTHER_EMAIL);
     const meeting = await createMeeting(suite, host, [uploader.id]);
-    digests.configure({ enabled: false });
     await digests.transcribe(uploader.token, meeting.id, FIRST);
-    await digests.transcribe(host.token, meeting.id, SECOND);
-    digests.configure({ enabled: true });
+    await setMeetingDigestState(suite.prisma(), meeting.id, { status: FAILED });
 
-    // No row yet, so there is nothing for either to find locked: the hardest case.
     const responses = await Promise.all([
       digests.ask(host.token, meeting.id),
       digests.ask(uploader.token, meeting.id),
       digests.ask(host.token, meeting.id),
     ]);
 
+    // The first to take the row's lock asks; the other two find it queued.
     expect(responses.map(({ status }) => status).toSorted()).toEqual([200, 409, 409]);
     await expect(findMeetingDigestRow(suite.prisma(), meeting.id)).resolves.toMatchObject({
       status: QUEUED,
-      requested_revision: 1,
-      version: 1,
+      requested_revision: 2,
+      version: 2,
     });
     await expect(digests.worker().drain()).resolves.toBe(1);
     await expect(digests.worker().drain()).resolves.toBe(0);

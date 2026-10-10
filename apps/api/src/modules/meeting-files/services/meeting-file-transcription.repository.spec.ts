@@ -193,6 +193,23 @@ describe('MeetingFileTranscriptionRepository', () => {
     });
   });
 
+  describe('findAllTranscribed', () => {
+    it("reads every meeting's recordings under the conditions of one meeting's", async () => {
+      const recording = { id: FILE_ID, meetingId: 'meeting' };
+      findMany.mockResolvedValue([recording]);
+
+      await expect(repository.findAllTranscribed()).resolves.toEqual([recording]);
+
+      expect(findMany).toHaveBeenCalledWith({
+        // The same rows `findTranscribedOf` answers, for any meeting: a digest is "current"
+        // by comparing the two, so a row only one of them counts would never look current.
+        where: { status: 'ready', transcriptionStatus: TRANSCRIBED, transcriptKey: { not: null } },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: { id: true, meetingId: true },
+      });
+    });
+  });
+
   describe('claimNext', () => {
     it('answers with the row the statement returned', async () => {
       const claimed = { id: FILE_ID, transcriptionStatus: TRANSCRIBING };

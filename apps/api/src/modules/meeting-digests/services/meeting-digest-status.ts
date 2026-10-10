@@ -10,11 +10,11 @@
  * | Edge                                   | Taken by                                          |
  * | -------------------------------------- | ------------------------------------------------- |
  * | _(none)_, `READY`, `FAILED` → `QUEUED` | `MeetingDigestRepository.request`: a recording    |
- * |                                        | transcribed; `followDelete`, for a digest that    |
- * |                                        | lost a recording while others are left; and       |
- * |                                        | `requestByHand` — Generate and Retry, the one     |
- * |                                        | caller no recording caused, and the one that can  |
- * |                                        | be refused                                        |
+ * |                                        | transcribed; and `followDelete`, for a digest     |
+ * |                                        | that lost a recording while others are left       |
+ * | _(none)_, `READY` → `QUEUED`           | `requestCatchUp`: the boot's, for a digest that   |
+ * |                                        | is owed and that no recording will ask for again  |
+ * | `FAILED` → `QUEUED`                    | `requestRetry`: a person's Retry                  |
  * | `QUEUED` → `GENERATING`                | the claim, which also re-claims a lapsed lease    |
  * | `GENERATING` → `READY`                 | `complete`, the request it was claimed for intact |
  * | `GENERATING` → `FAILED`                | `fail`, likewise                                  |
@@ -29,8 +29,9 @@
  *
  * `request` on a row that is `QUEUED` or `GENERATING` changes no status: it moves the
  * revision, which is what turns the generation under way into "one more after it".
- * `requestByHand` never meets one: it refuses a row in either status, and a `READY` one
- * whose content covers every transcribed recording (`requestabilityOf`).
+ * `requestCatchUp` and `requestRetry` never meet one: both can be refused, and both refuse a
+ * row in either status, and a `READY` one whose content covers every transcribed recording
+ * — and each refuses what is the other's to ask for (`requestabilityFor`).
  *
  * A revision — `ReviseMeetingDigestCommand` — takes none of these edges: it rewrites the
  * summary and the decisions of content that is stored, under whatever status the row has.

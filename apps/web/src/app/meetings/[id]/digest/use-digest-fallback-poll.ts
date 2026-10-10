@@ -53,9 +53,7 @@ export function digestRetryDelayMs(failedFetches: number): number {
  *   is logged and sends nothing — while the file's event has already told this page the
  *   recording is gone. Without the fetch, the words of a deleted recording stayed on the page
  *   until the stream next reconnected, minutes later; the API withholds them from the moment
- *   the delete commits, so asking is all it takes. It is also the only way a page learns that
- *   Generate is on offer for a recording whose request could not be queued. Two requests per
- *   change, not a poll.
+ *   the delete commits, so asking is all it takes. Two requests per change, not a poll.
  *
  *   **It is asked for twice: at once, and an interval later.** The API answers a delete, and
  *   reports a recording transcribed, before it has decided what that does to the digest — so

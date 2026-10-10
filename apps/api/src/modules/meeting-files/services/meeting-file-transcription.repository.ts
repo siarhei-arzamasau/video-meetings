@@ -27,6 +27,15 @@ export interface TranscribedRecordingRecord {
   transcriptKey: string;
 }
 
+/** A transcribed recording and the meeting it belongs to: all a reader across meetings needs. */
+export type TranscribedRecordingOfMeeting = Pick<MeetingFileRecord, 'id' | 'meetingId'>;
+
+/** What makes a row a transcribed recording, for both reads of them: `ready`, so not deleted. */
+const TRANSCRIBED_RECORDING = {
+  status: 'ready',
+  transcriptionStatus: TranscriptionStatus.TRANSCRIBED,
+} as const;
+
 /** A row the transcription worker now owns, with the status it had before the claim. */
 export interface ClaimedTranscription extends MeetingFileRecord {
   /** `QUEUED`, or `TRANSCRIBING` when this claim took over one whose lease had lapsed. */
@@ -176,7 +185,7 @@ export class MeetingFileTranscriptionRepository {
    */
   async findTranscribedOf(meetingId: string): Promise<TranscribedRecordingRecord[]> {
     const rows = await this.prisma.meetingFile.findMany({
-      where: { meetingId, status: 'ready', transcriptionStatus: TranscriptionStatus.TRANSCRIBED },
+      where: { meetingId, ...TRANSCRIBED_RECORDING },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       select: { id: true, uploaderId: true, transcriptKey: true },
     });
@@ -186,6 +195,20 @@ export class MeetingFileTranscriptionRepository {
     return rows.flatMap(({ transcriptKey, ...recording }) =>
       transcriptKey === null ? [] : [{ ...recording, transcriptKey }],
     );
+  }
+
+  /**
+   * Every meeting's transcribed recordings at once, in upload order — `findTranscribedOf`
+   * without the meeting. **The two must count the same rows**: what reads this compares it
+   * with the recordings a digest was built from, which are that one's answer.
+   */
+  findAllTranscribed(): Promise<TranscribedRecordingOfMeeting[]> {
+    return this.prisma.meetingFile.findMany({
+      // No key is no transcript, as it is there: left out by the statement, not after it.
+      where: { ...TRANSCRIBED_RECORDING, transcriptKey: { not: null } },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { id: true, meetingId: true },
+    });
   }
 
   /**

@@ -76,7 +76,7 @@ describe('requestMeetingDigest', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://api.example.com/api/meetings/m1/digest/generation');
     expect(init.method).toBe('POST');
-    // One request serves Generate and Retry: the API decides which it was, so nothing is sent.
+    // There is nothing to choose: the digest is of every transcribed recording, so nothing is sent.
     expect(init.body).toBeUndefined();
     expect(init.headers).toMatchObject({ authorization: 'Bearer a-signed-jwt' });
   });
