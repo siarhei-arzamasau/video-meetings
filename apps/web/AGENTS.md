@@ -716,6 +716,17 @@ has already gone. Assert what caused it instead: `meeting-files-retry.spec.ts` w
 retry's own answer through `page.waitForResponse`, then for the API to list the state the
 worker settled on, then for the page to show that.
 
+**A spec says which row it means: `rowFor` for a file the meeting has, `uploadRowFor` for an
+upload** (`e2e/file-rows.ts`). The Files list draws both, and for a moment after an upload
+both are on the page under one name: the stream delivers the file while the request that
+sent it is still unanswered, and the upload's row goes only with that answer. A locator by
+name alone resolved to two elements for those milliseconds and strict mode failed whatever
+was being asserted — about one run of the suite in four, on whichever spec looked at a row
+straight after an upload. `rowFor` is the row that says who added the file, which only a
+listed file's does. **It is still strict among files**: two listed rows of one name fail a
+spec, as they should, and that is what a `.first()` would have hidden. Do not write another
+locator by name in a spec.
+
 **The Whisper the suite talks to is `e2e/fake-transcriber.mjs`, and a reply belongs to a
 recording, not to "the next request".** It is an OpenAI-shaped endpoint in plain Node that a
 spec tells to hold a recording's answer open, fail it, or answer it with a sentence, through
