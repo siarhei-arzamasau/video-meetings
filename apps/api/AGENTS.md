@@ -19,23 +19,15 @@ pnpm --filter=@repo/api prisma:migrate   # prisma migrate dev
 pnpm --filter=@repo/api prisma:studio
 ```
 
-One thing here is started by another program and never through `pnpm`: the meeting's tools
-as an MCP server on stdio, `node dist/meeting-tools-stdio.main.js <meeting-id>` from this
-directory, after a build (_Meeting tools_, below, has why there is no script for it).
-
 ## Layout
 
 ```
 src/
   main.ts               Process bootstrap: create app, configureApp, shutdown hooks, listen
-  meeting-tools-stdio.main.ts
-                        A second process, not part of the API's: the meeting's tools as an
-                        MCP server on stdio, started by its client as a subprocess
   configure-app.ts      Every global that shapes request handling
   app.module.ts         Root module — register new feature modules here
   config/               Environment contract
-  common/               Cross-cutting: the exception filter, logging/ for the request log
-                        and for a logger that keeps off stdout,
+  common/               Cross-cutting: the exception filter, logging/ for the request log,
                         shutdown/ for what the process does with its connections when it
                         is stopped, and processing/ for what every polling worker shares
   modules/<feature>/    One directory per feature: module, controller, specs, and
@@ -217,6 +209,19 @@ Two rules keep it honest, and no type enforces either:
   address; a password change knows the token's subject and nothing else. Asking by email there
   would mean auth holding a user's address in order to verify their password.
 
+**Verifying a token is a module of its own, `AccessTokenModule`, inside `auth`.** It holds
+the one `JwtModule` registration — the key and the pinned algorithm — and
+`AccessTokenVerifier`, whose `subjectOf(token)` is the whole of how a token is verified and
+answers `null` for one that is not — one with no expiry included, which the library would
+accept and this API never issues. Two guards turn that into a 401, both reading the header
+with the one `bearerTokenOf` (`bearer-token.ts`): `JwtAuthGuard`, which goes on to load the
+user, and `McpAuthGuard` on `/api/mcp`, which does not. `AuthModule` imports the module and
+exports it with its guard, because a guard is instantiated in the module that uses it and
+injects the verifier there. **A token's lifetime is set by `TokenService` as it signs, not
+in the `JwtModule` registration**, so that the verifying half asks for `JWT_SECRET` and
+nothing else. **`McpModule` is what imports the module without `AuthModule`**: its guard
+verifies and reads no user, so it takes the verifying half alone.
+
 `GET /me` reaches no handler of its own: `JwtAuthGuard` dispatches `FindUserByIdQuery` while
 authenticating and `@CurrentUser` returns what it attached — one query per authenticated
 request, in the guard, where the lookup already was.
@@ -388,6 +393,13 @@ every file route and twice per chunk, and a participants join there buys nothing
 only for a field a file route actually decides with. `MeetingFilesModule` does not import
 `MeetingsModule`, and `MeetingsController.findOne` still reads from `MeetingsService` — two
 reads sharing one `visibleTo` is the accepted price of the in-module read staying off the bus.
+
+**The two handlers that answer across this boundary are `MeetingQueriesModule`**
+(`meeting-queries.module.ts`), which `MeetingsModule` imports: `FindVisibleMeetingHandler`
+and `FindMeetingMemberIdsHandler`, apart from the controller and from `AuthModule`. Every
+handler still lands on the one set of buses. It was split out for the stdio MCP server
+that has since been removed, and nothing imports it alone today; a third handler that
+crosses out of `meetings` goes there too.
 
 ### The third boundary — what meeting-digests asks of the others
 
@@ -1268,8 +1280,10 @@ What a reader of the code would get wrong:
   or is discarded for a recording deleted meanwhile has still written what it wrote — and
   the generation that replaces it finds those tasks and updates them. **Nothing takes a
   task back**: one made from a recording that is later deleted stays. The digest's rule
-  about deleted recordings does not cover tasks, and no route serves a task yet; the route
-  that does has that to decide.
+  about deleted recordings does not cover tasks. **That is no longer only a row nobody
+  reads**: `TaskTools` serves a meeting's tasks to its members over MCP, a deleted
+  recording's among them, and whether a task should leave with its recording is still
+  undecided.
 - **`update_meeting` is allowed in the run, and it is the one tool that can break a rule
   here.** A revision writes at once, before the answer is checked against its recordings,
   and outlives the run that made it: one that then fails leaves a summary no generation
@@ -1529,32 +1543,75 @@ What a reader of the code would get wrong:
 ## Tasks (`src/modules/tasks`)
 
 A task is one thing to be done that came out of a meeting, stored as a record of its own:
-`tasks`, with a title, the meeting it came from, and a status. **It is not a digest's action
-item and nothing links the two** — `meeting_digest_action_items` are replaced whole by every
-generation that succeeds, which is exactly why they cannot carry a status, and they are
-still what the digest stores and serves. **A task has no assignee, on purpose**; an action
-item's owner is not one.
+`tasks`, with a title, the meeting it came from, an owner, and a status. **It is not a
+digest's action item and nothing links the two** — `meeting_digest_action_items` are
+replaced whole by every generation that succeeds, which is exactly why they cannot carry a
+status, and they are still what the digest stores and serves.
+
+**A task has an owner, `ownerId`, and it is an access rule, not an assignee.** It is the
+user an MCP client wrote the task as, and nobody else's client reads or changes it.
+**Null is a task nobody owns, which makes it the meeting's**: what a digest's generation
+writes, since a run answers no user, and every task older than the column. **One rule says
+what a reader may see, stated in each read of `TaskService`: the tasks nobody owns, and
+their own.** A member's client reads the meeting's tasks beside the member's and cannot
+change one — a write is always as its requester, so the same title becomes a task of the
+member's own beside the digest's. A digest's run reads as no user, so it sees the meeting's
+tasks and never a member's: what a run finds can end up in a digest every member reads.
+**The cost is twins**: a run does not know a member already tracks something, and writes
+the meeting's task of it anyway. A user's tasks go with their account
+(`onDelete: Cascade`); `SetNull` would hand them to the whole meeting and fail the delete
+wherever it already had a task nobody owns under that title.
 
 The module is `TaskService` and nothing else: no controller and no command. It exports the
-service for the two modules that hand it to an agent as tools — `meeting-tools`, which
-offers both methods to a digest's run, and that module's stdio twin, which offers the
-search to a client outside the process; no route reaches a task.
+service for `meeting-tools`, which offers the search and the upsert to a digest's run as
+tools. It also provides `TaskTools` (`mcp/`), the domain's registrar, which offers all four
+methods to a signed-in user's MCP client as tools and resources, at `/api/mcp` — exported to nobody, since a server reaches it through the registry. No REST
+route reaches a task.
 
-- **`upsert` is keyed on the meeting and the title**, as given: the model's one `@@unique`
-  is the `ON CONFLICT` target. A reworded title is therefore another task, and the caller
-  normalises a title before it gets here, as a DTO does for everything else. A status that
-  is not passed is not written, so stating a task again does not reopen it.
+- **`upsert` is keyed on the meeting, the owner, and the title**, as given: the model's one
+  `@@unique` is the `ON CONFLICT` target. A reworded title is therefore another task, and
+  so is the same title for another owner — which is what keeps an upsert out of a task
+  that is not its owner's. The caller normalises a title before it gets here, as a DTO
+  does for everything else. A status that is not passed is not written, so stating a task
+  again does not reopen it. **The owner is who the caller is answering, never an
+  argument**: one a caller could name would be a write to that user's task.
+- **That index is `NULLS NOT DISTINCT`, written into the migration by hand.** Prisma has
+  no word for it, and `schema.prisma` says only `@@unique`. Without it a null owner
+  conflicts with nothing, so every upsert of a task nobody owns inserts another; with it
+  one `ON CONFLICT` serves both kinds. `prisma migrate diff` sees no difference either
+  way, so a database built from the schema alone is quietly wrong —
+  `test/task-owners.e2e-spec.ts` and the concurrent upsert in `tasks.e2e-spec.ts` are what
+  would say so. PostgreSQL 15 or later.
+- **An owner has at most `MAX_TASKS_PER_OWNER` tasks in a meeting, and nobody counts as
+  one owner.** A task cannot be deleted and a member's client can write as fast as it can
+  send, so without it one loop fills the table and the index every search reads. The
+  count is in the upsert's own statement — `INSERT ... SELECT ... WHERE` — so a task that
+  is new and one too many is never selected to insert, while one that exists still
+  reaches the conflict and is updated. No row back is therefore exactly that case, and
+  `upsert` throws `TaskLimitReachedError`, which each tool answers as a refusal in its own
+  words and does not log. **It is a bound to within a few**: the count and the insert are
+  one statement and not one lock, so simultaneous writes can each pass under it.
+  `/api/mcp` has no rate limit beside it, as no route but the credential ones has.
 - **`search` is trigram similarity, not a substring match**: `pg_trgm`'s `%` over the whole
   title or `<%` over a stretch of it, at Postgres' default thresholds, best first, at most
-  `TASK_SEARCH_LIMIT`. **It searches every task, whoever asks.** A route that answers with
-  it has to narrow it to the meetings the caller can see first — `visibleTo` in `meetings`
-  is that rule.
+  `TASK_SEARCH_LIMIT`. **It takes a meeting and a reader, both required, and there is no
+  search of everything.** They were optional once, and a caller that left one out
+  searched every meeting's tasks or every user's while still compiling; now forgetting is
+  a type error. `readerId: null` is a reader who is no user — a digest's run.
 - **A title's bounds, `MIN_TASK_TITLE_LENGTH` and `MAX_TASK_TITLE_LENGTH`, are the
   caller's to enforce**, like its trimming. The first is what tells a task from a fragment.
-  The second is there because the title is half of a unique index, and PostgreSQL refuses
+  The second is there because the title is part of a unique index, and PostgreSQL refuses
   an entry past a third of a page.
-- **Both are raw SQL, so the unit spec shows only what they are given.** What they match and
-  write is `test/tasks.e2e-spec.ts`, which CI does not run.
+- **`open` and `get` are the two plain reads, through the client**: the tasks of a
+  meeting a reader may see that are still `OPEN`, the oldest first, at most
+  `OPEN_TASKS_LIMIT` — a bound of its own because the list is one answer —
+  and one task by its id, `null` for none. **`get` answers whichever meeting the task came
+  out of and whoever owns it**: an id says which task to look for and is no permission to
+  see it, so a caller that answers a user checks `sourceMeetingId` and `ownerId` on the
+  task it read before it answers, and hands it a UUID — the column is one, and the client
+  raises on anything else.
+- **`search` and `upsert` are raw SQL, so the unit spec shows only what they are given.** What they match and
+  write is `test/tasks.e2e-spec.ts`, and whose task is whose `test/task-owners.e2e-spec.ts`.
 - **`pg_trgm` is created by the migration, by hand.** Prisma does not manage extensions
   here, so nothing in `schema.prisma` says the trigram index needs one, and a database built
   any other way than by the migrations has no `gin_trgm_ops`. It also depends on the
@@ -1570,7 +1627,9 @@ are `TaskService`'s two methods, and `update_meeting`, which is the digest's rev
 shape, and the three are gathered with `createSdkMcpServer`.
 
 - **A server is made for one meeting, and its tools reach no other.** `createServer`
-  takes the meeting's id. `find_tasks` searches that meeting's tasks, and the two that
+  takes the meeting's id. `find_tasks` searches that meeting's tasks as no user — the
+  ones nobody owns, which such runs write, and never a member's own, since what a run
+  finds can end up in a digest every member reads — and the two that
   write refuse any other id with an error — in the handlers, whatever a run's instructions
   say. The ids are arguments, so the model chooses them, and what the model reads is what
   people said: without this a transcript naming another meeting could write there, and
@@ -1599,69 +1658,216 @@ shape, and the three are gathered with `createSdkMcpServer`.
   `createSdkMcpServer` run only in `test:live`**, where the real model calls the real
   server over a `TaskService` held in memory.
 
-**Over stdio — `stdio/` and `src/meeting-tools-stdio.main.ts`**
+**What an MCP server offers — `src/modules/mcp-registry`, and a registrar per domain**
 
-The same tools as an MCP server of its own, for a client that is not this process: built
-with `@modelcontextprotocol/sdk` — `McpServer`, one tool registered with `registerTool`
-over its Zod shape, the stdio transport — and started by its client as a subprocess,
-`node dist/meeting-tools-stdio.main.js <meeting-id>`. Today it serves `find_tasks` and
-nothing else.
+No file lists the tools an MCP server offers. Each domain has a registrar of its own — a
+provider implementing `McpToolRegistrar`, whose `register(server, scope)` puts that domain's
+tools and resources on an `McpServer` — and adds it to `McpToolRegistry` in its own
+`onModuleInit`. A server calls `registry.registerAll(server, scope)` and offers whatever is
+there. Tasks is the first and so far the only domain: `TaskTools`
+(`src/modules/tasks/mcp`), provided by `TasksModule`, which registers `find_tasks`,
+`upsert_task`, `tasks://open`, `task://{taskId}`, and two prompts. One server reads the
+registry: the HTTP one (_MCP over HTTP_, below).
 
-- **The tool is the in-process server's, not a second one like it.** Its name, description,
-  shape, and behaviour are `FIND_TASKS_TOOL` and `findTasksOf` (`find-tasks.tool.ts`), which
-  `MeetingTools` hands a digest's run as well; what differs is only which SDK serves it. A
-  tool added to the stdio server is described the same way, in a file both servers read —
-  and **`upsert_task` and `update_meeting` are not there on purpose**: they write, and who
-  may start a process that writes to a meeting is a decision nobody has made yet.
-- **A process is started for one meeting, named on its command line, and reaches no other**
-  — the in-process server's rule, for its reason: the meeting is not an argument of the
-  tool, so nothing a model sends can widen the search. An id that is missing or is not a
-  UUID is a usage line on stderr and exit code 1, before anything connects to the database.
-- **stdout belongs to the protocol, and that is why nothing starts it through `pnpm`.**
-  Every frame is a line of JSON there, so one stray line ends the session: the process's
-  logger is `StderrLogger` (`src/common/logging`) because Nest's own writes everything but
-  errors to stdout, and there is no package script because `pnpm run` echoes the command it
-  runs on stdout before the server has said a word. Anything added to that process logs
-  through the logger, and nothing in it may write to `process.stdout`.
-- **It is not `AppModule`, and its environment is not held to the API's contract.**
-  `MeetingToolsStdioModule` is the config files, the database, and `TasksModule` — no HTTP,
-  no worker, no Claude: importing `MeetingToolsModule` instead would bring the toolkit
-  loader and the command bus into a process that only searches. It reads `.env.local` and
-  `.env` **from its working directory**, so a client starts it in `apps/api` or hands it
-  `DATABASE_URL`, the one variable it needs; `PrismaService` refuses to start without it.
-  The contract in `env.validation.ts` would refuse over a signing key this process never
-  touches.
-- **Whoever can start it already has the database.** It authenticates nobody: it is a local
-  subprocess holding `DATABASE_URL`, an operator's tool. Put behind a transport that takes
-  connections, it would be `TaskService.search` answering anybody — which is the thing that
-  module's guide says to narrow by `visibleTo` first.
-- **It ends when its client does, and the transport does not see to that.** The SDK's stdio
-  transport listens for data on stdin and not for its end, so a client that closed the pipe
-  left a process holding a database connection for good. The entry point closes the server
-  and then the application when stdin ends, or on either signal — and exits because nothing
-  is left listening, not because it was told to. **The server's own close is a fourth way
-  in, and it is why closing is a flag set first**: a frame too large to be one makes the
-  transport close itself and stop reading stdin, after which the pipe's end is never seen;
-  and `server.close()` reports the close it has just made to that same callback before it
-  returns, so anything less than a flag closes the application twice.
-- **What the tool answers with is what people said in a meeting, and its reader may hold
+- **Adding a domain's tools is that domain's module, plus one import.** A registrar class,
+  in the domain's `providers`, with `McpRegistryModule` in its `imports`; and the domain
+  module added to the `imports` of the module that builds the server, `McpModule`.
+- **That import is for order, not for a provider, and it is the trap.** Nest runs
+  `onModuleInit` module by module, the deepest in the import tree first (a module imported
+  from two places counts at its deeper one). `McpService` reads the registry in its own
+  `onModuleInit`; imported by `McpModule`, a domain module is deeper and has added its
+  registrar by then. Merely listed beside it in `AppModule`, the two are at one depth and
+  the order is the order written. **The registry does not let that go wrong quietly**: the
+  first `registerAll` closes it, and a registrar added afterwards is an error at boot that
+  names the class — not a tool missing from every server. `mcp-tool-registry.spec.ts` holds
+  both halves against real Nest modules.
+- **What a server offers is decided by its module's imports.** A registrar exists only
+  where its module was loaded, so a second server, in a process of its own, would offer the
+  domains its own tree brings in and no others.
+- **A registrar registers for a scope and decides nothing about who may call**
+  (`mcp-scope.ts`): the one meeting the server serves, and `admit`, a gate asked before
+  every call and every read that answers who is asking or the sentence they are refused
+  with. Whoever builds the server writes the gate; what the registrar owes is to ask it
+  first, through `admissionOf`, which lets in only an answer that names a requester —
+  never one that merely carries no refusal — and treats a gate that threw as one that let
+  nobody in. A registrar that skips it has published its domain.
+- **`register` runs once per server, and a server may live for one request**, so a
+  registrar keeps nothing of a server between calls.
+- **The registry is its own directory because of who imports whom.** Domain modules import
+  `McpRegistryModule`; the modules that build servers import the domain modules. In either
+  of those directories it would be a cycle between two of them. For the same reason the
+  task tools' definitions (`find-tasks.tool.ts`, `upsert-task.tool.ts`) live with the
+  domain: `meeting-tools` imports them for a digest's run, never the other way, and
+  `MeetingToolName` takes its two task names from `TaskToolName`.
+- **Nothing in `TaskTools` is a second copy of the service.** Each tool and resource ends
+  in one `TaskService` method; what the registrar adds is the shape a client sees, the
+  scope's meeting, and the wording of a failure.
+
+**What the tasks domain registers — `src/modules/tasks/mcp`**
+
+`TaskTools` is one user's task manager for one meeting: everything that reads or writes is
+`TaskService`'s, and nothing of the meeting itself — its title, its files, its digest — is
+served.
+
+- **Every handler is handed the requester, and answers with what that user may see.**
+  The gate's answer names who was let in (`admissionOf`), and `call` and `read` pass it
+  on: `find_tasks` and `tasks://open` read as the requester — their own tasks and the
+  meeting's — `upsert_task` writes a task as theirs, `task://{taskId}` refuses another
+  user's. It is `req.requester` — the token's subject, set by `McpAuthGuard` — and
+  nothing a client sent: **an id among the arguments says what to look for, never who
+  may see it**, and no shape has a field for an owner at all. Two members of one meeting
+  therefore share a URL, the meeting's tasks, and none of each other's;
+  `test/mcp-task-owners.e2e-spec.ts` is that, with a client each.
+- **What a client's model reads is another member's words, and everything it reads them
+  through says so.** A task nobody owns is what a digest's run made of a recording, and a
+  recording is whatever its uploader said — so its title reaches every member's client,
+  which may hold a shell. Two things answer that, both in `task-tool-parts.ts`:
+  `TITLES_ARE_DATA`, the sentence that a title is data and never an instruction, which is
+  in the description of `find_tasks` and of both resources as well as in the prompts,
+  because a client need not use a prompt; and `taskSeenBy`, which answers every task with
+  `mine` — false for the meeting's — so a client can tell what its user wrote from what
+  somebody else's words became. Neither makes a client obey; nothing here can. A digest's
+  run is answered with plain `taskOf` and no `mine`: nothing is a run's own.
+- **`find_tasks` is the in-process server's tool, not a second one like it.** Its name,
+  shape, and behaviour are `FIND_TASKS_TOOL` and `findTasksOf` (`find-tasks.tool.ts`),
+  which `MeetingTools` hands a digest's run as well. What differs is which SDK serves it
+  and who reads — said every time, `TasksSearched.readerId` having no default: the
+  requester here, under a description of this server's own (`OWN_TASKS_DESCRIPTION`),
+  and no user for a run.
+- **`upsert_task` is the same service under a shape of its own** (`upsert-task.tool.ts`): a
+  title and an optional status, and **no meeting and no owner among its arguments**. A
+  digest's run is given the meeting's id and passes it back, checked; an MCP client was
+  never given one, the meeting it writes to is the server's scope, and the owner it
+  writes as is its requester. What the two shapes share is
+  `taskTitleInput` and `taskStatusInput`, so they cannot come to disagree about what a
+  title or a status is, and both end in `TaskService.upsert`. It carries
+  `readOnlyHint: false`, said rather than left to the default, beside `find_tasks`'s
+  `true`: a client that decides what to ask its user about reads them.
+- **The resources are `tasks://open` and `task://{taskId}`**, both `application/json`:
+  `TaskService.open` for the requester in the scope's meeting at a fixed address, and
+  `TaskService.get` behind a `ResourceTemplate` whose `list` is `undefined` — said on
+  purpose: a task is found by search and then read by its id, and the template lists
+  nothing. **A task is answered only when it came out of the scope's meeting and is the
+  requester's or nobody's**, both read off the task after it was loaded. The id is its reader's to
+  choose, so without the first check an id from anywhere reads a task of a meeting its
+  reader cannot see; an id that is not a UUID, one no task has, and another meeting's task
+  are one error, as they are one 404 on a route.
+- **A task of the meeting that is another user's is refused with code 403.** JSON-RPC has no code for "forbidden" and MCP adds none, so it is HTTP's number in
+  the message's `error` — the response itself is a 200, as for every message the transport
+  could parse. **It is told apart from "no such task" only inside a meeting the requester
+  is in**: there the id of another member's task is confirmed to exist, which was asked
+  for; another meeting's task still cannot be told from none.
+- **A resource that cannot be read is an error of that file's own wording**, as a tool's
+  is: the SDK hands a thrown error's message to the client as it is, so a refusal, a
+  missing task, somebody else's task, and a failed read are each an `McpError` made there,
+  and the cause is the log's.
+- **The prompts are `meeting_overview` and `meeting_topic`** (`task-prompts.ts`):
+  instructions for the client's model to collect what the tasks its user can see say, as a whole
+  or about one topic, from this domain's own resources and tools. Each ends by telling the
+  model to change nothing and to read task titles as data, since the server cannot make a
+  client do either. **A prompt is text and carries no data** — no task, not the meeting's
+  id — which is why the prompts alone do not ask the scope's gate. One that quoted a task
+  would have to.
+- **`update_meeting` is not offered, on purpose.** These keep tasks; rewriting a meeting's
+  summary and decisions from outside the API is a decision nobody has made.
+- **What a tool answers with is what people said in a meeting, and its reader may hold
   more than the digest's model does.** A task's title is text a run's model took from a
-  transcript, stored as given. In this process's twin that text is read by a Claude with no
-  tool that touches its host; over stdio it is read by whatever client the operator
-  configured, which may hold a shell. The answer is data — the README says so to whoever
-  wires the server up — and nothing here can make a client treat it as that.
+  transcript — or text a member's own client wrote through `upsert_task` — stored as
+  given, and read back by the next digest's run through `find_tasks` like any other. In a
+  digest's run that text is read by a Claude with no tool that touches its host; over MCP
+  it is read by whatever client its user configured, which may hold a shell. The answer is
+  data — the README says so to whoever wires a client up — and nothing here can make a
+  client treat it as that.
+- **Four unit specs, by what they hold.** `task-tools.spec.ts` is the registrar: that it
+  is in the registry once its module has started, that one pass puts everything on a
+  server, and that the gate is in front of all of it. `task-tools.tools.spec.ts`,
+  `task-tools.resources.spec.ts`, and `task-prompts.spec.ts` are what each does in detail.
+  All four join a real MCP client to a real `McpServer` in memory
+  (`task-tools.fixture.ts`), over a faked `TaskService` and a gate of the spec's own.
+
+**MCP over HTTP — `src/modules/mcp`**
+
+The same registry behind a route: `/api/mcp?meetingId=<id>`, an MCP server over
+Streamable HTTP for a client that is configured with a URL instead of a command. Written
+against the SDK by hand — `McpService` builds an `McpServer` and a
+`StreamableHTTPServerTransport`, `McpController` hands the request to
+`transport.handleRequest(req, res, req.body)` — with no Nest wrapper between them.
+
+- **`McpService.onModuleInit` goes through the registry once, on a server it throws
+  away.** It names no tool and no domain. The rehearsal is what closes the registry (so a
+  late registrar fails the boot), where two domains claiming one tool name fail — as the
+  process starts, not on somebody's first request — and where the log says whose tools the
+  server offers. It is registered for a scope that lets nobody in.
+- **A server and a transport are made per request, not once in `onModuleInit`.** The
+  transport is sessionless (`sessionIdGenerator: undefined`) and answers in JSON
+  (`enableJsonResponse: true`). Without sessions it cannot tell two clients apart, so two
+  of them using one JSON-RPC id would be answered with each other's results; the SDK
+  therefore throws on a second request to a sessionless transport, and refuses to connect
+  a server that is already connected. One of each for the process answers exactly one
+  request. `mcp.service.spec.ts` pins that against the SDK itself, so the day it is allowed
+  again a spec says so.
+- **The route is behind a guard of its own, `McpAuthGuard`, which verifies the token every
+  other route takes and reads no user.** It is `AccessTokenVerifier` again — the API's own
+  key, no second issuer — and what it leaves on the request is `req.requester = { userId }`
+  from the token's claims, which `@Requester()` hands the controller and the controller
+  hands on as the registrars' requester. `JwtAuthGuard` would also load the account, for a
+  `User` nothing here uses. **So a token that has outlived its account passes this guard,
+  and is a 404 rather than a 401**: it opens nothing, because a participant's rows go with
+  the account and a host's account cannot be deleted while it has a meeting — but a rule
+  that must hold for an account that is gone cannot rest on this guard alone.
+- **The server is made only for a meeting its
+  caller can see** — `FindVisibleMeetingQuery`, one 404 for a stranger and for a meeting
+  that does not exist, as on every route. That check, made as the request's server is
+  built, is the gate every registrar is registered behind: a sessionless request is one
+  exchange, so "before the server exists" is before every call and read it can carry. The
+  module was first built open, with nothing registered; the tools went on only together
+  with the guard, and anything else registered here goes behind the same check.
+- **The meeting is in the URL, never among a tool's arguments**: fixed by whoever
+  configured the client, out of reach of whatever a model sends. Tasks are registered for the id the row holds, not the
+  URL's spelling of it: a task is matched to its meeting as text.
+- **Only `POST` reaches the transport; `GET` and `DELETE` are a 405.** In Streamable HTTP a
+  `GET` opens a stream for what the server sends unasked and `DELETE` ends a session. This
+  server has neither, so a `GET` handed on would be a response held open for nothing — one
+  more long-lived connection for a shutdown to wait on, like a files stream. A client
+  reads the 405 as "no stream here" and carries on.
+- **One message per request: a body that is an array is a 400, before any transport is
+  made.** A batch can hold a request and the notification that cancels it; the SDK then
+  answers neither, and in JSON mode the response waits for an answer to every request in
+  the body. Nothing ends it — Node has no timeout on a pending response, and closing the
+  transport does not settle it — so it stays until the client hangs up, with a shutdown
+  waiting behind it: `ConnectionDrainService` does not cut a response in flight. A batch
+  is also up to a hundred tool calls behind one guard pass. The protocol dropped batches
+  in 2025-06-18 and the SDK's client never sends one. **Nothing else here bounds how long
+  a response may take**; a deadline that ends the response itself is the thing to add if
+  another way to leave one pending is ever found.
+- **The body is the one Nest's JSON parser already read**, passed as `handleRequest`'s third
+  argument: by the time the handler runs the request's stream is spent, and a transport
+  left to read it would wait for ever.
+- **`@Res` without passthrough, on purpose**: the transport writes the response, and Nest
+  must send nothing after it. The transport goes when the response closes — sent, or
+  abandoned by a client that hung up.
 - **This SDK is imported at the top of a file, and the Claude Agent SDK still is not.**
   `@modelcontextprotocol/sdk` ships a CommonJS build beside its ESM one, which Node, Nest's
-  build, and Jest all load directly. It is a direct dependency, though the Agent SDK already
-  brought it in, because pnpm's strict layout lets a package import only what it declares —
-  and it is pinned to the version the Agent SDK resolves, so the two share one copy and one
-  `CallToolResult`. Bump them together.
-- **Two specs, for two different things.** `stdio/meeting-tools-stdio.server.spec.ts` joins
-  a real MCP client to the real `McpServer` in memory: what is listed, what a call does,
-  what is refused. `test/meeting-tools-stdio.e2e-spec.ts` starts the entry point as a
-  subprocess — through `ts-node`, so no build has to exist — and is the only place that can
-  show stdout carrying nothing but frames, the meeting on the command line being the one
-  searched, and the process ending by itself when the pipe closes.
+  build, and Jest all load directly. It is a direct dependency, though the Agent SDK
+  already brought it in, because pnpm's strict layout lets a package import only what it
+  declares — and it is pinned to the version the Agent SDK resolves, so the two share one
+  copy and one `CallToolResult`. Bump them together.
+- **There was a second server, over stdio, and it has been removed.** It was the first
+  one built: a process of its own, started by its client as a subprocess with the meeting
+  on its command line and the user's token in its environment. The HTTP route does what it
+  did, in the process that is already running, on the token every other route takes.
+  What it left behind is the two narrow modules it was the reason for (`AccessTokenModule`,
+  which `McpModule` now imports alone, and `MeetingQueriesModule`) and the verifier's
+  refusal of a token with no expiry.
+- **Three unit specs and two e2e specs.** The e2e specs drive the route with the SDK's own
+  HTTP client the way a client is configured — the URL and a bearer token
+  (`test/utils/mcp-client.ts`). `test/mcp-server.e2e-spec.ts` is the server as its client
+  meets it: the tools, the resources, and the prompts against a real database, and who is
+  answered at all — the host and a participant, and not a stranger, a forged or expired
+  token, no token, a participant removed while their client is connected, or a token whose
+  account is gone.
+  `test/mcp-http.e2e-spec.ts` is the transport under it: a second and a concurrent client,
+  the methods it takes, a URL with no meeting, a batch.
 
 **The hooks — `meeting-hooks.ts`**
 
@@ -1794,6 +2000,11 @@ settings are `TranscriptionEnvironmentVariables` in `env.validation.transcriptio
 parent's decorators. That is a file-size split, not a second contract: a new variable goes
 where its feature's are, and a third feature's would extend the chain.
 
+**`env-contract.ts` holds what a contract is checked with**: `checkedAgainst`, which
+validates a class and words the refusal, and `IsJwtSecret`, the signing key's rule under
+one name. They are apart from `env.validation.ts` since there was once a second contract —
+the stdio MCP server's — and folding them back would bring that file to its size limit.
+
 **A rule the contract cannot express with a type is still the contract's job.** `JWT_SECRET`
 is rejected when it is one of the placeholders this repository has published, not only when it
 is too short: the old compose default was 44 characters, so the length rule passed it and a
@@ -1825,6 +2036,16 @@ already in `process.env`, which is what lets the root `pnpm dev` decide `PORT` �
   stops the stack before an API boots on a schema it does not match. An image started any
   other way needs it run first — `node_modules/.bin/prisma migrate deploy` in
   `/repo/apps/api`.
+- **`20261010120000_add_task_owner` is not backward compatible, and could not be made
+  so.** The build before it upserts with `ON CONFLICT (source_meeting_id, title)`, which
+  needs the unique index that migration drops — and the index cannot stay, because it is
+  exactly what forbids two owners one title. So it goes out with the build that names the
+  new index, the API stopped while it runs, which is what every way of starting it above
+  already does. **A build rolled back past it fails every task upsert** (a digest's run is
+  answered "could not be saved" and carries on) until the old index is put back by hand,
+  which needs every meeting's titles to be unique again first. The file itself says none
+  of this: a migration that has been applied is not edited, since `migrate dev` reads a
+  changed checksum as a reason to reset the database.
 - The `datasource` block has **no `url`**. The CLI reads the connection string from
   `prisma.config.ts`; the runtime client receives it through the `PrismaPg` driver adapter
   constructed in `PrismaService`.

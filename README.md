@@ -213,27 +213,39 @@ not there yet — answers 409, and so does every digest while the flag is off.
 - **`docker compose` does not pass these two variables to its `api` service**: the digest is
   set up for an API run with `pnpm dev`.
 
-### Meeting tools over MCP (optional)
+### Meeting tasks over MCP
 
-The API can also serve a meeting's tasks to an MCP client — Claude Code, Claude Desktop, or
-any other — as a server on the stdio transport, started by the client as a subprocess. It
-has one tool, `find_tasks`, which finds the tasks of one meeting whose title is similar to a
-text; the meeting is fixed when the process starts.
+The running API serves the tasks of a meeting to an MCP client — Claude Code, Claude
+Desktop, or any other — at `/api/mcp?meetingId=<meeting-id>` (Streamable HTTP, stateless,
+JSON responses). There is nothing to start beside the API.
+
+| Kind     | Name               | Does                                                                        |
+| -------- | ------------------ | --------------------------------------------------------------------------- |
+| Tool     | `find_tasks`       | Finds the tasks you can see whose title is similar to a text (read-only)    |
+| Tool     | `upsert_task`      | Creates a task of yours, or updates the status of yours with the same title |
+| Resource | `tasks://open`     | The tasks you can see that are still open, as JSON                          |
+| Resource | `task://{taskId}`  | One task by its id, as JSON; another user's is an error, code 403           |
+| Prompt   | `meeting_overview` | Gathers what is still to do in the meeting and what is finished             |
+| Prompt   | `meeting_topic`    | Gathers what the tasks you can see say about one topic                      |
+
+**The server answers only a user who can see the meeting** — its host or one of its
+participants. **What each of them can see is their own tasks and the meeting's**: a task
+belongs to the user whose client wrote it, and no other member's client reads or changes
+it; a task the meeting's digest wrote belongs to nobody, and every member reads it. Each
+task is answered with `mine`, which says which of the two it is. One
+user keeps at most 500 tasks in a meeting. The meeting is in the URL, and the client sends
+the `accessToken` that `POST /api/auth/login` responds with as
+`Authorization: Bearer <access-token>`. In Claude Code:
 
 ```bash
-pnpm build
-cd apps/api
-node dist/meeting-tools-stdio.main.js <meeting-id>
+claude mcp add --transport http meeting-tasks "http://localhost:3001/api/mcp?meetingId=<meeting-id>" --header "Authorization: Bearer <access-token>"
 ```
 
-An MCP client's configuration names that command, with `apps/api` as its working directory
-so the server finds `DATABASE_URL` in the env files there — or with `DATABASE_URL` in its
-environment. **Start it with `node`, not through `pnpm`**: the protocol is spoken over
-stdout, and `pnpm run` writes a line of its own there first. The server authenticates
-nobody; whoever can start it already holds the database's connection string. **What it
-answers with is text taken from meetings** — a task's title is whatever was said — so a
-client that can also run commands or edit files should treat the answer as data, never as
-instructions.
+A request without a valid token is a 401, and a meeting the user is not in is a 404. The
+token expires (`JWT_EXPIRES_IN_SECONDS`, an hour by default); after that every request is a
+401 until the client is given a new one. **What the server answers with is text taken from
+meetings** — a task's title is whatever was said — so a client that can also run commands
+or edit files should treat the answer as data, never as instructions.
 
 ## Scripts
 

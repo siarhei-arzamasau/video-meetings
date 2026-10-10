@@ -24,8 +24,9 @@ rather than mirror the input language.
 
 `apps/api` owns email-and-password authentication, meetings, meeting files, meeting
 digests, and tasks — a table and a service, with no route, kept by the digest's generation
-through three tools it hands Claude, one of which a second entry point also serves to an
-outside client as an MCP server on stdio; `apps/web` is its client. Two things are worth
+through three tools it hands Claude. Tasks are also served to an outside MCP client, over
+HTTP at `/api/mcp`: to a user whose access token says they may see the meeting, and only
+the tasks that user owns or nobody does; `apps/web` is its client. Two things are worth
 knowing before reading either: **pages are gated on the client**, because the token lives in
 `localStorage` where neither the server nor middleware can read it, and **`meeting-files` is
 the largest module** — CQRS over local-disk storage with two in-process workers. Each app

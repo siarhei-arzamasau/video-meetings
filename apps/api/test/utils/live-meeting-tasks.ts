@@ -3,7 +3,7 @@ import type { UpsertTaskInput } from '../../src/modules/tasks/services/task.serv
 
 export interface LiveTaskCall {
   method: 'search' | 'upsert';
-  meetingId: string | undefined;
+  meetingId: string;
   /** The query of a search, or the title of an upsert. */
   text: string;
 }
@@ -30,7 +30,8 @@ export class LiveMeetingTasks {
   readonly calls: LiveTaskCall[] = [];
   private readonly tasks: Task[] = [];
 
-  search(query: string, sourceMeetingId?: string): Promise<Task[]> {
+  /** As a digest's run searches: one meeting's tasks, and of those the ones nobody owns. */
+  search(query: string, sourceMeetingId: string, readerId: string | null): Promise<Task[]> {
     this.calls.push({ method: 'search', meetingId: sourceMeetingId, text: query });
     const wanted = wordsOf(query);
 
@@ -38,17 +39,20 @@ export class LiveMeetingTasks {
       this.tasks.filter((task) => {
         const held = wordsOf(task.title);
         const shared = [...wanted].filter((word) => held.has(word)).length;
-        const ofMeeting = sourceMeetingId === undefined || task.sourceMeetingId === sourceMeetingId;
+        const ofMeeting = task.sourceMeetingId === sourceMeetingId;
+        const visible = task.ownerId === null || task.ownerId === readerId;
 
-        return ofMeeting && shared > 0 && shared * 2 >= Math.min(wanted.size, held.size);
+        return ofMeeting && visible && shared > 0 && shared * 2 >= Math.min(wanted.size, held.size);
       }),
     );
   }
 
-  upsert({ title, sourceMeetingId, status }: UpsertTaskInput): Promise<Task> {
+  upsert({ title, sourceMeetingId, ownerId, status }: UpsertTaskInput): Promise<Task> {
     this.calls.push({ method: 'upsert', meetingId: sourceMeetingId, text: title });
+    const owner = ownerId ?? null;
     const existing = this.tasks.find(
-      (task) => task.sourceMeetingId === sourceMeetingId && task.title === title,
+      (task) =>
+        task.sourceMeetingId === sourceMeetingId && task.ownerId === owner && task.title === title,
     );
 
     if (existing !== undefined) {
@@ -61,6 +65,7 @@ export class LiveMeetingTasks {
       id: crypto.randomUUID(),
       title,
       sourceMeetingId,
+      ownerId: owner,
       status: status ?? OPEN,
       createdAt: new Date(),
       updatedAt: new Date(),

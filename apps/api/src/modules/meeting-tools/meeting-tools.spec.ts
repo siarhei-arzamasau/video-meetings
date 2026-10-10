@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 
+import { TaskLimitReachedError } from '../tasks/services/task.service';
 import { MAX_TASK_TITLE_LENGTH } from '../tasks/task.constants';
 import { MEETING_TOOLS_SERVER_NAME, MeetingToolName } from './meeting-tools';
 import {
@@ -44,7 +45,8 @@ describe('MeetingTools', () => {
     it('searches through TaskService, and answers with the tasks it found', async () => {
       const answer = await call(MeetingToolName.FIND_TASKS, { query: '  launch emails ' });
 
-      expect(search).toHaveBeenCalledWith('launch emails', MEETING_ID);
+      // As no user: a run sees the tasks nobody owns, and what it finds can reach a whole meeting.
+      expect(search).toHaveBeenCalledWith('launch emails', MEETING_ID, null);
       expect(answer.isError).toBeUndefined();
       expect(answerOf(answer)).toEqual({ tasks: [TASK_AS_ANSWERED] });
     });
@@ -110,6 +112,19 @@ describe('MeetingTools', () => {
       ['no meeting id', { title: 'Call Bob' }],
     ])('refuses %s', async (_case, input) => {
       await expect(accepts(MeetingToolName.UPSERT_TASK, input)).resolves.toBe(false);
+    });
+
+    it('answers a meeting that is full of tasks as a refusal that says so, and logs nothing', async () => {
+      upsert.mockRejectedValue(new TaskLimitReachedError());
+
+      const answer = await call(MeetingToolName.UPSERT_TASK, {
+        title: 'Call Bob',
+        sourceMeetingId: MEETING_ID,
+      });
+
+      expect(answer.isError).toBe(true);
+      expect(answer.content[0]?.text).toMatch(/as many tasks as it keeps/);
+      expect(Logger.prototype.error).not.toHaveBeenCalled();
     });
 
     it('refuses a task of any meeting but the one the server was made for', async () => {

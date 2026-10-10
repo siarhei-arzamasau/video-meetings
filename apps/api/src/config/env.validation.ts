@@ -1,27 +1,19 @@
-import { Transform, plainToInstance } from 'class-transformer';
+import { Transform } from 'class-transformer';
 import {
   ArrayNotEmpty,
   IsBoolean,
   IsEnum,
   IsInt,
-  IsNotIn,
   IsString,
   Matches,
   Max,
   Min,
   MinLength,
   ValidateIf,
-  validateSync,
 } from 'class-validator';
 
-import {
-  GENERATE_SECRET_ADVICE,
-  NodeEnv,
-  ORIGIN_PATTERN,
-  PUBLISHED_JWT_SECRETS,
-  corsOriginsOf,
-  parseBoolean,
-} from './env-values';
+import { IsJwtSecret, checkedAgainst } from './env-contract';
+import { NodeEnv, ORIGIN_PATTERN, corsOriginsOf, parseBoolean } from './env-values';
 import { TranscriptionEnvironmentVariables } from './env.validation.transcription';
 import {
   DEFAULT_MEETING_DIGEST_MAX_TOOL_CALLS,
@@ -49,15 +41,8 @@ export class EnvironmentVariables extends TranscriptionEnvironmentVariables {
   @MinLength(1)
   DATABASE_URL: string;
 
-  /** Signs and verifies access tokens. A short secret is a guessable secret, and a published
-   *  one is no secret at all — both fail here rather than at the first forged token. */
-  @IsString()
-  @MinLength(32, {
-    message: `JWT_SECRET must be at least 32 characters. ${GENERATE_SECRET_ADVICE}`,
-  })
-  @IsNotIn(PUBLISHED_JWT_SECRETS, {
-    message: `JWT_SECRET is a placeholder published in this repository. ${GENERATE_SECRET_ADVICE}`,
-  })
+  /** Signs and verifies access tokens; `IsJwtSecret` is the rule, and why it has one. */
+  @IsJwtSecret()
   JWT_SECRET: string;
 
   /**
@@ -224,20 +209,6 @@ export function validate(config: Record<string, unknown>): EnvironmentVariables 
   // transform runs only for a key the environment set.
   const isProduction = config['NODE_ENV'] === NodeEnv.Production;
   const origins = corsOriginsOf(config['CORS_ORIGINS'], config['WEB_PORT'], isProduction);
-  const resolved = { ...config, CORS_ORIGINS: origins };
-  const validated = plainToInstance(EnvironmentVariables, resolved, {
-    enableImplicitConversion: true,
-    exposeDefaultValues: true,
-  });
 
-  const errors = validateSync(validated, { skipMissingProperties: false });
-
-  if (errors.length > 0) {
-    const details = errors
-      .map((error) => `${error.property}: ${Object.values(error.constraints ?? {}).join(', ')}`)
-      .join('\n  - ');
-    throw new Error(`Invalid environment configuration:\n  - ${details}`);
-  }
-
-  return validated;
+  return checkedAgainst(EnvironmentVariables, { ...config, CORS_ORIGINS: origins });
 }
