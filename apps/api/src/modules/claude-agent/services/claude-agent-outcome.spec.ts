@@ -1,6 +1,6 @@
 import { ClaudeAgentFailure } from '../claude-agent.constants';
 import { ClaudeAgentError } from '../claude-agent.error';
-import { outcomeOf, structuredOutcomeOf } from './claude-agent-outcome';
+import { outcomeOf, spendOf, structuredOutcomeOf } from './claude-agent-outcome';
 import type { ObservedAnswer, ObservedResult } from './claude-agent-outcome';
 
 const USAGE = {
@@ -24,6 +24,23 @@ function answered(overrides: Partial<ObservedResult> = {}): ObservedResult {
     ...overrides,
   } as ObservedResult;
 }
+
+describe('spendOf', () => {
+  it('reads the cost and the tokens off a result that failed, as off one that answered', () => {
+    const cutShort: ObservedResult = {
+      subtype: 'error_max_turns',
+      is_error: true,
+      errors: ['Reached maximum number of turns (1)'],
+      total_cost_usd: 0.0031,
+      terminal_reason: 'max_turns',
+      usage: USAGE,
+    };
+
+    // Input is everything the model read, cached or not, as `outcomeOf` counts it.
+    expect(spendOf(cutShort)).toEqual({ costUsd: 0.0031, inputTokens: 1992, outputTokens: 151 });
+    expect(spendOf(answered())).toEqual({ costUsd: 0.0019, inputTokens: 1992, outputTokens: 151 });
+  });
+});
 
 /**
  * Two of the shapes below were seen against the real API on 2026-10-08 and are cut down to
@@ -93,6 +110,7 @@ describe('outcomeOf', () => {
         errors: ['Reached maximum number of turns (1)'],
         total_cost_usd: 0.0031,
         terminal_reason: 'max_turns',
+        usage: USAGE,
       },
       SONNET_ANSWER,
       ClaudeAgentFailure.FAILED,
@@ -106,6 +124,7 @@ describe('outcomeOf', () => {
         errors: ['Failed to provide valid structured output'],
         total_cost_usd: 0.012,
         terminal_reason: 'structured_output_retry_exhausted',
+        usage: USAGE,
       },
       SONNET_ANSWER,
       ClaudeAgentFailure.FAILED,
@@ -133,6 +152,7 @@ describe('outcomeOf', () => {
         errors: ['Reached maximum number of turns (1)', 'second line'],
         total_cost_usd: 0,
         terminal_reason: 'max_turns',
+        usage: USAGE,
       },
       answer: SONNET_ANSWER,
     });

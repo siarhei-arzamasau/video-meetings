@@ -37,6 +37,22 @@ export const RESULT: ObservedMessage = {
   },
 };
 
+/** A run cut short at the turn cap: no answer, and a cost all the same. */
+export const CUT_SHORT: ObservedMessage = {
+  type: 'result',
+  subtype: 'error_max_turns',
+  is_error: true,
+  errors: ['Reached maximum number of turns (1)'],
+  total_cost_usd: 0.0031,
+  terminal_reason: 'max_turns',
+  usage: {
+    input_tokens: 5,
+    output_tokens: 40,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 1800,
+  },
+};
+
 export type QueryRequest = Parameters<ClaudeAgentQuery>[0];
 export type ScriptedProcess = (request: QueryRequest) => AsyncIterable<ObservedMessage>;
 

@@ -1,21 +1,19 @@
 import type { Logger } from '@nestjs/common';
 
-import { ClaudeAgentFailure, ClaudeModel } from '../../claude-agent/claude-agent.constants';
-import { ClaudeAgentError } from '../../claude-agent/claude-agent.error';
+import { ClaudeModel } from '../../claude-agent/claude-agent.constants';
 import { NO_DIGEST_STATUS } from '../services/meeting-digest-claim-writes';
 import type { MeetingDigestClaimRepository } from '../services/meeting-digest-claim.repository';
 import { DigestStatus } from '../services/meeting-digest-status';
 import { DigestOutcomeRecorder } from './meeting-digest-outcome-recorder';
-import { spendOf } from './meeting-digest-spend';
-import { CLAIMED, HELD, LEASE, STORABLE } from './meeting-digest-worker.fixture';
+import { CLAIMED, GENERATED, HELD, LEASE, STORABLE } from './meeting-digest-worker.fixture';
 
 const { QUEUED, READY, FAILED } = DigestStatus;
 const REASON = 'The digest could not be generated.';
 const MODEL = ClaudeModel.SONNET;
 
 /**
- * What each ending writes, and what it leaves in the log — which for a digest is not a
- * nicety: the log is the only place a generation's cost is kept.
+ * What each ending writes, and what it leaves in the log: how the generation ended, and
+ * never what it cost — `MeetingDigestGenerator` logged that when the run's result arrived.
  */
 describe('DigestOutcomeRecorder', () => {
   const complete = jest.fn();
@@ -62,13 +60,12 @@ describe('DigestOutcomeRecorder', () => {
       });
     });
 
-    it('logs the generation with its duration, the model that answered, and what it cost', async () => {
+    it('logs the generation with its duration and the model that answered', async () => {
       await recorder.complete(CLAIMED, LEASE, STORABLE, startedAt);
 
       const lines = logged();
       expect(lines).toContain(`Digest of meeting ${CLAIMED.meetingId}`);
       expect(lines).toContain('claude-sonnet-5-5');
-      expect(lines).toContain('$0.0041');
       expect(lines).toMatch(/in 3\d{3}ms/);
       expect(lines).toContain('GENERATING -> READY');
     });
@@ -104,45 +101,28 @@ describe('DigestOutcomeRecorder', () => {
       expect(logged()).toContain('GENERATING -> QUEUED');
     });
 
-    it('still logs the cost of a digest whose claim was lost, and says it was discarded', async () => {
+    it('says a digest whose claim was lost was discarded', async () => {
       complete.mockResolvedValue(null);
 
       await recorder.complete(CLAIMED, LEASE, STORABLE, startedAt);
 
-      expect(logged()).toContain('$0.0041');
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('result discarded'));
     });
   });
 
   describe('fail', () => {
     it('stores the reason it was given and nothing else', async () => {
-      await recorder.fail(
-        CLAIMED,
-        LEASE,
-        { reason: REASON, model: MODEL, costUsd: 0.02 },
-        startedAt,
-      );
+      await recorder.fail(CLAIMED, LEASE, { reason: REASON, model: MODEL }, startedAt);
 
       expect(fail).toHaveBeenCalledWith(HELD, REASON);
     });
 
-    it('logs what a failed generation cost, and the model that was asked', async () => {
-      await recorder.fail(
-        CLAIMED,
-        LEASE,
-        { reason: REASON, model: MODEL, costUsd: 0.02 },
-        startedAt,
-      );
-
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('$0.0200'));
-      expect(logged()).toContain(MODEL);
-      expect(logged()).toContain('GENERATING -> FAILED');
-    });
-
-    it('says so when a failed generation reported no cost', async () => {
+    it('logs a failed generation with the model that was asked and the reason it shows', async () => {
       await recorder.fail(CLAIMED, LEASE, { reason: REASON, model: MODEL }, startedAt);
 
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('no cost reported'));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(`${MODEL} after`));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(`(${REASON})`));
+      expect(logged()).toContain('GENERATING -> FAILED');
     });
 
     it('says the failure was dropped for a new request, or lost with the claim', async () => {
@@ -157,22 +137,14 @@ describe('DigestOutcomeRecorder', () => {
   });
 
   it('releases the claim under the lease held, and says when the claim was already gone', async () => {
-    await recorder.release(CLAIMED, LEASE, null, startedAt);
+    await recorder.release(CLAIMED, LEASE, startedAt);
 
     expect(release).toHaveBeenCalledWith(CLAIMED.id, LEASE);
     expect(logged()).toContain('GENERATING -> QUEUED');
-    expect(logged()).not.toContain('$');
 
     release.mockResolvedValue(false);
-    await recorder.release(CLAIMED, LEASE, null, startedAt);
+    await recorder.release(CLAIMED, LEASE, startedAt);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('not released'));
-  });
-
-  it('logs what a call cost when shutdown hung up on one that had already been paid for', async () => {
-    await recorder.release(CLAIMED, LEASE, { model: MODEL, costUsd: 0.02 }, startedAt);
-
-    expect(logged()).toContain('$0.0200');
-    expect(release).toHaveBeenCalledWith(CLAIMED.id, LEASE);
   });
 
   it('clears the status under the lease held and the request claimed, and says when the claim was already gone', async () => {
@@ -195,37 +167,26 @@ describe('DigestOutcomeRecorder', () => {
     expect(logged()).not.toContain('-> none');
   });
 
-  describe('a claim lost before there was anything to write', () => {
-    it('writes nothing, and still logs what the discarded call cost', () => {
-      recorder.abandoned(CLAIMED, spendOf(STORABLE), startedAt);
+  it('writes nothing for a claim lost before there was anything to write, and says the result was discarded', () => {
+    recorder.abandoned(CLAIMED);
 
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('claude-sonnet-5-5'));
-      expect(logged()).toContain('$0.0041');
-      expect(logged()).toContain('result discarded');
-      for (const write of [complete, fail, release, clear]) {
-        expect(write).not.toHaveBeenCalled();
-      }
-    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('result discarded'));
+    for (const write of [complete, fail, release, clear]) {
+      expect(write).not.toHaveBeenCalled();
+    }
+  });
 
-    it('logs the cost of a call that failed, when it reported one', () => {
-      const answeredTooLate = new ClaudeAgentError(ClaudeAgentFailure.FAILED, 'late', {
-        costUsd: 0.02,
-      });
+  it('logs a cost at no ending: a run is logged with what it cost once, where its result arrives', async () => {
+    await recorder.claimed(CLAIMED);
+    await recorder.complete(CLAIMED, LEASE, STORABLE, startedAt);
+    await recorder.discard(CLAIMED, LEASE, GENERATED, startedAt);
+    await recorder.fail(CLAIMED, LEASE, { reason: REASON, model: MODEL }, startedAt);
+    await recorder.release(CLAIMED, LEASE, startedAt);
+    await recorder.clear(CLAIMED, LEASE, startedAt);
+    recorder.abandoned(CLAIMED);
 
-      recorder.abandoned(CLAIMED, spendOf({ error: answeredTooLate }), startedAt);
-
-      expect(logged()).toContain('$0.0200');
-    });
-
-    it('logs no cost for a run that made no call, or whose call reported none', () => {
-      expect(spendOf({ nothingToGenerate: true })).toBeNull();
-      expect(spendOf({ error: new Error('ENOENT') })).toBeNull();
-
-      recorder.abandoned(CLAIMED, null, startedAt);
-
-      expect(logged()).not.toContain('$');
-      expect(logged()).toContain('result discarded');
-    });
+    // `GENERATED` cost $0.0041, for 3,037 tokens in and 300 out.
+    expect(logged()).not.toMatch(/\$|0\.0041|3037|tokens/);
   });
 
   it('logs a claim with the status it was taken from and how many times it has been taken', async () => {

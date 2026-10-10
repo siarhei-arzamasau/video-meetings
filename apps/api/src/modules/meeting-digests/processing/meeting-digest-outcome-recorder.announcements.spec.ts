@@ -47,7 +47,7 @@ describe('DigestOutcomeRecorder: announcements, and a discarded answer', () => {
   > = [
     ['an answer stored', 'complete', () => recorder.complete(CLAIMED, LEASE, STORABLE, startedAt)],
     ['a failure recorded', 'fail', () => recorder.fail(CLAIMED, LEASE, FAILURE, startedAt)],
-    ['a claim released', 'release', () => recorder.release(CLAIMED, LEASE, null, startedAt)],
+    ['a claim released', 'release', () => recorder.release(CLAIMED, LEASE, startedAt)],
     ['a status cleared', 'clear', () => recorder.clear(CLAIMED, LEASE, startedAt)],
     [
       'an answer discarded',
@@ -145,7 +145,7 @@ describe('DigestOutcomeRecorder: announcements, and a discarded answer', () => {
   });
 
   it('announces nothing for a claim abandoned before there was anything to write', () => {
-    recorder.abandoned(CLAIMED, null, startedAt);
+    recorder.abandoned(CLAIMED);
 
     expect(announce).not.toHaveBeenCalled();
   });
@@ -161,10 +161,9 @@ describe('DigestOutcomeRecorder: announcements, and a discarded answer', () => {
       expect(log).toHaveBeenCalledWith(expect.stringContaining('GENERATING -> QUEUED'));
     });
 
-    it('logs what the discarded answer cost, the model that wrote it, and why it was not kept', async () => {
+    it('logs the model that wrote the discarded answer, and why it was not kept', async () => {
       await recorder.discard(CLAIMED, LEASE, GENERATED, startedAt);
 
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('$0.0041'));
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('claude-sonnet-5-5'));
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('was deleted'));
     });

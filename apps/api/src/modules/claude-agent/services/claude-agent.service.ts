@@ -5,8 +5,8 @@ import { ConfigService } from '@nestjs/config';
 import { ClaudeAgentFailure, ClaudeModel } from '../claude-agent.constants';
 import { ClaudeAgentError } from '../claude-agent.error';
 import { readExchange } from './claude-agent-exchange';
-import { outcomeOf, structuredOutcomeOf } from './claude-agent-outcome';
-import type { ClaudeAgentExchange } from './claude-agent-outcome';
+import { outcomeOf, spendOf, structuredOutcomeOf } from './claude-agent-outcome';
+import type { ClaudeAgentExchange, ClaudeAgentSpend } from './claude-agent-outcome';
 import { ClaudeAgentSdkLoader } from './claude-agent-sdk.loader';
 import { toolOptionsOf } from './claude-agent-tools';
 import type { ClaudeAgentTools } from './claude-agent-tools';
@@ -66,6 +66,13 @@ export interface ClaudeStructuredPrompt {
    * none and is one turn. The answer is bound to `schema` either way.
    */
   tools?: ClaudeAgentTools;
+  /**
+   * Told what the run spent the moment its result arrives, before anything is made of the
+   * answer: a run whose answer is then refused, or discarded as too late, was paid for all
+   * the same. A run that never reached a result tells it nothing. For a log; it must not
+   * throw.
+   */
+  onSpend?: (spend: ClaudeAgentSpend) => void;
 }
 
 export interface ClaudeStructuredReply {
@@ -135,13 +142,8 @@ export class ClaudeAgentService {
     signal.addEventListener('abort', forwardAbort, { once: true });
 
     try {
-      const exchange = await this.exchange(request.prompt, {
-        ...this.optionsFor(request.model, authToken),
-        ...(request.tools === undefined ? {} : await toolOptionsOf(request.tools)),
-        systemPrompt: request.systemPrompt,
-        outputFormat: { type: 'json_schema', schema: request.schema },
-        abortController,
-      });
+      const options = await this.structuredOptionsFor(request, authToken, abortController);
+      const exchange = await this.exchange(request.prompt, options, request.onSpend);
 
       if (signal.aborted) {
         throw new ClaudeAgentError(ClaudeAgentFailure.FAILED, ANSWERED_TOO_LATE, {
@@ -199,11 +201,30 @@ export class ClaudeAgentService {
     };
   }
 
+  /** `optionsFor`, and what a schema-bound call adds: its tools if it names any, and the schema. */
+  private async structuredOptionsFor(
+    request: ClaudeStructuredPrompt,
+    authToken: string,
+    abortController: AbortController,
+  ): Promise<Options> {
+    return {
+      ...this.optionsFor(request.model, authToken),
+      ...(request.tools === undefined ? {} : await toolOptionsOf(request.tools)),
+      systemPrompt: request.systemPrompt,
+      outputFormat: { type: 'json_schema', schema: request.schema },
+      abortController,
+    };
+  }
+
   /**
    * Starts Claude Code on one prompt and waits for how it ended. `ClaudeAgentSdkLoader` says
    * why the SDK is loaded per call, and not imported at the top of this file.
    */
-  private async exchange(prompt: string, options: Options): Promise<ClaudeAgentExchange> {
+  private async exchange(
+    prompt: string,
+    options: Options,
+    onSpend?: (spend: ClaudeAgentSpend) => void,
+  ): Promise<ClaudeAgentExchange> {
     const query = await this.sdkLoader.loadQuery();
 
     // That load is the one wait between the caller's signal being checked and the process
@@ -214,6 +235,6 @@ export class ClaudeAgentService {
       });
     }
 
-    return readExchange(query({ prompt, options }));
+    return readExchange(query({ prompt, options }), (result) => onSpend?.(spendOf(result)));
   }
 }

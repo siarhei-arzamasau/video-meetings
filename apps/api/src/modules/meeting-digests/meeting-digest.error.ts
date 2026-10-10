@@ -16,11 +16,6 @@ export enum MeetingDigestFailure {
   SOURCES_UNCHECKED = 'SOURCES_UNCHECKED',
 }
 
-export interface MeetingDigestErrorOptions extends ErrorOptions {
-  /** What the call cost, when one was made and reported it. */
-  costUsd?: number;
-}
-
 /**
  * What `MeetingDigestGenerator` throws for a failure it decided itself, and the worker for
  * the one it decides after an answer. Everything else is let through as the
@@ -30,15 +25,12 @@ export interface MeetingDigestErrorOptions extends ErrorOptions {
  * answer: what a failed digest shows is fixed copy chosen by whoever records the failure.
  */
 export class MeetingDigestError extends Error {
-  readonly costUsd?: number;
-
   constructor(
     readonly failure: MeetingDigestFailure,
     message: string,
-    options?: MeetingDigestErrorOptions,
+    options?: ErrorOptions,
   ) {
     super(message, options);
     this.name = MeetingDigestError.name;
-    this.costUsd = options?.costUsd;
   }
 }

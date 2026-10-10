@@ -20,9 +20,15 @@ export type ObservedMessage =
  * Returns at the result rather than draining the stream: after a result that reports an
  * error the SDK also throws, and returning here closes the process before it does. An
  * abort arrives as a throw from the stream too, and is reported the same way.
+ *
+ * **`onResult` is told of the result in the loop, the moment it arrives** — before anything
+ * is made of it, so a result that is then refused, or discarded as too late, was reported
+ * all the same. It is there for a log and must not throw: a throw from it is caught as the
+ * process having stopped, and the result it was told of is lost.
  */
 export async function readExchange(
   messages: AsyncIterable<ObservedMessage>,
+  onResult?: (result: ObservedResult) => void,
 ): Promise<ClaudeAgentExchange> {
   let answer: ObservedAnswer | undefined;
 
@@ -33,6 +39,8 @@ export async function readExchange(
       }
 
       if (message.type === 'result') {
+        onResult?.(message);
+
         return { result: message, answer };
       }
     }

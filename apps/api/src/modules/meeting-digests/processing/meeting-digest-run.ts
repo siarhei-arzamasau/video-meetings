@@ -174,9 +174,7 @@ async function heldToItsRecordings(
   { generated, sourceFileIds }: AnswerInHand,
   { claimed, readTranscribedIds, linkOwners }: DigestRunOptions,
 ): Promise<DigestRunOutcome> {
-  const transcribed = new Set(
-    await transcribedNow(claimed.meetingId, readTranscribedIds, generated),
-  );
+  const transcribed = new Set(await transcribedNow(claimed.meetingId, readTranscribedIds));
 
   if (!sourceFileIds.every((fileId) => transcribed.has(fileId))) {
     return { generated, sourceDeleted: true };
@@ -189,13 +187,11 @@ async function heldToItsRecordings(
 
 /**
  * The meeting's transcribed recordings as they are once the answer has arrived. A read that
- * fails is a failed generation and not a reason to store unchecked — and the error carries
- * what the answer cost, which is otherwise in nothing the caller is handed.
+ * fails is a failed generation and not a reason to store unchecked.
  */
 async function transcribedNow(
   meetingId: string,
   readTranscribedIds: DigestRunOptions['readTranscribedIds'],
-  { costUsd }: GeneratedMeetingDigest,
 ): Promise<ReadonlyArray<string>> {
   try {
     return await readTranscribedIds(meetingId);
@@ -203,7 +199,7 @@ async function transcribedNow(
     throw new MeetingDigestError(
       MeetingDigestFailure.SOURCES_UNCHECKED,
       'The recordings the answer was built from could not be checked; nothing of it is kept',
-      { cause, costUsd },
+      { cause },
     );
   }
 }

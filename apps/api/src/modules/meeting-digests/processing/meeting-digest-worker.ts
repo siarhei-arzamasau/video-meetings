@@ -13,13 +13,12 @@ import { MeetingDigestDeleteFollower } from '../services/meeting-digest-delete-f
 import type { ClaimedDigest } from '../services/meeting-digest-claim.repository';
 import { MeetingDigestGenerator } from '../services/meeting-digest-generator';
 import { PendingDigestRequests } from '../services/pending-digest-requests';
-import { costOf, failureReasonOf } from './meeting-digest-failure';
+import { failureReasonOf } from './meeting-digest-failure';
 import { DigestOutcomeRecorder } from './meeting-digest-outcome-recorder';
 import { ownerLinksOf } from './meeting-digest-owner-links';
 import { transcribedIdsOf, transcriptsOf } from './meeting-digest-recordings';
 import { DigestInterruption, runDigestGeneration } from './meeting-digest-run';
 import type { DigestRun, StorableDigest } from './meeting-digest-run';
-import { spendOf } from './meeting-digest-spend';
 
 /** The string token the worker is also registered under, so an e2e spec can reach `drain()`. */
 export const MEETING_DIGEST_WORKER = 'MEETING_DIGEST_WORKER';
@@ -198,7 +197,7 @@ export class MeetingDigestWorker implements OnApplicationBootstrap, OnModuleDest
     startedAt: number,
   ): Promise<void> {
     if (held === null) {
-      this.recorder.abandoned(claimed, spendOf(outcome), startedAt);
+      this.recorder.abandoned(claimed);
     } else if ('sourceDeleted' in outcome) {
       await this.recorder.discard(claimed, held, outcome.generated, startedAt);
     } else if ('generated' in outcome) {
@@ -207,7 +206,7 @@ export class MeetingDigestWorker implements OnApplicationBootstrap, OnModuleDest
       await this.recorder.clear(claimed, held, startedAt);
     } else if (interruptedBy === DigestInterruption.SHUTDOWN) {
       // A deploy is not the meeting's fault: the claim goes back, uncounted.
-      await this.recorder.release(claimed, held, spendOf(outcome), startedAt);
+      await this.recorder.release(claimed, held, startedAt);
     } else {
       const { error } = outcome;
       const reason = failureReasonOf(error, interruptedBy, limitSeconds);
@@ -216,12 +215,7 @@ export class MeetingDigestWorker implements OnApplicationBootstrap, OnModuleDest
         `Digest of meeting ${claimed.meetingId}: generation failed (${reason})`,
         describeError(error),
       );
-      await this.recorder.fail(
-        claimed,
-        held,
-        { reason, model: MEETING_DIGEST_MODEL, costUsd: costOf(error) },
-        startedAt,
-      );
+      await this.recorder.fail(claimed, held, { reason, model: MEETING_DIGEST_MODEL }, startedAt);
     }
   }
 

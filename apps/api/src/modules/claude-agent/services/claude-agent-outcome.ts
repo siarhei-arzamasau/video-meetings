@@ -22,6 +22,8 @@ interface ObservedUsage {
 interface ObservedResultFields {
   is_error: boolean;
   total_cost_usd: number;
+  /** On every result: a turn that could not finish read its prompt all the same. */
+  usage: ObservedUsage;
   terminal_reason?: TerminalReason;
 }
 
@@ -30,7 +32,6 @@ export type ObservedResult =
       subtype: 'success';
       result: string;
       structured_output?: unknown;
-      usage: ObservedUsage;
     })
   | (ObservedResultFields & { subtype: SDKResultError['subtype']; errors: string[] });
 
@@ -45,17 +46,24 @@ export interface ClaudeAgentExchange {
   answer: ObservedAnswer | undefined;
 }
 
-export interface ClaudeAgentAnswer {
+/**
+ * What a run spent, as its result reports it — whatever the result then turns out to be: one
+ * that names an error names what the error cost.
+ */
+export interface ClaudeAgentSpend {
+  /** What the SDK reckons the run cost. An estimate, not a billing statement. */
+  costUsd: number;
+  /** Everything the model read: what was billed in full, written to the cache, and read from it. */
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface ClaudeAgentAnswer extends ClaudeAgentSpend {
   text: string;
   /** Present only when the call bound the answer to a schema and the model answered through it. */
   structuredOutput: unknown;
   /** The model that answered, as the API named it — not merely the one asked for. */
   model: string;
-  /** What the SDK reckons the call cost. An estimate, not a billing statement. */
-  costUsd: number;
-  /** Everything the model read: what was billed in full, written to the cache, and read from it. */
-  inputTokens: number;
-  outputTokens: number;
 }
 
 /** How the SDK marks an assistant message that is really the API refusing the credential. */
@@ -72,6 +80,16 @@ const TOO_LONG_REASONS: ReadonlySet<TerminalReason> = new Set([
   'prompt_too_long',
 ]);
 
+/** A result's cost and tokens, read the one way for an answer and for a log of the run. */
+export function spendOf({ total_cost_usd: costUsd, usage }: ObservedResult): ClaudeAgentSpend {
+  return {
+    costUsd,
+    inputTokens:
+      usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens,
+    outputTokens: usage.output_tokens,
+  };
+}
+
 /**
  * What one exchange with Claude Code came to: an answer, or the error to throw for it. Pure,
  * so every shape the SDK is known to produce is a row in the spec beside this file rather
@@ -85,16 +103,11 @@ export function outcomeOf({
     return failureOf(result, answer);
   }
 
-  const { usage } = result;
-
   return {
     text: result.result,
     structuredOutput: result.structured_output,
     model: answer.message.model,
-    costUsd: result.total_cost_usd,
-    inputTokens:
-      usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens,
-    outputTokens: usage.output_tokens,
+    ...spendOf(result),
   };
 }
 

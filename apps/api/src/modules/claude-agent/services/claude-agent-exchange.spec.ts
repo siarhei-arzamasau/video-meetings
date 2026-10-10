@@ -59,6 +59,27 @@ describe('readExchange', () => {
     ).resolves.toMatchObject({ result: RESULT });
   });
 
+  it('tells its observer of the result as it arrives, before whatever the process does after it', async () => {
+    const onResult = jest.fn();
+
+    await readExchange(processSaying([LAST_ANSWER, RESULT], throwThatItWasHungUpOn), onResult);
+
+    expect(onResult).toHaveBeenCalledTimes(1);
+    expect(onResult).toHaveBeenCalledWith(RESULT);
+  });
+
+  it.each([
+    ['stopped before its result', throwThatItWasHungUpOn],
+    ['ended without a result', (): void => undefined],
+  ])('tells its observer nothing of a process that %s', async (_case, ending) => {
+    const onResult = jest.fn();
+
+    await expect(
+      readExchange(processSaying([STARTED, LAST_ANSWER], ending), onResult),
+    ).rejects.toMatchObject({ failure: ClaudeAgentFailure.FAILED });
+    expect(onResult).not.toHaveBeenCalled();
+  });
+
   it('reports a process that stopped before its result, keeping why', async () => {
     await expect(
       readExchange(processSaying([STARTED, LAST_ANSWER], throwThatItWasHungUpOn)),

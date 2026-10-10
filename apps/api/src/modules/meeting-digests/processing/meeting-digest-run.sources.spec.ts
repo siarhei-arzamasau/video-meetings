@@ -128,7 +128,7 @@ describe('runDigestGeneration: the recordings an answer was built from', () => {
     expect(linkOwners).not.toHaveBeenCalled();
   });
 
-  it('fails a generation whose recordings could not be checked, and keeps what the answer cost', async () => {
+  it('fails a generation whose recordings could not be checked, keeping why', async () => {
     const failure = new Error('connection terminated');
     readTranscribedIds.mockRejectedValue(failure);
 
@@ -138,7 +138,6 @@ describe('runDigestGeneration: the recordings an answer was built from', () => {
     expect(outcome).toEqual({ error: expect.any(MeetingDigestError) });
     const { error } = outcome as { error: MeetingDigestError };
     expect(error.failure).toBe(MeetingDigestFailure.SOURCES_UNCHECKED);
-    expect(error.costUsd).toBe(GENERATED.costUsd);
     expect(error.cause).toBe(failure);
   });
 });
