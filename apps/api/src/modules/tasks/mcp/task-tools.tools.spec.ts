@@ -42,7 +42,7 @@ describe("TaskTools' tools", () => {
     expect(tools).toHaveLength(2);
     expect(tools[0]).toMatchObject({
       name: 'find_tasks',
-      // This server's own words for it: a digest's run searches a meeting, a user their own.
+      // This server's own words for it, which end by saying what a title is.
       description: OWN_TASKS_DESCRIPTION,
       annotations: { readOnlyHint: true },
       // The Zod shape, as the JSON Schema a client is shown: one text, required and bounded.

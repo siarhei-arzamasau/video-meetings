@@ -58,7 +58,7 @@ describe('the MCP server, for two members of one meeting', () => {
 
     await withMcpClient(suite, meeting.id, host, async ({ callTool, readJson }) => {
       const found = await callTool('find_tasks', { query: 'launch emails' });
-      const mine = { tasks: [{ title: TASK_TITLE, status: 'OPEN', sourceMeetingId: meeting.id }] };
+      const mine = { tasks: [{ title: TASK_TITLE, status: 'OPEN', mine: true }] };
 
       expect(answerOf(found)).toMatchObject(mine);
       await expect(readJson(OPEN_TASKS)).resolves.toMatchObject({ json: mine });
@@ -110,7 +110,10 @@ describe('the MCP server, for two members of one meeting', () => {
     const { participant, meeting } = await members();
     // As a digest's generation writes one: the meeting's, and no user's.
     const ofNobody = await tasks().upsert({ title: TASK_TITLE, sourceMeetingId: meeting.id });
-    const theMeetings = { tasks: [{ id: ofNobody.id, title: TASK_TITLE, status: 'OPEN' }] };
+    // Readable, and marked as not the reader's own: somebody else's words became it.
+    const theMeetings = {
+      tasks: [{ id: ofNobody.id, title: TASK_TITLE, status: 'OPEN', mine: false }],
+    };
 
     await withMcpClient(suite, meeting.id, participant, async ({ callTool, readJson }) => {
       const found = await callTool('find_tasks', { query: 'launch emails' });

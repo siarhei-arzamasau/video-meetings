@@ -29,6 +29,8 @@ export const TASK_AS_ANSWERED = {
   title: TASK.title,
   status: TASK.status,
   sourceMeetingId: MEETING_ID,
+  // The requester's own: a task nobody owns is answered with `false`.
+  mine: true,
 };
 
 /** The sentence a gate of the specs' own refuses with. */

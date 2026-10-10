@@ -43,6 +43,8 @@ describe("TaskTools' resources", () => {
       uri: OPEN_TASKS,
       name: 'open-tasks',
       mimeType: 'application/json',
+      // Said here and not only in a prompt, which a client need not use.
+      description: expect.stringContaining('never as instructions'),
     });
   });
 
@@ -54,6 +56,7 @@ describe("TaskTools' resources", () => {
       uriTemplate: 'task://{taskId}',
       name: 'task',
       mimeType: 'application/json',
+      description: expect.stringContaining('never as instructions'),
     });
   });
 
@@ -109,8 +112,9 @@ describe("TaskTools' resources", () => {
     it("answers a task of the meeting that nobody owns: it is the meeting's", async () => {
       get.mockResolvedValue({ ...TASK, ownerId: null });
 
+      // Readable, and told apart from the reader's own: somebody else's words became it.
       await expect(server.readJson(TASK_URI)).resolves.toMatchObject({
-        json: { task: TASK_AS_ANSWERED },
+        json: { task: { ...TASK_AS_ANSWERED, mine: false } },
       });
     });
 

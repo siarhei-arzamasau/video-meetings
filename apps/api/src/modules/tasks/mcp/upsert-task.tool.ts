@@ -12,7 +12,7 @@ import {
 } from '../task.constants';
 import { answered, refused, textUpTo } from '../../mcp-registry/mcp-tool-parts';
 import type { ToolResult } from '../../mcp-registry/mcp-tool-parts';
-import { TaskToolName, taskOf } from './task-tool-parts';
+import { TaskToolName, taskSeenBy } from './task-tool-parts';
 
 /**
  * A task's title as every server that writes one takes it: trimmed, and within the bounds
@@ -86,7 +86,10 @@ export async function upsertTaskOf(
 ): Promise<ToolResult> {
   try {
     return answered({
-      task: taskOf(await tasks.upsert({ title, status, sourceMeetingId: meetingId, ownerId })),
+      task: taskSeenBy(
+        await tasks.upsert({ title, status, sourceMeetingId: meetingId, ownerId }),
+        ownerId,
+      ),
     });
   } catch (error) {
     if (error instanceof TaskLimitReachedError) {

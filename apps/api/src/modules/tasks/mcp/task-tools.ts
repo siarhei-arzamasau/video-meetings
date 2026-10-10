@@ -18,7 +18,7 @@ import type { McpToolRegistrar } from '../../mcp-registry/mcp-tool-registrar';
 import { McpToolRegistry } from '../../mcp-registry/mcp-tool-registry';
 import { registerTaskPrompts } from './task-prompts';
 import { OPEN_TASKS_RESOURCE_URI, TASK_RESOURCE_URI_TEMPLATE } from './task-resource-uris';
-import { taskOf } from './task-tool-parts';
+import { TITLES_ARE_DATA, taskSeenBy } from './task-tool-parts';
 import { UPSERT_TASK_TOOL, upsertTaskOf } from './upsert-task.tool';
 
 const JSON_MIME_TYPE = 'application/json';
@@ -126,7 +126,7 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
       OPEN_TASKS_RESOURCE_URI,
       {
         title: 'Open tasks',
-        description: `Your tasks and the meeting's that are still open, the oldest first — at most ${OPEN_TASKS_LIMIT}.`,
+        description: `Your tasks and the meeting's that are still open, the oldest first — at most ${OPEN_TASKS_LIMIT}. ${TITLES_ARE_DATA}`,
         mimeType: JSON_MIME_TYPE,
       },
       (uri) => this.read(scope, uri, (requester) => this.openTasks(scope.meetingId, requester)),
@@ -137,7 +137,7 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
       new ResourceTemplate(TASK_RESOURCE_URI_TEMPLATE, { list: undefined }),
       {
         title: 'Task',
-        description: "One task by its id: yours, or the meeting's.",
+        description: `One task by its id: yours, or the meeting's. ${TITLES_ARE_DATA}`,
         mimeType: JSON_MIME_TYPE,
       },
       (uri, { taskId }) =>
@@ -146,7 +146,9 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
   }
 
   private async openTasks(meetingId: string, { userId }: McpRequester): Promise<object> {
-    return { tasks: (await this.tasks.open(meetingId, userId)).map(taskOf) };
+    const open = await this.tasks.open(meetingId, userId);
+
+    return { tasks: open.map((task) => taskSeenBy(task, userId)) };
   }
 
   /**
@@ -177,7 +179,7 @@ export class TaskTools implements McpToolRegistrar, OnModuleInit {
       throw new McpError(FORBIDDEN, NOT_YOUR_TASK);
     }
 
-    return { task: taskOf(task) };
+    return { task: taskSeenBy(task, requester.userId) };
   }
 
   /** A tool's own work, run as whoever the gate lets in and refused to anybody else. */

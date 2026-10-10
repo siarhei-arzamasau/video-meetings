@@ -41,7 +41,12 @@ describe('the MCP server, for the user whose access token reaches it', () => {
       ]);
 
       const created = await callTool('upsert_task', { title: TASK_TITLE });
-      const task = { id: expect.any(String), title: TASK_TITLE, sourceMeetingId: meeting.id };
+      const task = {
+        id: expect.any(String),
+        title: TASK_TITLE,
+        sourceMeetingId: meeting.id,
+        mine: true,
+      };
 
       expect(created.isError ?? false).toBe(false);
       expect(answerOf(created)).toEqual({ task: { ...task, status: 'OPEN' } });
@@ -66,6 +71,13 @@ describe('the MCP server, for the user whose access token reaches it', () => {
     const done = await taskOf('Print the badges', 'DONE');
     const foreign = await taskOf('Call Bob', 'OPEN', { meeting: elsewhere, owner: other });
 
+    const asAnswered = ({ id, title }: { id: string; title: string }) => ({
+      id,
+      title,
+      sourceMeetingId: meeting.id,
+      mine: true,
+    });
+
     await withMcpClient(suite, meeting.id, host, async ({ client, readJson }) => {
       const { resources } = await client.listResources();
       const { resourceTemplates } = await client.listResourceTemplates();
@@ -77,13 +89,13 @@ describe('the MCP server, for the user whose access token reaches it', () => {
       await expect(readJson(OPEN_TASKS)).resolves.toEqual({
         mimeType: JSON_TYPE,
         json: {
-          tasks: [{ id: open.id, title: open.title, status: 'OPEN', sourceMeetingId: meeting.id }],
+          tasks: [{ ...asAnswered(open), status: 'OPEN' }],
         },
       });
       await expect(readJson(`task://${done.id}`)).resolves.toEqual({
         mimeType: JSON_TYPE,
         json: {
-          task: { id: done.id, title: done.title, status: 'DONE', sourceMeetingId: meeting.id },
+          task: { ...asAnswered(done), status: 'DONE' },
         },
       });
       // An id is its reader's to choose, and this one is a task of a meeting they are not in.

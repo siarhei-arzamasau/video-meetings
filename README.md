@@ -231,7 +231,8 @@ JSON responses). There is nothing to start beside the API.
 **The server answers only a user who can see the meeting** — its host or one of its
 participants. **What each of them can see is their own tasks and the meeting's**: a task
 belongs to the user whose client wrote it, and no other member's client reads or changes
-it; a task the meeting's digest wrote belongs to nobody, and every member reads it. One
+it; a task the meeting's digest wrote belongs to nobody, and every member reads it. Each
+task is answered with `mine`, which says which of the two it is. One
 user keeps at most 500 tasks in a meeting. The meeting is in the URL, and the client sends
 the `accessToken` that `POST /api/auth/login` responds with as
 `Authorization: Bearer <access-token>`. In Claude Code:

@@ -9,6 +9,7 @@ import {
   connectTaskTools,
 } from './task-tools.fixture';
 import type { TaskToolsHarness } from './task-tools.fixture';
+import { TITLES_ARE_DATA } from './task-tool-parts';
 
 /**
  * `TaskTools` as the domain's registrar: that starting its module puts it in the registry,
@@ -46,6 +47,15 @@ describe('TaskTools', () => {
     expect(resources.map(({ uri }) => uri)).toEqual(['tasks://open']);
     expect(resourceTemplates.map(({ uriTemplate }) => uriTemplate)).toEqual(['task://{taskId}']);
     expect(prompts.map(({ name }) => name)).toEqual(['meeting_overview', 'meeting_topic']);
+  });
+
+  it('says in the description of find_tasks itself that a title is data, and that a task says whose it is', async () => {
+    const { tools } = await client.listTools();
+    const description = tools.find(({ name }) => name === 'find_tasks')?.description;
+
+    // Not only in a prompt, which a client need not use.
+    expect(description).toContain(TITLES_ARE_DATA);
+    expect(description).toContain('"mine"');
   });
 
   it("answers each with the injected task service's own method, for the scope's meeting and its requester", async () => {

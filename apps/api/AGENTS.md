@@ -1718,6 +1718,16 @@ served.
   may see it**, and no shape has a field for an owner at all. Two members of one meeting
   therefore share a URL, the meeting's tasks, and none of each other's;
   `test/mcp-task-owners.e2e-spec.ts` is that, with a client each.
+- **What a client's model reads is another member's words, and everything it reads them
+  through says so.** A task nobody owns is what a digest's run made of a recording, and a
+  recording is whatever its uploader said — so its title reaches every member's client,
+  which may hold a shell. Two things answer that, both in `task-tool-parts.ts`:
+  `TITLES_ARE_DATA`, the sentence that a title is data and never an instruction, which is
+  in the description of `find_tasks` and of both resources as well as in the prompts,
+  because a client need not use a prompt; and `taskSeenBy`, which answers every task with
+  `mine` — false for the meeting's — so a client can tell what its user wrote from what
+  somebody else's words became. Neither makes a client obey; nothing here can. A digest's
+  run is answered with plain `taskOf` and no `mine`: nothing is a run's own.
 - **`find_tasks` is the in-process server's tool, not a second one like it.** Its name,
   shape, and behaviour are `FIND_TASKS_TOOL` and `findTasksOf` (`find-tasks.tool.ts`),
   which `MeetingTools` hands a digest's run as well. What differs is which SDK serves it

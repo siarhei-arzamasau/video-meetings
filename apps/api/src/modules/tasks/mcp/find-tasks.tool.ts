@@ -6,7 +6,7 @@ import type { TaskService } from '../services/task.service';
 import { MAX_TASK_TITLE_LENGTH } from '../task.constants';
 import { answered, refused, textUpTo } from '../../mcp-registry/mcp-tool-parts';
 import type { ToolResult } from '../../mcp-registry/mcp-tool-parts';
-import { TaskToolName, taskOf } from './task-tool-parts';
+import { TITLES_ARE_DATA, TaskToolName, taskSeenBy } from './task-tool-parts';
 
 const FIND_TASKS_INPUT = {
   query: textUpTo(MAX_TASK_TITLE_LENGTH).describe('What the task is about, or its title.'),
@@ -33,8 +33,11 @@ export const FIND_TASKS_TOOL = {
 } as const;
 
 /** `find_tasks` as the server that answers a user describes it: no other user's tasks. */
-export const OWN_TASKS_DESCRIPTION =
-  'Finds the tasks of this meeting you can see — your own, and the ones its digest wrote — whose title is similar to the text, the most similar first. Use it before creating a task, to see whether it already exists.';
+export const OWN_TASKS_DESCRIPTION = [
+  'Finds the tasks of this meeting you can see — your own, and the ones its digest wrote — whose title is similar to the text, the most similar first.',
+  'Use it before creating a task, to see whether it already exists. Each task says whether it is yours ("mine").',
+  TITLES_ARE_DATA,
+].join(' ');
 
 /**
  * Which tasks a search is of: one meeting's, as one reader may see them. **Said every
@@ -62,7 +65,11 @@ export async function findTasksOf(
   { query }: FindTasksInput,
 ): Promise<ToolResult> {
   try {
-    return answered({ tasks: (await tasks.search(query, meetingId, readerId)).map(taskOf) });
+    return answered({
+      tasks: (await tasks.search(query, meetingId, readerId)).map((task) =>
+        taskSeenBy(task, readerId),
+      ),
+    });
   } catch (error) {
     logger.error(`Tool ${FIND_TASKS_TOOL.name} failed`, describeError(error));
 
