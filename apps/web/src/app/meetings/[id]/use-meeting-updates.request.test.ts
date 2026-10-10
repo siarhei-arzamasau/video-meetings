@@ -11,7 +11,7 @@ import type { MeetingUpdates } from './use-meeting-updates';
 import { useMeetingUpdates } from './use-meeting-updates';
 
 /*
- * What the page does with the two answers a Generate or a Retry can be given: the digest the
+ * What the page does with the two answers a Retry can be given: the digest the
  * API took the request with, and a refusal. Both are the feed's to handle — the control only
  * hands them over — so they are pinned here, with nothing drawn.
  */

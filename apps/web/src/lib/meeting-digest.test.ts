@@ -98,7 +98,7 @@ describe('digestPresentation', () => {
     ['a ready digest whose content is withheld', digest({ status: 'ready' })],
     // What may be asked for is not something a digest shows: `digestSectionView` adds the
     // control, for the reader it is offered to.
-    ['only an action somebody could ask for', digest({ availableAction: 'generate' })],
+    ['only an action somebody could ask for', digest({ availableAction: 'retry' })],
   ])('shows nothing at all for %s', (_case, current) => {
     expect(digestPresentation(current)).toBeNull();
   });

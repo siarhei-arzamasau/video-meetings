@@ -12,12 +12,12 @@ import {
 import { DigestStatus } from '../../services/meeting-digest-status';
 import { MeetingDigestRepository } from '../../services/meeting-digest.repository';
 import { MeetingDigestsService } from '../../services/meeting-digests.service';
-import { RequestMeetingDigestCommand } from '../request-meeting-digest.command';
+import { RetryMeetingDigestCommand } from '../retry-meeting-digest.command';
 import {
   DIGEST_REFUSAL_MESSAGES,
   DIGEST_SWITCHED_OFF_MESSAGE,
-  RequestMeetingDigestHandler,
-} from './request-meeting-digest.handler';
+  RetryMeetingDigestHandler,
+} from './retry-meeting-digest.handler';
 
 const HOST_ID = '22222222-2222-4222-8222-222222222222';
 const UPLOADER_ID = '33333333-3333-4333-8333-333333333333';
@@ -29,17 +29,17 @@ const NOT_FOUND = new NotFoundException('Meeting not found');
 const QUEUED_RECORD = buildMeetingDigestRecord({ status: DigestStatus.QUEUED, version: 4 });
 const QUEUED_DIGEST = { meetingId: DIGEST_MEETING_ID, version: 4, status: 'queued' };
 
-describe('RequestMeetingDigestHandler', () => {
+describe('RetryMeetingDigestHandler', () => {
   const requireVisibleMeeting = jest.fn();
   const transcribedRecordingsOf = jest.fn();
   const describeRecord = jest.fn();
-  const requestByHand = jest.fn();
+  const requestRetry = jest.fn();
   const announce = jest.fn();
   let enabled: boolean;
-  let handler: RequestMeetingDigestHandler;
+  let handler: RetryMeetingDigestHandler;
 
   const requestAs = (userId: string): Promise<unknown> =>
-    handler.execute(new RequestMeetingDigestCommand(userId, DIGEST_MEETING_ID));
+    handler.execute(new RetryMeetingDigestCommand(userId, DIGEST_MEETING_ID));
 
   beforeEach(async () => {
     enabled = true;
@@ -49,25 +49,25 @@ describe('RequestMeetingDigestHandler', () => {
       { id: SECOND_RECORDING_ID, uploaderId: HOST_ID },
     ]);
     describeRecord.mockReset().mockResolvedValue(QUEUED_DIGEST);
-    requestByHand
+    requestRetry
       .mockReset()
-      .mockResolvedValue({ allowed: true, action: 'generate', record: QUEUED_RECORD });
+      .mockResolvedValue({ allowed: true, kind: 'RETRY', record: QUEUED_RECORD });
     announce.mockReset().mockResolvedValue(undefined);
 
     const moduleRef = await Test.createTestingModule({
       providers: [
-        RequestMeetingDigestHandler,
+        RetryMeetingDigestHandler,
         { provide: ConfigService, useValue: { get: jest.fn(() => enabled) } },
         {
           provide: MeetingDigestsService,
           useValue: { requireVisibleMeeting, transcribedRecordingsOf, describe: describeRecord },
         },
-        { provide: MeetingDigestRepository, useValue: { requestByHand } },
+        { provide: MeetingDigestRepository, useValue: { requestRetry } },
         { provide: MeetingDigestAnnouncer, useValue: { announce } },
       ],
     }).compile();
 
-    handler = moduleRef.get(RequestMeetingDigestHandler);
+    handler = moduleRef.get(RetryMeetingDigestHandler);
   });
 
   it.each([
@@ -78,8 +78,8 @@ describe('RequestMeetingDigestHandler', () => {
 
     expect(requireVisibleMeeting).toHaveBeenCalledWith(userId, DIGEST_MEETING_ID);
     // The recordings the gate read are the ones the request is decided against.
-    expect(requestByHand).toHaveBeenCalledTimes(1);
-    expect(requestByHand).toHaveBeenCalledWith(DIGEST_MEETING_ID, [
+    expect(requestRetry).toHaveBeenCalledTimes(1);
+    expect(requestRetry).toHaveBeenCalledWith(DIGEST_MEETING_ID, [
       FIRST_RECORDING_ID,
       SECOND_RECORDING_ID,
     ]);
@@ -89,10 +89,10 @@ describe('RequestMeetingDigestHandler', () => {
 
   it('announces the request once it is written, and not before', async () => {
     const order: string[] = [];
-    requestByHand.mockImplementation(async () => {
+    requestRetry.mockImplementation(async () => {
       order.push('written');
 
-      return { allowed: true, action: 'retry', record: QUEUED_RECORD };
+      return { allowed: true, kind: 'RETRY', record: QUEUED_RECORD };
     });
     announce.mockImplementation(async () => {
       order.push('announced');
@@ -118,13 +118,13 @@ describe('RequestMeetingDigestHandler', () => {
     await expect(requestAs(OTHER_ID)).rejects.toThrow(NOT_FOUND);
 
     expect(transcribedRecordingsOf).not.toHaveBeenCalled();
-    expect(requestByHand).not.toHaveBeenCalled();
+    expect(requestRetry).not.toHaveBeenCalled();
   });
 
   it('answers the same 404 to a participant who uploaded no transcribed recording', async () => {
     await expect(requestAs(OTHER_ID)).rejects.toThrow(NOT_FOUND);
 
-    expect(requestByHand).not.toHaveBeenCalled();
+    expect(requestRetry).not.toHaveBeenCalled();
     expect(announce).not.toHaveBeenCalled();
   });
 
@@ -138,7 +138,7 @@ describe('RequestMeetingDigestHandler', () => {
         new ConflictException(DIGEST_SWITCHED_OFF_MESSAGE),
       );
 
-      expect(requestByHand).not.toHaveBeenCalled();
+      expect(requestRetry).not.toHaveBeenCalled();
       expect(announce).not.toHaveBeenCalled();
     });
 
@@ -158,10 +158,12 @@ describe('RequestMeetingDigestHandler', () => {
       'NO_RECORDING',
       'The meeting has no transcribed recording to generate a digest from',
     ],
+    // Owed a digest, and not failed: the catch-up's to ask for, and no person's.
+    ['has not failed', 'OTHER_KIND', 'The digest has not failed, so there is nothing to retry'],
   ] as const)(
     'answers 409 for a digest that %s, announcing nothing',
     async (_what, refusal, message) => {
-      requestByHand.mockResolvedValue({ allowed: false, refusal });
+      requestRetry.mockResolvedValue({ allowed: false, refusal });
 
       await expect(requestAs(HOST_ID)).rejects.toThrow(new ConflictException(message));
 
@@ -173,7 +175,7 @@ describe('RequestMeetingDigestHandler', () => {
   );
 
   it('lets a failure of the write through, announcing nothing', async () => {
-    requestByHand.mockRejectedValue(new Error('connection lost'));
+    requestRetry.mockRejectedValue(new Error('connection lost'));
 
     await expect(requestAs(HOST_ID)).rejects.toThrow('connection lost');
 

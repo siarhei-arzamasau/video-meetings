@@ -1,4 +1,4 @@
-import type { Locator, Page, Request, Response } from '@playwright/test';
+import type { Page, Request, Response } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 
 import {
@@ -8,13 +8,11 @@ import {
   signUp,
   sparsePdf,
 } from './fixtures';
+import { rowFor, uploadRowFor } from './file-rows';
 import { scaled } from './timeouts';
 
 const LARGE_NAME = 'meeting-files-e2e-large.pdf';
 const CHUNKS = Math.ceil(LARGE_FILE_BYTES / MEETING_FILE_CHUNK_SIZE_BYTES);
-
-const rowFor = (page: Page, name: string): Locator =>
-  page.getByRole('list', { name: 'Files' }).getByRole('listitem').filter({ hasText: name });
 
 const pickFiles = (page: Page, files: string[]): Promise<void> =>
   page.locator('input[type="file"]').setInputFiles(files);
@@ -73,7 +71,7 @@ test.describe('uploading a file too large for one request', () => {
     await page.goto(`/meetings/${meeting.id}`);
     await pickFiles(page, [sparsePdf(LARGE_NAME, LARGE_FILE_BYTES)]);
 
-    const uploading = rowFor(page, LARGE_NAME);
+    const uploading = uploadRowFor(page, LARGE_NAME);
     await expect(uploading).toBeVisible();
     await expect(uploading.getByText('150 MB')).toBeVisible();
     // A percentage, which only a chunked upload can report before the whole file is sent.
@@ -83,10 +81,11 @@ test.describe('uploading a file too large for one request', () => {
     // file has. **Not the Processing chip** — since Phase 4 the row learns it is `ready`
     // from the event stream within milliseconds of the worker finishing, so waiting for
     // that chip is waiting for a state the row may never be seen in.
-    await expect(uploading.getByRole('button', { name: 'Download' })).toBeVisible({
+    await expect(rowFor(page, LARGE_NAME).getByRole('button', { name: 'Download' })).toBeVisible({
       timeout: scaled(90_000),
     });
-    await expect(uploading.getByRole('button', { name: 'Cancel' })).toHaveCount(0);
+    // And the upload's own row, with its Cancel, went once the upload was answered.
+    await expect(uploading).toHaveCount(0);
 
     expect(acknowledged.toSorted((a, b) => a - b)).toEqual(
       Array.from({ length: CHUNKS }, (_, index) => index),
@@ -151,15 +150,15 @@ test.describe('uploading a file too large for one request', () => {
     await page.goto(`/meetings/${meeting.id}`);
     await pickFiles(page, [sparsePdf(LARGE_NAME, LARGE_FILE_BYTES)]);
 
-    const row = rowFor(page, LARGE_NAME);
-    await expect(row.getByRole('button', { name: 'Retry' })).toBeVisible({
+    const uploading = uploadRowFor(page, LARGE_NAME);
+    await expect(uploading.getByRole('button', { name: 'Retry' })).toBeVisible({
       timeout: scaled(30_000),
     });
 
     await page.unroute(chunks);
-    await row.getByRole('button', { name: 'Retry' }).click();
+    await uploading.getByRole('button', { name: 'Retry' }).click();
 
-    await expect(row.getByRole('button', { name: 'Download' })).toBeVisible({
+    await expect(rowFor(page, LARGE_NAME).getByRole('button', { name: 'Download' })).toBeVisible({
       timeout: scaled(90_000),
     });
     // Resumed, not restarted: the chunk that landed before the outage was not sent again.
@@ -190,9 +189,10 @@ test.describe('uploading a file too large for one request', () => {
     // A browser cannot keep a File across a reload, so resuming starts with picking it again.
     await pickFiles(page, [sparsePdf(LARGE_NAME, LARGE_FILE_BYTES)]);
 
-    const row = rowFor(page, LARGE_NAME);
-    await expect(row.getByText(/Resuming/)).toBeVisible({ timeout: scaled(60_000) });
-    await expect(row.getByRole('button', { name: 'Download' })).toBeVisible({
+    await expect(uploadRowFor(page, LARGE_NAME).getByText(/Resuming/)).toBeVisible({
+      timeout: scaled(60_000),
+    });
+    await expect(rowFor(page, LARGE_NAME).getByRole('button', { name: 'Download' })).toBeVisible({
       timeout: scaled(90_000),
     });
 
@@ -228,7 +228,7 @@ test.describe('uploading a file too large for one request', () => {
       .poll(() => acknowledged.length, { timeout: scaled(60_000) })
       .toBeGreaterThanOrEqual(1);
 
-    const row = rowFor(page, LARGE_NAME);
+    const row = uploadRowFor(page, LARGE_NAME);
     await row.getByRole('button', { name: 'Cancel' }).click();
 
     await expect(row).toHaveCount(0);

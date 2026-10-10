@@ -97,8 +97,8 @@ function useDigestRequest(
 }
 
 /**
- * The digest's one control — "Generate digest" or "Retry", which are one request — for the
- * reader it is offered to, with the outcomes a file's Retry has (`useRetry`).
+ * The digest's one control — "Retry", beside a digest that failed — for the reader it is
+ * offered to, with the outcomes a file's Retry has (`useRetry`).
  *
  * **Who is offered it is decided here and nowhere else on the page**, by
  * `offeredDigestAction`: the digest says what may be asked for, and the files list says

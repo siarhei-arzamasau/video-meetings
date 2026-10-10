@@ -115,20 +115,21 @@ describe('a recording that leaves the list beside an open stream', () => {
 });
 
 describe('a recording transcribed beside an open stream', () => {
-  it('asks for the digest, so a request the API could not queue still offers Generate', async () => {
+  it('asks for the digest, so one whose own event was lost is on the page all the same', async () => {
     const transcribing: MeetingFile = { ...RECORDING, transcriptionStatus: 'transcribing' };
     vi.mocked(listMeetingFiles).mockResolvedValue([transcribing]);
     vi.mocked(fetchMeetingDigest).mockResolvedValue({ meetingId: 'm1', version: 0 });
     const page = await mount();
-    const offered: MeetingDigest = { meetingId: 'm1', version: 0, availableAction: 'generate' };
-    vi.mocked(fetchMeetingDigest).mockResolvedValue(offered);
+    // Queued by the recording's request, and announced to nobody: the stream sends nothing.
+    const queued: MeetingDigest = { meetingId: 'm1', version: 1, status: 'queued' };
+    vi.mocked(fetchMeetingDigest).mockResolvedValue(queued);
 
     await act(async () => {
       stream.onFile(RECORDING);
       await vi.advanceTimersByTimeAsync(0);
     });
 
-    expect(page.current.digest).toEqual(offered);
+    expect(page.current.digest).toEqual(queued);
   });
 
   it('asks nothing for a change that leaves the transcribed recordings as they were', async () => {

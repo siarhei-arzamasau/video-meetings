@@ -1,7 +1,4 @@
-import type {
-  McpSdkServerConfigWithInstance,
-  SdkMcpToolDefinition,
-} from '@anthropic-ai/claude-agent-sdk';
+import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { Injectable, Logger } from '@nestjs/common';
 import { CommandBus } from '@nestjs/cqrs';
 import { z } from 'zod';
@@ -20,23 +17,13 @@ import {
 } from '../meeting-digests/meeting-digest.constants';
 import { TaskService } from '../tasks/services/task.service';
 import { MAX_TASK_TITLE_LENGTH, MIN_TASK_TITLE_LENGTH } from '../tasks/task.constants';
+import { FIND_TASKS_TOOL, findTasksOf } from './find-tasks.tool';
+import { MEETING_TOOLS_SERVER_NAME, MeetingToolName } from './meeting-tool-names';
+import { answered, refused, taskOf, textUpTo } from './meeting-tool-parts';
+import type { ToolResult } from './meeting-tool-parts';
 
-/** The server's name, and so the prefix of its tools as an agent sees them: `mcp__meeting__`. */
-export const MEETING_TOOLS_SERVER_NAME = 'meeting';
-
-export enum MeetingToolName {
-  FIND_TASKS = 'find_tasks',
-  UPSERT_TASK = 'upsert_task',
-  UPDATE_MEETING = 'update_meeting',
-}
-
-/** Text with something in it, trimmed, and no longer than `maxLength`. */
-const textUpTo = (maxLength: number, minLength = 1): z.ZodString =>
-  z.string().trim().min(minLength).max(maxLength);
-
-const FIND_TASKS_INPUT = {
-  query: textUpTo(MAX_TASK_TITLE_LENGTH).describe('What the task is about, or its title.'),
-};
+// Named here as well, where everything that uses the tools has always found them.
+export { MEETING_TOOLS_SERVER_NAME, MeetingToolName };
 
 const UPSERT_TASK_INPUT = {
   title: textUpTo(MAX_TASK_TITLE_LENGTH, MIN_TASK_TITLE_LENGTH).describe(
@@ -58,11 +45,8 @@ const UPDATE_MEETING_INPUT = {
     .describe('Every decision the meeting made, one sentence each. They replace the stored ones.'),
 };
 
-type FindTasksInput = z.infer<z.ZodObject<typeof FIND_TASKS_INPUT>>;
 type UpsertTaskInput = z.infer<z.ZodObject<typeof UPSERT_TASK_INPUT>>;
 type UpdateMeetingInput = z.infer<z.ZodObject<typeof UPDATE_MEETING_INPUT>>;
-
-type ToolResult = Awaited<ReturnType<SdkMcpToolDefinition['handler']>>;
 
 /** What `update_meeting` says when nothing was written. For the model, never for a user. */
 const UPDATE_REFUSALS: Record<
@@ -79,28 +63,6 @@ const OTHER_MEETING = 'These tools work on one meeting, and that is not its id.'
 
 const sameMeeting = (given: string, bound: string): boolean =>
   given.toLowerCase() === bound.toLowerCase();
-
-const answered = (answer: object): ToolResult => ({
-  content: [{ type: 'text', text: JSON.stringify(answer) }],
-});
-
-const refused = (reason: string): ToolResult => ({
-  isError: true,
-  content: [{ type: 'text', text: reason }],
-});
-
-/** A task as a tool answers with it: what identifies it and where it stands, no timestamps. */
-const taskOf = ({
-  id,
-  title,
-  status,
-  sourceMeetingId,
-}: {
-  id: string;
-  title: string;
-  status: TaskStatus;
-  sourceMeetingId: string;
-}): object => ({ id, title, status, sourceMeetingId });
 
 /**
  * The API's own services as tools an agent can call: tasks searched and written through
@@ -138,11 +100,11 @@ export class MeetingTools {
       name: MEETING_TOOLS_SERVER_NAME,
       tools: [
         tool(
-          MeetingToolName.FIND_TASKS,
-          'Finds the tasks this meeting already has whose title is similar to the text, the most similar first. Use it before creating a task, to see whether it already exists.',
-          FIND_TASKS_INPUT,
-          (input) => this.findTasks(meetingId, input),
-          { annotations: { readOnlyHint: true } },
+          FIND_TASKS_TOOL.name,
+          FIND_TASKS_TOOL.description,
+          FIND_TASKS_TOOL.inputSchema,
+          (input) => findTasksOf(this.tasks, this.logger, meetingId, input),
+          { annotations: FIND_TASKS_TOOL.annotations },
         ),
         tool(
           MeetingToolName.UPSERT_TASK,
@@ -158,14 +120,6 @@ export class MeetingTools {
         ),
       ],
     });
-  }
-
-  private async findTasks(meetingId: string, { query }: FindTasksInput): Promise<ToolResult> {
-    try {
-      return answered({ tasks: (await this.tasks.search(query, meetingId)).map(taskOf) });
-    } catch (error) {
-      return this.failed(MeetingToolName.FIND_TASKS, error, 'The tasks could not be searched.');
-    }
   }
 
   private async upsertTask(

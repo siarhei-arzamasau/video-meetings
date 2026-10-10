@@ -106,6 +106,25 @@ describe('MeetingDigestRepository', () => {
     await expect(repository.noteUncoveredRecording(DIGEST_MEETING_ID)).resolves.toBe(false);
   });
 
+  it('reads where every digest stands in one statement, by meeting', async () => {
+    const prismaQueryRaw = jest.fn().mockResolvedValue([
+      { meetingId: DIGEST_MEETING_ID, status: 'READY', summary: '', sourceFileIds: ['first'] },
+      { meetingId: 'meeting-emptied', status: null, summary: null, sourceFileIds: [] },
+    ]);
+    const reading = new MeetingDigestRepository({
+      $queryRaw: prismaQueryRaw,
+    } as unknown as PrismaService);
+
+    const standings = await reading.findStandings();
+
+    expect(prismaQueryRaw).toHaveBeenCalledTimes(1);
+    // The shape the rule decides by: a summary is stored or it is not, and its text stays put.
+    expect([...standings]).toEqual([
+      [DIGEST_MEETING_ID, { status: 'READY', summary: '', sources: [{ meetingFileId: 'first' }] }],
+      ['meeting-emptied', { status: null, summary: null, sources: [] }],
+    ]);
+  });
+
   it("answers a digest's requested revision, and null for a meeting that has none", async () => {
     findUnique.mockResolvedValue({ requestedRevision: 7 });
 

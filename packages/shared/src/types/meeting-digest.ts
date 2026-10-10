@@ -13,10 +13,11 @@ export type MeetingDigestStatus = (typeof MEETING_DIGEST_STATUSES)[number];
 
 /**
  * What `POST /api/meetings/:id/digest/generation` would do for a digest as it stands, and so
- * what the control that sends it is called: `generate` for transcribed recordings that have
- * no current digest, `retry` for a digest that failed. One request either way.
+ * what the control that sends it is called: `retry`, for a digest that failed. It is the
+ * one thing a person asks for — every other digest is generated with nobody asking, when a
+ * recording is transcribed or when the API next starts.
  */
-export const MEETING_DIGEST_ACTIONS = ['generate', 'retry'] as const;
+export const MEETING_DIGEST_ACTIONS = ['retry'] as const;
 
 export type MeetingDigestAction = (typeof MEETING_DIGEST_ACTIONS)[number];
 
@@ -51,8 +52,8 @@ export interface MeetingDigest {
   meetingId: Meeting['id'];
   /**
    * Rises with every change below but two — a linked owner's new display name, and an
-   * `availableAction` that left with a meeting's last recording; a client keeps the higher.
-   * 0: the meeting never had one.
+   * `availableAction` that left with a recording nothing reacted to the delete of; a client
+   * keeps the higher. 0: the meeting never had one.
    */
   version: number;
   /** Where the latest generation stands. Absent when none has been asked for. */
@@ -63,17 +64,18 @@ export interface MeetingDigest {
   content?: MeetingDigestContent;
   /**
    * What the meeting's host, or the uploader of one of its transcribed recordings, may ask
-   * for now. Absent when there is nothing to ask for: a digest that is current, queued, or
-   * generating, a meeting with no transcribed recording, and every meeting while the
-   * deployment has digests switched off.
+   * for now: to retry a digest that failed. Absent for every other digest — one that is
+   * current, queued, or generating, and one that is simply not there yet, which nobody has
+   * to ask for — for a meeting with no transcribed recording, and for every meeting while
+   * the deployment has digests switched off.
    *
    * **The same for everyone who reads the digest**: it says what the digest allows, not
    * whether this reader may ask. The API answers anyone else's request with 404.
    *
    * **It can go away under an unchanged `version`**, when the last transcribed recording of
-   * a meeting with nothing stored is deleted: a meeting with no digest has no version to
-   * move. A client offers the action only while it also holds a transcribed recording of
-   * the meeting, and answers a 409 from the request by fetching the digest again.
+   * a meeting whose digest failed is deleted and nothing has yet reacted to the delete. A
+   * client offers the action only while it also holds a transcribed recording of the
+   * meeting, and answers a 409 from the request by fetching the digest again.
    */
   availableAction?: MeetingDigestAction;
 }

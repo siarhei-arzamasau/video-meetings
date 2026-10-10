@@ -69,7 +69,7 @@ describe('the meeting digest setting', () => {
     expect(claude.calls).toEqual([]);
   });
 
-  it('starts nothing by itself for a recording transcribed while it was off, once it is on', async () => {
+  it('starts nothing for a recording transcribed while it was off until a boot catches up, once it is on', async () => {
     const { host, meetingId } = await setUp();
     digests.configure({ enabled: false });
     await digests.transcribe(host.token, meetingId, FIRST);

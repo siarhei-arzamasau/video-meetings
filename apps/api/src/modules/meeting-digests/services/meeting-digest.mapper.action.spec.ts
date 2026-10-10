@@ -28,31 +28,33 @@ const actionOf = (
     .availableAction;
 
 /**
- * `availableAction`: what "generate now" would do for the digest as it stands. The request
- * route refuses exactly where this is absent, because both ask `requestabilityOf`.
+ * `availableAction`: that a failed digest may be retried. The retry route refuses exactly
+ * where this is absent, because both ask `requestabilityFor` as a retry.
  */
 describe('toMeetingDigest, the action a digest offers', () => {
   it('names only actions of the shared vocabulary', () => {
-    expect(MEETING_DIGEST_ACTIONS).toEqual(['generate', 'retry']);
+    expect(MEETING_DIGEST_ACTIONS).toEqual(['retry']);
   });
 
-  describe('generate', () => {
-    it('is offered for a transcribed recording of a meeting that never had a digest', () => {
+  describe('a digest that is owed and has not failed', () => {
+    // Each of these is the catch-up's to ask for, at the next boot, and nobody's to ask
+    // for by hand: nothing is offered, and the route answers 409.
+    it('offers nothing for a transcribed recording of a meeting that never had a digest', () => {
       expect(toMeetingDigest(DIGEST_MEETING_ID, null, [FIRST_RECORDING_ID], new Map(), ON)).toEqual(
-        { meetingId: DIGEST_MEETING_ID, version: 0, availableAction: 'generate' },
+        { meetingId: DIGEST_MEETING_ID, version: 0 },
       );
     });
 
     it.each([
       ['no status', null],
       ['a status of ready', READY],
-    ] as const)('is offered for a row with %s and nothing stored under it', (_what, status) => {
+    ] as const)('offers nothing for a row with %s and nothing stored under it', (_what, status) => {
       const record = buildMeetingDigestRecord({ status, ...WITHOUT_CONTENT });
 
-      expect(actionOf(record, [FIRST_RECORDING_ID])).toBe('generate');
+      expect(actionOf(record, [FIRST_RECORDING_ID])).toBeUndefined();
     });
 
-    it('is offered for a digest that is out of date with nothing queued', () => {
+    it('offers nothing for a digest that is out of date with nothing queued', () => {
       const digest = toMeetingDigest(
         DIGEST_MEETING_ID,
         buildMeetingDigestRecord(),
@@ -63,10 +65,10 @@ describe('toMeetingDigest, the action a digest offers', () => {
 
       // Still readable, and marked: the recording it lacks was transcribed with the setting off.
       expect(digest).toMatchObject({ status: 'ready', content: { outOfDate: true } });
-      expect(digest.availableAction).toBe('generate');
+      expect(digest).not.toHaveProperty('availableAction');
     });
 
-    it('is offered for a digest that lost a recording nothing has reacted to yet', () => {
+    it('offers nothing for a digest that lost a recording nothing has reacted to yet', () => {
       const digest = toMeetingDigest(
         DIGEST_MEETING_ID,
         buildMeetingDigestRecord(),
@@ -76,23 +78,23 @@ describe('toMeetingDigest, the action a digest offers', () => {
       );
 
       expect(digest).not.toHaveProperty('content');
-      expect(digest.availableAction).toBe('generate');
+      expect(digest).not.toHaveProperty('availableAction');
     });
+  });
 
-    it('is not offered for a digest that covers every transcribed recording', () => {
-      expect(actionOf(buildMeetingDigestRecord(), [FIRST_RECORDING_ID])).toBeUndefined();
-      // A cleared status changes nothing about that: the content is what is current.
-      expect(
-        actionOf(buildMeetingDigestRecord({ status: null }), [FIRST_RECORDING_ID]),
-      ).toBeUndefined();
-    });
+  it('offers nothing for a digest that covers every transcribed recording', () => {
+    expect(actionOf(buildMeetingDigestRecord(), [FIRST_RECORDING_ID])).toBeUndefined();
+    // A cleared status changes nothing about that: the content is what is current.
+    expect(
+      actionOf(buildMeetingDigestRecord({ status: null }), [FIRST_RECORDING_ID]),
+    ).toBeUndefined();
+  });
 
-    it('is not offered for a meeting with no transcribed recording', () => {
-      expect(actionOf(null, [])).toBeUndefined();
-      expect(actionOf(buildMeetingDigestRecord({ status: null, ...WITHOUT_CONTENT }), [])).toBe(
-        undefined,
-      );
-    });
+  it('offers nothing for a meeting with no transcribed recording', () => {
+    expect(actionOf(null, [])).toBeUndefined();
+    expect(actionOf(buildMeetingDigestRecord({ status: null, ...WITHOUT_CONTENT }), [])).toBe(
+      undefined,
+    );
   });
 
   describe('retry', () => {

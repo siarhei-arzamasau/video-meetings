@@ -25,9 +25,9 @@ export interface MeetingDigestFeed {
   /** One `digest` event from the stream. Stable between renders, for the same reason. */
   receive(digest: MeetingDigest): void;
   /**
-   * The digest the API answered a Generate or a Retry with. **Taken as a fetch is**: it is
-   * the API's answer to this page, so of two with one version it wins, and against a higher
-   * one already held it loses — which is the case that matters. The answer travels on a
+   * The digest the API answered a Retry with. **Taken as a fetch is**: it is the API's
+   * answer to this page, so of two with one version it wins, and against a higher one
+   * already held it loses — which is the case that matters. The answer travels on a
    * connection of its own, and the stream may by then have said `queued`, a worker's claim,
    * and the next failure; a file's retry has to refetch the list to be put in order against
    * that, and a digest only has to be compared.

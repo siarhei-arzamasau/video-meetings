@@ -86,9 +86,9 @@ export const transcriber = {
   reset: (): Promise<void> => control('DELETE'),
 };
 
-/** The row for a file, by name. Rows are list items inside the Files list. */
-export const rowFor = (page: Page, name: string): Locator =>
-  page.getByRole('list', { name: 'Files' }).getByRole('listitem').filter({ hasText: name });
+// The row of a listed file, by name: here as well, where the recording specs have always
+// found it beside the chips and links they read off it.
+export { rowFor } from './file-rows';
 
 export const queuedChip = (row: Locator): Locator => row.getByText('Queued for transcription');
 export const transcribingChip = (row: Locator): Locator => row.getByText('Transcribing…');

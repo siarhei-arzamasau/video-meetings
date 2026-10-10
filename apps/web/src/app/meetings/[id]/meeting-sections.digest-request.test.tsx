@@ -9,7 +9,6 @@ import { ApiError, fetchMeetingDigest, requestMeetingDigest } from '@/lib/api-cl
 import {
   FAILED,
   HOST,
-  NEVER_GENERATED,
   connectStream,
   deliverDigests,
   digest,
@@ -70,17 +69,17 @@ afterEach(() => {
 
 describe('asking for a digest from the page', () => {
   it('sends the one request and takes its answer as the digest: queued, and no control', async () => {
-    vi.mocked(requestMeetingDigest).mockResolvedValue(digest(1, { status: 'queued' }));
-    await renderSections({ viewer: HOST, held: NEVER_GENERATED });
+    vi.mocked(requestMeetingDigest).mockResolvedValue(QUEUED);
+    await renderSections({ viewer: HOST, held: FAILED });
 
-    await press('Generate digest');
+    await press('Retry');
 
     await waitFor(() => {
       expect(says('Digest queued')).toBe(true);
     });
     expect(requestMeetingDigest).toHaveBeenCalledExactlyOnceWith('a-signed-jwt', 'm1');
-    expect(digestButtons('Generate digest')).toEqual([]);
-    expect(says('no digest yet')).toBe(false);
+    expect(digestButtons('Retry')).toEqual([]);
+    expect(says('Digest failed')).toBe(false);
     // The answer carries a version, so it is taken as it is: nothing is fetched to learn it.
     expect(digestFetches()).toBe(1);
   });

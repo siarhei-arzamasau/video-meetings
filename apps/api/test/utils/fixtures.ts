@@ -101,6 +101,9 @@ export const MEETING_DIGEST_WORKER_TOKEN = 'MEETING_DIGEST_WORKER';
 /** What knows when a transcribed recording's request for a digest has been written. */
 export const PENDING_DIGEST_REQUESTS_TOKEN = 'PENDING_DIGEST_REQUESTS';
 
+/** The token the digest's boot catch-up is registered under, restated like the two above. */
+export const MEETING_DIGEST_CATCH_UP_TOKEN = 'MEETING_DIGEST_CATCH_UP';
+
 export const EMAIL = 'ada@example.com';
 export const PASSWORD = 'correct-horse-battery-42';
 

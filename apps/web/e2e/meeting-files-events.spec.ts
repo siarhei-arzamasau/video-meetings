@@ -1,12 +1,11 @@
-import type { Locator, Page, Request } from '@playwright/test';
+import type { Page, Request } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 
 import { SAMPLE_PDF, SAMPLE_PNG, createMeetingViaApi, signUp } from './fixtures';
+import { rowFor } from './file-rows';
 import { scaled } from './timeouts';
 
 /** The row for a file, by name. Rows are list items inside the Files list. */
-const rowFor = (page: Page, name: string): Locator =>
-  page.getByRole('list', { name: 'Files' }).getByRole('listitem').filter({ hasText: name });
 
 const pathOf = (request: Request): string => new URL(request.url()).pathname;
 

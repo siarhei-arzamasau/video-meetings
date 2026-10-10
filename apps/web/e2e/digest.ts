@@ -28,7 +28,7 @@ export const DIGEST_AI_NOTE =
  */
 export const CLAUDE_MARKER = 'anthropic-internal-marker-9c1e';
 
-async function control(method: 'PUT' | 'DELETE', path: string): Promise<void> {
+async function control(method: 'PUT' | 'DELETE' | 'POST', path: string): Promise<void> {
   const response = await fetch(`${CLAUDE_CONTROL_URL}${path}`, { method });
 
   if (response.status !== 204) {
@@ -56,6 +56,15 @@ export const claude = {
    * open page that it changed** — in a deployment it is a restart — so open pages after it.
    */
   setting: (state: 'on' | 'off'): Promise<void> => control('PUT', `/control/setting/${state}`),
+  /**
+   * What the API does once as it boots, run again: asks for every digest a meeting is owed
+   * — a recording transcribed while the setting was off, a digest it left out of date — and
+   * resolves once each has been asked for. **It is the other half of "switched back on"**:
+   * in a deployment the setting comes back with a restart and the restart catches up, and
+   * `setting('on')` here is only the switch. The specs share a database, so it also asks
+   * for whatever an earlier test left owed; those are answered at once, ahead of this one.
+   */
+  catchUp: (): Promise<void> => control('POST', '/control/catch-up'),
   /**
    * Releases every key and switches the setting back on, so no test inherits a generation
    * nobody will ever answer — or an API that generates nothing.
@@ -126,9 +135,7 @@ export const generatingDigest = (page: Page): Locator =>
 export const failedDigest = (page: Page): Locator => digestSection(page).getByText('Digest failed');
 export const outOfDateMark = (page: Page): Locator => digestSection(page).getByText('Out of date');
 
-/** The section's one control, under whichever of its two names the digest gives it. */
-export const generateDigestButton = (page: Page): Locator =>
-  digestSection(page).getByRole('button', { name: 'Generate digest', exact: true });
+/** The section's one control: another try at a digest that failed. */
 export const retryDigestButton = (page: Page): Locator =>
   digestSection(page).getByRole('button', { name: 'Retry', exact: true });
 /** Every button of the section: none, for a reader who may ask for nothing. */
@@ -180,11 +187,11 @@ export async function digestViaApi(token: string, meetingId: string): Promise<Di
 
 const isDigestRequestUrl = (url: string): boolean => url.endsWith('/digest/generation');
 
-/** The answer to "generate now", as the page that pressed Generate or Retry receives it. */
+/** The answer to a retry of the digest, as the page that pressed Retry receives it. */
 export const isDigestRequest = (response: Response): boolean =>
   response.request().method() === 'POST' && isDigestRequestUrl(response.url());
 
-/** The status "generate now" answers this user with, asked as the page would ask. */
+/** The status a retry of the digest answers this user with, asked as the page would ask. */
 export async function requestDigestStatusViaApi(token: string, meetingId: string): Promise<number> {
   const response = await fetch(`${API_URL}/meetings/${meetingId}/digest/generation`, {
     method: 'POST',

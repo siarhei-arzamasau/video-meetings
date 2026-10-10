@@ -11,10 +11,8 @@ import {
   objectPathOf,
   signUp,
 } from './fixtures';
+import { rowFor } from './file-rows';
 import { scaled } from './timeouts';
-
-const rowFor = (page: Page, name: string): Locator =>
-  page.getByRole('list', { name: 'Files' }).getByRole('listitem').filter({ hasText: name });
 
 /** The chip labels are exact: "Processing failed" also contains "Processing". */
 const processingChip = (row: Locator): Locator => row.getByText('Processing', { exact: true });

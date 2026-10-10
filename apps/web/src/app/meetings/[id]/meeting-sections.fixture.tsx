@@ -54,8 +54,11 @@ export const digest = (version: number, overrides: Partial<MeetingDigest> = {}):
   ...overrides,
 });
 
-/** Recordings transcribed while the setting was off: nothing stored, and Generate on offer. */
-export const NEVER_GENERATED = digest(0, { availableAction: 'generate' });
+/**
+ * Recordings transcribed while the setting was off: nothing stored, and nothing to ask for —
+ * the digest is the API's to generate, the next time it starts.
+ */
+export const NEVER_GENERATED = digest(0);
 export const FAILED = digest(4, {
   status: 'failed',
   failureReason: 'The digest could not be generated.',

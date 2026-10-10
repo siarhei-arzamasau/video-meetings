@@ -9,7 +9,7 @@ import { FindVisibleMeetingQuery } from '../../meetings/queries/find-visible-mee
 import type { VisibleMeeting } from '../../meetings/queries/find-visible-meeting.query';
 import { FindUsersByIdsQuery } from '../../user/queries/find-users-by-ids.query';
 import type { UserDisplayName } from '../../user/queries/find-users-by-ids.query';
-import { isUnderWay } from './meeting-digest-action';
+import { DigestStatus } from './meeting-digest-status';
 import { toMeetingDigest } from './meeting-digest.mapper';
 import type { MeetingDigestRecord } from './meeting-digest.mapper';
 import { MeetingDigestRepository } from './meeting-digest.repository';
@@ -74,13 +74,13 @@ export class MeetingDigestsService {
 
   /**
    * A digest row that has already been read, as the meeting's members are answered: the
-   * second half of `currentOf`, and all of what the request route answers with — the row as
+   * second half of `currentOf`, and all of what the retry route answers with — the row as
    * its own write left it, rather than as whoever claimed it a moment later did.
    *
    * The recordings are asked for only when something is decided by them: content, or —
-   * with the setting on — whether a generation may be asked for. So a meeting with no
-   * digest is one query fewer while the setting is off, and a digest that is queued or
-   * generating with nothing stored under it is always. The owners' names likewise: one
+   * with the setting on — whether a failed digest still has one to be retried from. So a
+   * meeting with no digest costs no query for them at all, and neither does a digest that
+   * is queued or generating with nothing stored under it. The owners' names likewise: one
    * query for all of them, and none for a digest that links nobody.
    *
    * **This is the one place a user's display name is read for somebody else**, and what
@@ -90,8 +90,8 @@ export class MeetingDigestsService {
   async describe(meetingId: string, record: MeetingDigestRecord | null): Promise<MeetingDigest> {
     const generationEnabled = this.config.get<boolean>('MEETING_DIGEST_ENABLED', false);
     const stored = record !== null && record.summary !== null ? record : null;
-    const decidedByRecordings =
-      stored !== null || (generationEnabled && !isUnderWay(record?.status));
+    const retryable = generationEnabled && record?.status === DigestStatus.FAILED;
+    const decidedByRecordings = stored !== null || retryable;
     const transcribed = decidedByRecordings ? await this.transcribedRecordingsOf(meetingId) : [];
     const ownerNames = stored === null ? NO_OWNER_NAMES : await this.ownerNamesOf(stored);
 

@@ -7,8 +7,9 @@ import type { TranscribedRecording } from '../../meeting-files/queries/find-tran
 import { MAX_DIGEST_TRANSCRIPT_CHARACTERS } from '../meeting-digest.constants';
 
 /**
- * The two things the digest worker asks `meeting-files`, over the bus: what was said in a
- * meeting's recordings, and which of them are transcribed now. Neither is a table it reads.
+ * The two things the digest's background work asks `meeting-files` about one meeting, over
+ * the bus: what was said in its recordings, and which of them are transcribed now. Neither
+ * is a table it reads.
  */
 
 /** The meeting's transcripts in upload order, or the fact that they are past the cap. */
@@ -18,7 +19,10 @@ export function transcriptsOf(queryBus: QueryBus, meetingId: string): Promise<Me
   );
 }
 
-/** The ids of the meeting's transcribed recordings: what an answer's sources are held to. */
+/**
+ * The ids of the meeting's transcribed recordings: what an answer's sources are held to,
+ * and what the catch-up decides a meeting's turn by.
+ */
 export async function transcribedIdsOf(queryBus: QueryBus, meetingId: string): Promise<string[]> {
   const recordings = await queryBus.execute<FindTranscribedRecordingsQuery, TranscribedRecording[]>(
     new FindTranscribedRecordingsQuery(meetingId),

@@ -1,5 +1,5 @@
 import type { User } from '@repo/shared';
-import { act, cleanup, within } from '@testing-library/react';
+import { act, cleanup, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as ApiClient from '@/lib/api-client';
@@ -20,8 +20,9 @@ import {
 } from './meeting-sections.fixture';
 
 /*
- * Who is shown the digest's control: the page's own part of Generate and Retry, worked out
- * from the files list it already holds. Only the API and the stream are replaced.
+ * Who is shown the digest's control: the page's own part of Retry, worked out from the
+ * files list it already holds — and that a digest nobody has to ask for is offered to
+ * nobody. Only the API and the stream are replaced.
  */
 vi.mock('@/lib/api-client', async (importOriginal) => ({
   ...(await importOriginal<typeof ApiClient>()),
@@ -45,69 +46,40 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
-describe('Generate digest', () => {
-  it.each(MAY_ASK)(
-    'is offered to %s for recordings transcribed with the setting off',
+const OUT_OF_DATE = digest(3, {
+  status: 'ready',
+  content: {
+    summary: 'The team agreed the launch plan.',
+    actionItems: [],
+    decisions: [],
+    generatedAt: '2026-10-08T09:00:00.000Z',
+    outOfDate: true,
+  },
+});
+
+describe('a digest that nobody has to ask for', () => {
+  it.each([...MAY_ASK, ['another participant', PARTICIPANT] as [string, User]])(
+    'shows %s no section at all for recordings that have no digest yet',
     async (_who, viewer) => {
       await renderSections({ viewer, held: NEVER_GENERATED });
 
-      expect(digestButtons('Generate digest')).toHaveLength(1);
-      // A button under a bare heading does not say what it is for.
-      expect(digestRegion()?.textContent).toContain(
-        "This meeting's recordings have no digest yet.",
-      );
-      // The note is about a digest's text, and there is none.
-      expect(digestRegion()?.textContent).not.toContain('AI-generated');
+      // Nothing to read and nothing to press: the API generates it the next time it starts.
+      expect(digestRegion()).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Generate digest' })).toBeNull();
     },
   );
-
-  it('is not offered to another participant, who is shown no section at all', async () => {
-    await renderSections({ viewer: PARTICIPANT, held: NEVER_GENERATED });
-
-    expect(digestRegion()).toBeNull();
-  });
 
   it.each(MAY_ASK)(
-    'is offered to %s beside an out-of-date digest nothing is replacing',
+    'shows %s an out-of-date digest marked and readable, with nothing to press',
     async (_who, viewer) => {
-      const stale = digest(3, {
-        status: 'ready',
-        availableAction: 'generate',
-        content: {
-          summary: 'The team agreed the launch plan.',
-          actionItems: [],
-          decisions: [],
-          generatedAt: '2026-10-08T09:00:00.000Z',
-          outOfDate: true,
-        },
-      });
+      await renderSections({ viewer, held: OUT_OF_DATE });
+      const region = digestRegion();
 
-      await renderSections({ viewer, held: stale });
-
-      expect(digestButtons('Generate digest')).toHaveLength(1);
-      expect(digestRegion()?.textContent).toContain('Out of date');
-      expect(digestRegion()?.textContent).toContain('The team agreed the launch plan.');
+      expect(region?.textContent).toContain('Out of date');
+      expect(region?.textContent).toContain('The team agreed the launch plan.');
+      expect(region === null ? [] : within(region).queryAllByRole('button')).toEqual([]);
     },
   );
-
-  it('is not offered to the host while the list holds no transcribed recording', async () => {
-    const untranscribed = { ...RECORDING, transcriptionStatus: 'failed' as const };
-
-    await renderSections({ viewer: HOST, held: NEVER_GENERATED, files: [untranscribed] });
-
-    expect(digestRegion()).toBeNull();
-  });
-
-  it('leaves with the last transcribed recording, though the digest still says generate', async () => {
-    await renderSections({ viewer: HOST, held: NEVER_GENERATED });
-    expect(digestButtons('Generate digest')).toHaveLength(1);
-
-    // The delete reaches the list by the stream. Nothing reaches the digest: a meeting with
-    // nothing stored has no version to move, so the page goes on holding `generate`.
-    act(() => stream.file({ ...RECORDING, status: 'deleted' }));
-
-    expect(digestRegion()).toBeNull();
-  });
 });
 
 describe('Retry', () => {
@@ -119,8 +91,6 @@ describe('Retry', () => {
       expect(digestButtons('Retry')).toHaveLength(1);
       expect(digestRegion()?.textContent).toContain('Digest failed');
       expect(digestRegion()?.textContent).toContain('The digest could not be generated.');
-      // The failure is what the section says; there is no sentence about there being no digest.
-      expect(digestRegion()?.textContent).not.toContain('no digest yet');
     },
   );
 
@@ -132,9 +102,31 @@ describe('Retry', () => {
     expect(region?.textContent).toContain('The digest could not be generated.');
     expect(region === null ? [] : within(region).queryAllByRole('button')).toEqual([]);
   });
+
+  it('is not offered to the host while the list holds no transcribed recording', async () => {
+    const untranscribed = { ...RECORDING, transcriptionStatus: 'failed' as const };
+
+    await renderSections({ viewer: HOST, held: FAILED, files: [untranscribed] });
+
+    // The failure is still what the digest says; there is nothing left to retry it from.
+    expect(digestRegion()?.textContent).toContain('Digest failed');
+    expect(digestButtons('Retry')).toEqual([]);
+  });
+
+  it('leaves with the last transcribed recording, though the digest still says retry', async () => {
+    await renderSections({ viewer: HOST, held: FAILED });
+    expect(digestButtons('Retry')).toHaveLength(1);
+
+    // The delete reaches the list by the stream. When nothing reacts to it nothing reaches
+    // the digest, whose version has not moved: the page goes on holding `retry`.
+    act(() => stream.file({ ...RECORDING, status: 'deleted' }));
+
+    expect(digestRegion()?.textContent).toContain('Digest failed');
+    expect(digestButtons('Retry')).toEqual([]);
+  });
 });
 
-describe('neither control', () => {
+describe('no control', () => {
   it.each([
     ['queued', digest(5, { status: 'queued' })],
     ['being generated', digest(6, { status: 'generating' })],

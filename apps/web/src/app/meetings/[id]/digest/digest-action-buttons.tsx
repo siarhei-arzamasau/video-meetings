@@ -2,7 +2,7 @@
 
 import { Button, Spinner } from '@heroui/react';
 
-import { CloseIcon, RetryIcon, SparkIcon } from '@/components/icons';
+import { CloseIcon, RetryIcon } from '@/components/icons';
 import type { DigestActionLine } from '@/lib/meeting-digest-action';
 
 interface DigestActionButtonsProps {
@@ -16,9 +16,9 @@ interface DigestActionButtonsProps {
 }
 
 /**
- * "Generate digest" or "Retry", and Dismiss while the last request's failure is on show —
- * the row's own pair, in the row's own sizes, so the two Retry buttons a page can hold look
- * like the same kind of thing.
+ * "Retry", and Dismiss while the last request's failure is on show — the row's own pair, in
+ * the row's own sizes, so the two Retry buttons a page can hold look like the same kind of
+ * thing.
  *
  * **Secondary, not primary.** The page already has its one primary action, "Add file", and a
  * digest is a consequence of the files rather than the reason the page is open.
@@ -38,7 +38,7 @@ export function DigestActionButtons({
       {action !== null && (
         <Button variant="secondary" size="sm" isDisabled={isRequesting} onPress={onRequest}>
           {isRequesting && <Spinner color="current" size="sm" aria-hidden="true" />}
-          {!isRequesting && (action.kind === 'retry' ? <RetryIcon /> : <SparkIcon />)}
+          {!isRequesting && <RetryIcon />}
           {action.label}
         </Button>
       )}

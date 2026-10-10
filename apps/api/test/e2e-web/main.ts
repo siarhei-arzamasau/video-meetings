@@ -9,6 +9,7 @@ import { Test } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module';
 import { configureApp } from '../../src/configure-app';
 import { ClaudeAgentService } from '../../src/modules/claude-agent/services/claude-agent.service';
+import { MeetingDigestCatchUp } from '../../src/modules/meeting-digests/processing/meeting-digest-catch-up';
 import { browserSuiteDatabaseUrl, prepareTestDatabase } from '../utils/test-database';
 import { CONTROL_PORT, listenForControl } from './control-server';
 import { DigestHolds } from './digest-holds';
@@ -49,6 +50,8 @@ async function bootstrap(): Promise<void> {
     // Read by the handlers, the worker, and the digest's read each time they run, so a
     // write here is the whole of switching it: `test/utils/digest-suite.ts` does the same.
     setDigestEnabled: (enabled) => config.set('MEETING_DIGEST_ENABLED', enabled),
+    // What this API did by itself as it booted, run again for a spec that cannot restart it.
+    catchUpDigests: () => app.get(MeetingDigestCatchUp).run(),
   });
 
   const port = config.get<number>('PORT', 3001);

@@ -59,26 +59,16 @@ describe('MeetingDigestsService, with the digest switched on or off', () => {
     service = moduleRef.get(MeetingDigestsService);
   });
 
-  it('offers Generate for a transcribed recording of a meeting that never had a digest', async () => {
-    await expect(service.currentOf(DIGEST_MEETING_ID)).resolves.toEqual({
-      meetingId: DIGEST_MEETING_ID,
-      version: 0,
-      availableAction: 'generate',
-    });
-    // The one read the setting costs a meeting with no digest: which recordings there are.
-    expect(dispatched()).toEqual([new FindTranscribedRecordingsQuery(DIGEST_MEETING_ID)]);
-  });
-
-  it('offers nothing for a meeting with no transcribed recording', async () => {
-    transcribedFileIds = [];
-
+  it('offers nothing for a meeting that never had a digest, and reads no recordings for it', async () => {
     await expect(service.currentOf(DIGEST_MEETING_ID)).resolves.toEqual({
       meetingId: DIGEST_MEETING_ID,
       version: 0,
     });
+    // Nothing here is decided by the recordings: a digest that is owed is the catch-up's.
+    expect(dispatched()).toEqual([]);
   });
 
-  it('offers Retry for a failed digest and Generate for one that is out of date', async () => {
+  it('offers Retry for a failed digest, and nothing for one whose meeting has no recording left', async () => {
     findOf.mockResolvedValue(
       buildMeetingDigestRecord({ status: DigestStatus.FAILED, ...WITHOUT_CONTENT }),
     );
@@ -86,14 +76,23 @@ describe('MeetingDigestsService, with the digest switched on or off', () => {
       status: 'failed',
       availableAction: 'retry',
     });
+    // The one read the setting costs, and only a failed digest: whether a recording is left.
+    expect(dispatched()).toEqual([new FindTranscribedRecordingsQuery(DIGEST_MEETING_ID)]);
 
+    transcribedFileIds = [];
+    await expect(service.currentOf(DIGEST_MEETING_ID)).resolves.not.toHaveProperty(
+      'availableAction',
+    );
+  });
+
+  it('offers nothing for a digest that is out of date, which stays readable and marked', async () => {
     findOf.mockResolvedValue(buildMeetingDigestRecord());
     transcribedFileIds = [FIRST_RECORDING_ID, SECOND_RECORDING_ID];
-    await expect(service.currentOf(DIGEST_MEETING_ID)).resolves.toMatchObject({
-      status: 'ready',
-      content: { outOfDate: true },
-      availableAction: 'generate',
-    });
+
+    const digest = await service.currentOf(DIGEST_MEETING_ID);
+
+    expect(digest).toMatchObject({ status: 'ready', content: { outOfDate: true } });
+    expect(digest).not.toHaveProperty('availableAction');
   });
 
   it('offers nothing for a digest that covers every transcribed recording', async () => {

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 
-import type { Locator, Page, Request } from '@playwright/test';
+import type { Page, Request } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 
 import {
@@ -12,11 +12,8 @@ import {
   oversizedFile,
   signUp,
 } from './fixtures';
+import { rowFor, uploadRowFor } from './file-rows';
 import { scaled } from './timeouts';
-
-/** The row for a file, by name. Rows are list items inside the Files list. */
-const rowFor = (page: Page, name: string): Locator =>
-  page.getByRole('list', { name: 'Files' }).getByRole('listitem').filter({ hasText: name });
 
 const isUploadRequest = (request: Request): boolean =>
   request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/files');
@@ -86,7 +83,8 @@ test.describe('the files section', () => {
 
     await pickFiles(page, [oversizedFile()]);
 
-    const row = rowFor(page, 'meeting-files-e2e-oversized.pdf');
+    // Refused before a byte was sent: it only ever has the upload's row.
+    const row = uploadRowFor(page, 'meeting-files-e2e-oversized.pdf');
     await expect(row.getByText('Files must be 1 GB or smaller.')).toBeVisible();
     // No Retry either: this app rejected it, and asking the server would get the same answer.
     await expect(row.getByRole('button', { name: 'Retry' })).toHaveCount(0);
@@ -112,7 +110,7 @@ test.describe('the files section', () => {
       buffer: fs.readFileSync(PAGE_HTML),
     });
 
-    const row = rowFor(page, 'page.pdf');
+    const row = uploadRowFor(page, 'page.pdf');
     await expect(row.getByText('That file type is not supported.')).toBeVisible();
     await expect(row.getByRole('button', { name: 'Dismiss' })).toBeVisible();
 

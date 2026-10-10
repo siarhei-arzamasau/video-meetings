@@ -152,7 +152,12 @@ A meeting can have a digest — a summary, the action items with whoever was nam
 and the decisions — written by Claude from the transcripts of its recordings. It is **off by
 default, because switching it on sends meeting content to a third party**: with
 `MEETING_DIGEST_ENABLED=true`, the text of every transcribed recording of a meeting is sent
-to Anthropic each time one of that meeting's recordings is transcribed. With them go the
+to Anthropic each time one of that meeting's recordings is transcribed — **and, whenever
+the API starts with it on, for every meeting that has transcribed recordings and no current
+digest**: none yet, one that a later recording left out of date, or one withdrawn with a
+deleted recording. On the first start with the flag on that is every meeting with history,
+one paid request each, with nobody asking; on later starts it is whatever was missed
+meanwhile, usually nothing. With them go the
 meeting's id — a random UUID — and the tasks Claude has recorded for that meeting, which it
 looks up so as not to record one twice. Nothing else is sent — no recording, file name, email
 address, user id, or storage path — and with the setting off nothing is sent at all.
@@ -179,17 +184,17 @@ Every change is also sent as a `digest` event on the meeting's files stream
 section under the files — "Digest queued", "Generating digest…", then the summary, the
 action items with their owners, and the decisions — that appears, is marked out of date
 and replaced, and goes, for everyone who can see the meeting and with no reload. It carries
-a note that it is AI-generated and may contain mistakes. The section also carries the one
-control for the request below — "Generate digest" or "Retry" — for the two kinds of member
-who may send it.
+a note that it is AI-generated and may contain mistakes. Nobody asks for a digest: a
+recording that is transcribed gets one, and a meeting whose recordings were transcribed
+before the flag was on — or whose request was lost — gets one the next time the API starts.
+The one control the section carries is "Retry", beside a digest that failed, for the two
+kinds of member who may send the request below.
 
-`POST /api/meetings/:id/digest/generation` asks for a digest that no recording asked for,
-and takes no body. The digest says when there is something to ask for, in `availableAction`:
-`generate` for transcribed recordings with no current digest — transcribed before the flag
-was on — and `retry` for a digest that failed. The meeting's host and the uploader of any of
-its transcribed recordings may send it, and anyone else gets a 404. For those two, a digest
-that is current, queued, or generating answers 409, and so does every digest while the flag
-is off.
+`POST /api/meetings/:id/digest/generation` retries a digest that failed, and takes no body.
+The digest says when there is one to retry, in `availableAction: 'retry'`. The meeting's
+host and the uploader of any of its transcribed recordings may send it, and anyone else
+gets a 404. For those two, a digest that has not failed — current, queued, generating, or
+not there yet — answers 409, and so does every digest while the flag is off.
 
 - **Every generation is a paid request**, typically under a cent and a few seconds; the API
   log has each one's duration, model, and cost, and no response carries them.
@@ -203,10 +208,32 @@ is off.
   generation, and a meeting whose transcripts are together past about 1.7 million characters
   — some thirty hours of speech — fails as too long rather than being digested in part.
 - **Setting the flag back to `false`** sends nothing more and keeps every digest already
-  stored readable. Recordings transcribed while it was off get no digest when it comes back,
-  until the host or their uploader asks for one.
+  stored readable. Recordings transcribed while it was off get their digest when the API
+  next starts with it on, with nobody asking.
 - **`docker compose` does not pass these two variables to its `api` service**: the digest is
   set up for an API run with `pnpm dev`.
+
+### Meeting tools over MCP (optional)
+
+The API can also serve a meeting's tasks to an MCP client — Claude Code, Claude Desktop, or
+any other — as a server on the stdio transport, started by the client as a subprocess. It
+has one tool, `find_tasks`, which finds the tasks of one meeting whose title is similar to a
+text; the meeting is fixed when the process starts.
+
+```bash
+pnpm build
+cd apps/api
+node dist/meeting-tools-stdio.main.js <meeting-id>
+```
+
+An MCP client's configuration names that command, with `apps/api` as its working directory
+so the server finds `DATABASE_URL` in the env files there — or with `DATABASE_URL` in its
+environment. **Start it with `node`, not through `pnpm`**: the protocol is spoken over
+stdout, and `pnpm run` writes a line of its own there first. The server authenticates
+nobody; whoever can start it already holds the database's connection string. **What it
+answers with is text taken from meetings** — a task's title is whatever was said — so a
+client that can also run commands or edit files should treat the answer as data, never as
+instructions.
 
 ## Scripts
 

@@ -24,10 +24,12 @@ rather than mirror the input language.
 
 `apps/api` owns email-and-password authentication, meetings, meeting files, meeting
 digests, and tasks — a table and a service, with no route, kept by the digest's generation
-through three tools it hands Claude; `apps/web` is its client. Two things are worth knowing before reading either: **pages are gated on the
-client**, because the token lives in `localStorage` where neither the server nor middleware
-can read it, and **`meeting-files` is the largest module** — CQRS over local-disk storage
-with two in-process workers. Each app has its own `AGENTS.md` with the detail.
+through three tools it hands Claude, one of which a second entry point also serves to an
+outside client as an MCP server on stdio; `apps/web` is its client. Two things are worth
+knowing before reading either: **pages are gated on the client**, because the token lives in
+`localStorage` where neither the server nor middleware can read it, and **`meeting-files` is
+the largest module** — CQRS over local-disk storage with two in-process workers. Each app
+has its own `AGENTS.md` with the detail.
 
 The design this implements:
 [`docs/specs/2026-07-29-video-meetings-monorepo-design.md`](docs/specs/2026-07-29-video-meetings-monorepo-design.md),
@@ -69,11 +71,23 @@ The API generates a digest when a recording is transcribed, stores it, serves
 it at `GET /api/meetings/:id/digest`, withdraws and replaces it when a recording it was built
 from is deleted, sends every change as a `digest` event on the files stream, reports an
 action item's owner as the participant the spoken name identifies, and takes a request to
-generate or retry one from the host or a transcribed recording's uploader; the meeting
+retry a failed one from the host or a transcribed recording's uploader; the meeting
 page shows the digest and follows it over that stream, for everyone who can see the
-meeting, and offers those two "Generate digest" or "Retry". **It is the first feature to send
+meeting, and offers those two "Retry" beside a failure. **It is the first feature to send
 meeting content to a third party**, which is why `MEETING_DIGEST_ENABLED` ships off; read the
 plan's decisions before changing `src/modules/meeting-digests`.
+
+**Generate is no longer what phases 5 and 7 of that plan describe.** They gave the host and
+a recording's uploader a "Generate digest" control for the digests nothing automatic would
+ever make: recordings transcribed while the setting was off, a request lost with its
+process, a digest a delete emptied. Since 2026-10-10 nobody asks for those. The API asks
+for every digest a meeting is owed once as it boots, the route takes a Retry of a failed
+digest and nothing else, and the page has no control for a digest that is not failed. **So
+the first boot with the setting on sends the transcripts of every meeting that has
+recordings and no current digest to Anthropic**, one paid generation each, with nobody
+asking. The plan and the PRD stay as the record of what was built first; what replaced it
+is under _Retry_ and _Catching up_ in
+[the API guide](apps/api/AGENTS.md#meeting-digests-srcmodulesmeeting-digests).
 
 ## Commands
 
@@ -315,6 +329,19 @@ scope, and a subagent that encodes one person's habits belongs there.
   what retires it — read it before upgrading the package that pins the older version. One lifts
   multer past what Nest 11 pins (the API guide's meeting-files section has what that costs);
   the other floors the js-yaml 3 copy Jest's coverage loader uses, leaving the 4.x line alone.
+- **`pnpm audit` is not clean, and what it still lists is left on purpose.** A fix inside
+  the range a dependant already asks for is taken with
+  `pnpm update --recursive --depth 99 <package>`: the lockfile then holds it, and no override
+  is needed. What remains is pinned exactly by a tool and cannot be reached from here, so it
+  is not forced onto that tool: `mysql2` and `deepmerge-ts` inside the Prisma CLI — the
+  datasource is PostgreSQL, and what is merged is this repository's own `prisma.config.ts` —
+  which go with the Prisma upgrade; `tinypool` inside `oxfmt`, a gadget that needs a
+  prototype already polluted in a formatter that only reads this repository, which goes with
+  the `oxfmt` upgrade; `sprintf-js` under Jest's coverage loader, which has no patched release
+  in the line `argparse` 1 asks for; and `file-type`, whose advisory is closed in code
+  ([the API guide](apps/api/AGENTS.md#meeting-files-srcmodulesmeeting-files)). **An advisory
+  that names anything else is new** — and one that reaches code a request can run is forced
+  with an override whatever pins it, as multer was.
 - **Env files are gitignored** except `*.env.example`. When adding a variable, update the
   matching `.env.example` and, for the API, `apps/api/src/config/env.validation.ts`.
 

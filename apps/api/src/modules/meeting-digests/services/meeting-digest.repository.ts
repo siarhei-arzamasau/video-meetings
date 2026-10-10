@@ -2,19 +2,30 @@ import { Injectable } from '@nestjs/common';
 
 import { Prisma } from '../../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import type { DigestRequestability } from './meeting-digest-action';
-import { requestGenerationByHand } from './meeting-digest-request';
+import { DigestRequestKind } from './meeting-digest-action';
+import type { DigestRequestability, DigestStanding } from './meeting-digest-action';
+import { requestGenerationAs } from './meeting-digest-request';
 import { reviseContent } from './meeting-digest-revision';
 import type { MeetingDigestRevision } from './meeting-digest-revision';
 import { followDelete, requestGeneration } from './meeting-digest-writes';
 import type { DigestAfterDelete, RecordingsAfterDelete } from './meeting-digest-writes';
+import type { DigestStatus } from './meeting-digest-status';
 import type { MeetingDigestRecord } from './meeting-digest.mapper';
 
+/** One digest as `findStandings` reads it: the row, with its sources gathered beside it. */
+interface StandingRow {
+  meetingId: string;
+  status: DigestStatus | null;
+  /** Empty for a summary that is stored, `null` for none: its text is not loaded. */
+  summary: string | null;
+  sourceFileIds: string[];
+}
+
 /**
- * What became of a request made by hand: refused, or written — and then the row as that
+ * What became of a retry somebody asked for: refused, or written — and then the row as that
  * write left it, read before the transaction let anybody else at it.
  */
-export type DigestHandRequest =
+export type DigestRetryRequest =
   | Extract<DigestRequestability, { allowed: false }>
   | (Extract<DigestRequestability, { allowed: true }> & { record: MeetingDigestRecord | null });
 
@@ -36,20 +47,72 @@ export class MeetingDigestRepository {
   }
 
   /**
-   * Asks for a generation because somebody asked, unless the digest as it stands refuses —
-   * `requestGenerationByHand`, in one transaction with the read of what it wrote. The row
-   * stays locked until that read is done, so what is answered is this request's `QUEUED`
-   * and not the `GENERATING` of the worker that claims it next.
+   * Asks for a failed digest to be generated again because somebody asked, unless the digest
+   * as it stands is not a failed one — `requestGenerationAs`, as a retry, in one transaction
+   * with the read of what it wrote. The row stays locked until that read is done, so what is
+   * answered is this request's `QUEUED` and not the `GENERATING` of the worker that claims
+   * it next.
    */
-  requestByHand(
+  requestRetry(
     meetingId: string,
     transcribedFileIds: ReadonlyArray<string>,
-  ): Promise<DigestHandRequest> {
+  ): Promise<DigestRetryRequest> {
     return this.prisma.$transaction(async (tx) => {
-      const request = await requestGenerationByHand(tx, meetingId, transcribedFileIds);
+      const request = await requestGenerationAs(
+        tx,
+        meetingId,
+        transcribedFileIds,
+        DigestRequestKind.RETRY,
+      );
 
       return request.allowed ? { ...request, record: await readDigest(tx, meetingId) } : request;
     });
+  }
+
+  /**
+   * Asks for the generation a meeting is owed, unless its digest as it stands is owed none
+   * — `requestGenerationAs`, as the catch-up — and answers whether it asked.
+   */
+  async requestCatchUp(
+    meetingId: string,
+    transcribedFileIds: ReadonlyArray<string>,
+  ): Promise<boolean> {
+    const request = await this.prisma.$transaction((tx) =>
+      requestGenerationAs(tx, meetingId, transcribedFileIds, DigestRequestKind.CATCH_UP),
+    );
+
+    return request.allowed;
+  }
+
+  /**
+   * Where every digest stands, by meeting: what the catch-up sets beside every meeting's
+   * recordings to pass over the digests that are owed nothing. **A list to skip by, never to
+   * decide by** — it is one statement over rows that go on changing, and what it lets
+   * through is decided again under the row's lock.
+   *
+   * Raw for the one thing Prisma cannot select: whether a summary is stored, without its
+   * text. The rule asks only that, and the text of every digest is not loaded to be told.
+   */
+  async findStandings(): Promise<Map<string, DigestStanding>> {
+    const rows = await this.prisma.$queryRaw<StandingRow[]>`
+      SELECT d.meeting_id AS "meetingId",
+             d.status,
+             CASE WHEN d.summary IS NULL THEN NULL ELSE '' END AS summary,
+             COALESCE(
+               array_agg(s.meeting_file_id::text) FILTER (WHERE s.meeting_file_id IS NOT NULL),
+               '{}'::text[]
+             ) AS "sourceFileIds"
+      FROM "meeting_digests" d
+      LEFT JOIN "meeting_digest_sources" s ON s.digest_id = d.id
+      GROUP BY d.id
+    `;
+
+    return new Map(
+      rows.map(({ meetingId, status, summary, sourceFileIds }) => [
+        meetingId,
+        { status, summary, sources: sourceFileIds.map((meetingFileId) => ({ meetingFileId })) },
+      ]),
+    );
   }
 
   /**
