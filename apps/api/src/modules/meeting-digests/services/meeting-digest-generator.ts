@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 import { DEFAULT_MEETING_DIGEST_MAX_TOOL_CALLS } from '../../../config/meeting-digest.defaults';
 import { ClaudeAgentFailure } from '../../claude-agent/claude-agent.constants';
 import { ClaudeAgentError } from '../../claude-agent/claude-agent.error';
+import type { ClaudeAgentSpend } from '../../claude-agent/services/claude-agent-outcome';
 import { turnsForToolCalls } from '../../claude-agent/services/claude-agent-tools';
 import type { ClaudeAgentTools } from '../../claude-agent/services/claude-agent-tools';
 import {
@@ -25,11 +26,14 @@ export interface GeneratedMeetingDigest {
   answer: MeetingDigestAnswer;
   /** The model that answered, as the API named it. */
   model: string;
-  /** What the SDK reckons the generation cost. For the log, and for no response. */
+  /** What the SDK reckons the generation cost. For whoever measures one, and for no response. */
   costUsd: number;
   inputTokens: number;
   outputTokens: number;
 }
+
+/** A cost as the SDK reported it, to the hundredth of a cent a short generation is priced in. */
+const usd = (costUsd: number): string => `$${costUsd.toFixed(4)}`;
 
 /**
  * Transcripts in, a validated digest out: one run of Claude. It reads no table and writes
@@ -49,6 +53,12 @@ export interface GeneratedMeetingDigest {
  * so a generation that runs out of calls still answers with its digest. The instructions
  * carry the same number, so the model plans for it rather than meets it.
  *
+ * **What a run cost is logged here, against its meeting, when its result arrives** — the
+ * one line that keeps a cost, and the log is the only place one is kept. Before the answer
+ * is read, so that an answer that is not a digest, one that arrived after the call was hung
+ * up on, and one the caller goes on to discard have each been logged: all were paid for.
+ * A run that never reached a result reported no cost, and leaves no such line.
+ *
  * Three ways it ends without a digest, and a caller can tell them apart:
  * - `MeetingDigestError` `TRANSCRIPTS_TOO_LONG` — past the cap, with nothing sent, or refused
  *   by the model as too long;
@@ -58,6 +68,8 @@ export interface GeneratedMeetingDigest {
  */
 @Injectable()
 export class MeetingDigestGenerator {
+  private readonly logger = new Logger(MeetingDigestGenerator.name);
+
   constructor(
     private readonly claudeAgent: ClaudeAgentService,
     private readonly tools: MeetingTools,
@@ -80,7 +92,6 @@ export class MeetingDigestGenerator {
       throw new MeetingDigestError(
         MeetingDigestFailure.INVALID_ANSWER,
         `Claude's answer is not a digest: ${reading.problem}`,
-        { costUsd },
       );
     }
 
@@ -95,6 +106,15 @@ export class MeetingDigestGenerator {
       createHooks: () => this.hooks.createHooks(maxToolCalls),
       maxTurns: turnsForToolCalls(maxToolCalls),
     };
+  }
+
+  private logSpend(
+    meetingId: string,
+    { costUsd, inputTokens, outputTokens }: ClaudeAgentSpend,
+  ): void {
+    this.logger.log(
+      `Digest of meeting ${meetingId}: a run of Claude cost ${usd(costUsd)}, ${String(inputTokens)} tokens in and ${String(outputTokens)} out`,
+    );
   }
 
   private async ask(
@@ -117,6 +137,7 @@ export class MeetingDigestGenerator {
           prompt,
           schema: MEETING_DIGEST_ANSWER_SCHEMA,
           tools: this.toolsFor(meetingId, maxToolCalls),
+          onSpend: (spend) => this.logSpend(meetingId, spend),
         },
         signal,
       );
@@ -134,7 +155,7 @@ export class MeetingDigestGenerator {
       throw new MeetingDigestError(
         MeetingDigestFailure.TRANSCRIPTS_TOO_LONG,
         'The model refused the transcripts as too long to read',
-        { cause: error, costUsd: error.costUsd },
+        { cause: error },
       );
     }
   }

@@ -1,7 +1,7 @@
 import { ClaudeAgentFailure } from '../../claude-agent/claude-agent.constants';
 import { ClaudeAgentError } from '../../claude-agent/claude-agent.error';
 import { MeetingDigestError, MeetingDigestFailure } from '../meeting-digest.error';
-import { costOf, failureReasonOf } from './meeting-digest-failure';
+import { failureReasonOf } from './meeting-digest-failure';
 import { DigestInterruption } from './meeting-digest-run';
 
 const GENERIC = 'The digest could not be generated.';
@@ -10,11 +10,9 @@ const TOO_LONG = 'The recordings of this meeting are too long to turn into one d
 const SDK_WORDS = 'API Error: 529 {"type":"overloaded_error"} request_id=req_7f3a';
 
 const tooLong = new MeetingDigestError(MeetingDigestFailure.TRANSCRIPTS_TOO_LONG, SDK_WORDS);
-const invalid = new MeetingDigestError(MeetingDigestFailure.INVALID_ANSWER, SDK_WORDS, {
-  costUsd: 0.0041,
-});
-const claude = (failure: ClaudeAgentFailure, costUsd?: number): ClaudeAgentError =>
-  new ClaudeAgentError(failure, SDK_WORDS, { costUsd });
+const invalid = new MeetingDigestError(MeetingDigestFailure.INVALID_ANSWER, SDK_WORDS);
+const claude = (failure: ClaudeAgentFailure): ClaudeAgentError =>
+  new ClaudeAgentError(failure, SDK_WORDS);
 
 describe('failureReasonOf', () => {
   it.each([
@@ -46,18 +44,5 @@ describe('failureReasonOf', () => {
   it('does not blame the time limit for an error that arrived without it', () => {
     expect(failureReasonOf(claude(ClaudeAgentFailure.FAILED), null, 240)).toBe(GENERIC);
     expect(failureReasonOf(tooLong, DigestInterruption.CLAIM_LOST, 240)).toBe(TOO_LONG);
-  });
-});
-
-describe('costOf', () => {
-  it('reads the cost off either error the generator throws', () => {
-    expect(costOf(invalid)).toBe(0.0041);
-    expect(costOf(claude(ClaudeAgentFailure.FAILED, 0.02))).toBe(0.02);
-  });
-
-  it('answers nothing for a call that reported none, and for anything else thrown', () => {
-    expect(costOf(claude(ClaudeAgentFailure.AUTHENTICATION))).toBeUndefined();
-    expect(costOf(new Error('boom'))).toBeUndefined();
-    expect(costOf(undefined)).toBeUndefined();
   });
 });

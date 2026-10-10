@@ -124,17 +124,13 @@ describe('MeetingDigestWorker: recordings deleted while it works, and what it an
     expect(recheckStored).not.toHaveBeenCalled();
   });
 
-  it('fails a digest whose recordings could not be checked, in the generic sentence, with the cost kept', async () => {
-    const logged = jest.spyOn(Logger.prototype, 'error');
+  it('fails a digest whose recordings could not be checked, in the generic sentence', async () => {
     transcribed.mockRejectedValue(new Error('connection terminated'));
 
     await worker.drain();
 
     expect(complete).not.toHaveBeenCalled();
     expect(fail).toHaveBeenCalledWith(HELD, GENERIC);
-    expect(logged).toHaveBeenCalledWith(
-      expect.stringContaining(`$${GENERATED.costUsd.toFixed(4)}`),
-    );
   });
 
   it('checks nothing when there was nothing to generate from', async () => {

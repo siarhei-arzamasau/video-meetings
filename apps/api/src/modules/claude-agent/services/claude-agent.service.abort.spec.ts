@@ -92,8 +92,9 @@ describe('ClaudeAgentService, when a schema-bound prompt is called off', () => {
       yield* answering();
     });
     const caller = new AbortController();
+    const onSpend = jest.fn();
 
-    const call = claudeAgent.runStructuredPrompt(STRUCTURED_PROMPT, caller.signal);
+    const call = claudeAgent.runStructuredPrompt({ ...STRUCTURED_PROMPT, onSpend }, caller.signal);
     await answerBegun.promise;
     caller.abort(timeLimit);
     answerArrives.resolve();
@@ -103,6 +104,8 @@ describe('ClaudeAgentService, when a schema-bound prompt is called off', () => {
       cause: timeLimit,
       costUsd: 0.0042,
     });
+    // Told as the result arrived, which is before the answer was found to be too late.
+    expect(onSpend).toHaveBeenCalledWith({ costUsd: 0.0042, inputTokens: 2100, outputTokens: 12 });
   });
 
   it('stops listening to the signal once the call has ended', async () => {

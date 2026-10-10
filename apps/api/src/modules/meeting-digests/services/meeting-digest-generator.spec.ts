@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
 
 import { ClaudeAgentFailure } from '../../claude-agent/claude-agent.constants';
@@ -85,9 +86,29 @@ describe('MeetingDigestGenerator', () => {
           createHooks: expect.any(Function),
           maxTurns: 25,
         },
+        onSpend: expect.any(Function),
       },
       signal,
     );
+  });
+
+  it('logs what a run cost against its meeting as Claude reports it, whatever becomes of the answer', async () => {
+    const logged = jest.spyOn(Logger.prototype, 'log').mockImplementation();
+    // The result arrives first, and the answer it carried is then refused as no digest.
+    runStructuredPrompt.mockImplementation(async (request) => {
+      request.onSpend?.({ costUsd: 0.0042, inputTokens: 2100, outputTokens: 90 });
+
+      return replyWith({ ...ANSWER, summary: '' });
+    });
+
+    await expect(generator.generate(MEETING_ID, TRANSCRIPTS, signal)).rejects.toBeInstanceOf(
+      MeetingDigestError,
+    );
+
+    expect(logged.mock.calls).toEqual([
+      [`Digest of meeting ${MEETING_ID}: a run of Claude cost $0.0042, 2100 tokens in and 90 out`],
+    ]);
+    logged.mockRestore();
   });
 
   it("hands the run the meeting's own tools, made only when the run asks for them", async () => {
@@ -192,12 +213,11 @@ describe('MeetingDigestGenerator', () => {
 
     await expect(generator.generate(MEETING_ID, TRANSCRIPTS, signal)).rejects.toMatchObject({
       failure: MeetingDigestFailure.TRANSCRIPTS_TOO_LONG,
-      costUsd: 0,
       cause: refused,
     });
   });
 
-  it('refuses an answer that is not a digest, and says what the call cost all the same', async () => {
+  it('refuses an answer that is not a digest', async () => {
     runStructuredPrompt.mockResolvedValue(replyWith({ ...ANSWER, summary: '' }));
 
     const failure = generator.generate(MEETING_ID, TRANSCRIPTS, signal);
@@ -205,7 +225,6 @@ describe('MeetingDigestGenerator', () => {
     await expect(failure).rejects.toBeInstanceOf(MeetingDigestError);
     await expect(failure).rejects.toMatchObject({
       failure: MeetingDigestFailure.INVALID_ANSWER,
-      costUsd: 0.0042,
     });
   });
 

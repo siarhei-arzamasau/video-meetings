@@ -4,7 +4,6 @@ import {
   meetingDigestTimeLimitMessage,
 } from '@repo/shared';
 
-import { ClaudeAgentError } from '../../claude-agent/claude-agent.error';
 import { MeetingDigestError, MeetingDigestFailure } from '../meeting-digest.error';
 import { DigestInterruption } from './meeting-digest-run';
 
@@ -30,14 +29,4 @@ export function failureReasonOf(
     error.failure === MeetingDigestFailure.TRANSCRIPTS_TOO_LONG;
 
   return tooLong ? MEETING_DIGEST_TOO_LONG_MESSAGE : MEETING_DIGEST_FAILED_MESSAGE;
-}
-
-/**
- * What a failed call cost, when one was made and reported it: an answer that could not be
- * used was paid for all the same. Both errors the generator throws carry it.
- */
-export function costOf(error: unknown): number | undefined {
-  return error instanceof MeetingDigestError || error instanceof ClaudeAgentError
-    ? error.costUsd
-    : undefined;
 }

@@ -137,7 +137,7 @@ describe('MeetingDigestWorker: one claim, start to finish', () => {
     ],
     [
       'an answer that is not a digest',
-      new MeetingDigestError(MeetingDigestFailure.INVALID_ANSWER, SDK_WORDS, { costUsd: 0.004 }),
+      new MeetingDigestError(MeetingDigestFailure.INVALID_ANSWER, SDK_WORDS),
       GENERIC,
     ],
     [

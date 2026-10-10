@@ -2,10 +2,12 @@ import { ConfigService } from '@nestjs/config';
 
 import { ClaudeAgentFailure, ClaudeModel } from '../claude-agent.constants';
 import {
+  ANSWER,
   answering,
   AUTH_TOKEN,
   AUTH_TOKEN_VARIABLE,
   claudeAgentOver,
+  CUT_SHORT,
   requestOf,
   STRUCTURED_PROMPT,
 } from './claude-agent-process.fixture';
@@ -136,6 +138,57 @@ describe('ClaudeAgentService', () => {
       costUsd: 0.0042,
       inputTokens: 2100,
       outputTokens: 12,
+    });
+  });
+
+  describe('what a schema-bound run spent', () => {
+    const neverAborted = new AbortController().signal;
+
+    it('is told to the caller that asked, once, as the reply states it', async () => {
+      const { claudeAgent } = claudeAgentOver(answering);
+      const onSpend = jest.fn();
+
+      await claudeAgent.runStructuredPrompt({ ...STRUCTURED_PROMPT, onSpend }, neverAborted);
+
+      expect(onSpend).toHaveBeenCalledTimes(1);
+      expect(onSpend).toHaveBeenCalledWith({
+        costUsd: 0.0042,
+        inputTokens: 2100,
+        outputTokens: 12,
+      });
+    });
+
+    it('is told of a run that ended without an answer: it was paid for all the same', async () => {
+      const { claudeAgent } = claudeAgentOver(async function* () {
+        yield ANSWER;
+        yield CUT_SHORT;
+      });
+      const onSpend = jest.fn();
+
+      await expect(
+        claudeAgent.runStructuredPrompt({ ...STRUCTURED_PROMPT, onSpend }, neverAborted),
+      ).rejects.toMatchObject({ failure: ClaudeAgentFailure.FAILED, costUsd: 0.0031 });
+
+      // Everything the model read, the 1,800 tokens written to the cache among it.
+      expect(onSpend).toHaveBeenCalledWith({
+        costUsd: 0.0031,
+        inputTokens: 1805,
+        outputTokens: 40,
+      });
+    });
+
+    it('is told to nobody by a process that stopped before its result', async () => {
+      const { claudeAgent } = claudeAgentOver(async function* () {
+        yield ANSWER;
+        throw new Error('Claude Code process aborted by user');
+      });
+      const onSpend = jest.fn();
+
+      await expect(
+        claudeAgent.runStructuredPrompt({ ...STRUCTURED_PROMPT, onSpend }, neverAborted),
+      ).rejects.toMatchObject({ failure: ClaudeAgentFailure.FAILED });
+
+      expect(onSpend).not.toHaveBeenCalled();
     });
   });
 });

@@ -964,6 +964,15 @@ module` unless Node runs with `--experimental-vm-modules`, and `ClaudeAgentModul
   real run. `ClaudeAgentError` carries the `failure` a caller branches on, a message that is
   **for the log and never for a user**, and `costUsd` whenever a result reported one: an
   answer that could not be used was paid for all the same.
+- **What a run spent is told to its caller as the result arrives, not only with the answer.**
+  A request's `onSpend` is called from inside the loop that reads the process
+  (`readExchange`), with the result's cost and its tokens in and out — before the signal is
+  checked the third time and before `outcomeOf`, so a result that is then refused, or
+  discarded as too late, has been reported all the same. A process killed before its result
+  reports nothing: there was no cost to read. **It is there for a log and must not throw** —
+  a throw is caught as the process having stopped, and the result is lost with it. A
+  stand-in for `ClaudeAgentService` never calls it, so neither e2e suite's log has a cost
+  line.
 - **Input is billed at the cache-write rate, a quarter above the listed one.** Claude Code
   marks the prompt for Anthropic's prompt cache, and a one-turn call never reads it back.
   The measurements are in `src/config/meeting-digest.defaults.ts`.
@@ -1201,9 +1210,9 @@ What a reader of the code would get wrong:
 - **The worker discards an answer one of whose recordings was deleted while Claude wrote
   it.** `runDigestGeneration` asks which recordings are transcribed once the answer is in
   hand, and reports `sourceDeleted` instead of sources; `DigestOutcomeRecorder.discard`
-  hands the claim back as a shutdown does, queued and uncounted, and logs what the answer
-  cost. A check that cannot be made fails the digest (`SOURCES_UNCHECKED`, the generic
-  sentence) rather than store unchecked.
+  hands the claim back as a shutdown does, queued and uncounted. A check that cannot be
+  made fails the digest (`SOURCES_UNCHECKED`, the generic sentence) rather than store
+  unchecked.
 - **And it looks again once the answer is stored, which is not a repeat of the first look.**
   The first cannot see a delete in progress, and one that commits just after it can be
   followed _before_ the answer lands: that reaction finds none of the answer's sources and
@@ -1417,9 +1426,15 @@ What a reader of the code would get wrong:
   not store — a NUL in its text is enough: `DigestOutcomeRecorder.complete` records the
   generic failure rather than let the claim lapse and the meeting be sent, and paid for,
   twice more.
-- **The log is the only place a generation's cost is kept.** Every one — stored, failed, or
-  discarded with a lost claim — is logged with its duration, its model, and what the SDK
-  says it cost. No row holds a cost and no response carries one.
+- **The log is the only place a generation's cost is kept, and one line keeps it.**
+  `MeetingDigestGenerator` writes it when the run's result arrives — the meeting's id, what
+  the SDK says the run cost, and its tokens in and out — before anything is made of the
+  answer, so a run whose answer is stored, refused, discarded, or lands under a lost claim
+  is logged the same way, once. **The worker's lines carry no cost**: they say how a
+  generation ended, with its duration and its model, and the meeting's id is what ties them
+  to the cost line. Put a cost back on one of them and a request is counted twice by
+  whoever sums the log. A call hung up on before its result leaves no cost line, having
+  reported none. No row holds a cost and no response carries one.
 
 ## Tasks (`src/modules/tasks`)
 
