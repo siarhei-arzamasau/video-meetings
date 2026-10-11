@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CqrsModule } from '@nestjs/cqrs';
-import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule } from '@nestjs/throttler';
 
+import { AccessTokenModule } from './access-token.module';
 import { AuthController } from './auth.controller';
 import { authThrottlerOptions } from './auth-throttle.options';
 import { ChangePasswordHandler } from './commands/handlers/change-password.handler';
@@ -28,19 +28,8 @@ import { TokenService } from './services/token.service';
     // Imported per module rather than registered globally, so a module's `imports` states
     // what it actually needs. Every module that dispatches commands repeats this line.
     CqrsModule,
-    JwtModule.registerAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        secret: config.getOrThrow<string>('JWT_SECRET'),
-        signOptions: {
-          algorithm: 'HS256',
-          expiresIn: config.getOrThrow<number>('JWT_EXPIRES_IN_SECONDS'),
-        },
-        // Also set per call in JwtAuthGuard. Stated twice on purpose: a verify that forgets
-        // it accepts `alg: none`, so the safe value is the default here as well.
-        verifyOptions: { algorithms: ['HS256'] },
-      }),
-    }),
+    // The signing key and the verifier. This module adds what issues a token.
+    AccessTokenModule,
     /**
      * Rate limiting for the credential routes. Registered here rather than globally because
      * this module owns the endpoints worth limiting; `ThrottlerModule` is `@Global()` of its
@@ -80,6 +69,8 @@ import { TokenService } from './services/token.service';
     TokenService,
     JwtAuthGuard,
   ],
-  exports: [JwtModule, JwtAuthGuard],
+  // The guard is instantiated in the module that uses it, so what it injects is exported
+  // with it: the verifier, through the module that owns it.
+  exports: [AccessTokenModule, JwtAuthGuard],
 })
 export class AuthModule {}

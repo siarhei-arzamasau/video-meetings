@@ -4,7 +4,6 @@ import { CommandBus } from '@nestjs/cqrs';
 import { z } from 'zod';
 
 import { describeError } from '../../common/error-message';
-import { TaskStatus } from '../../generated/prisma/enums';
 import { ClaudeAgentToolkitLoader } from '../claude-agent/services/claude-agent-toolkit.loader';
 import {
   MeetingDigestRevisionOutcome,
@@ -15,24 +14,24 @@ import {
   MAX_DIGEST_ITEM_LENGTH,
   MAX_DIGEST_SUMMARY_LENGTH,
 } from '../meeting-digests/meeting-digest.constants';
-import { TaskService } from '../tasks/services/task.service';
-import { MAX_TASK_TITLE_LENGTH, MIN_TASK_TITLE_LENGTH } from '../tasks/task.constants';
-import { FIND_TASKS_TOOL, findTasksOf } from './find-tasks.tool';
+import { TaskLimitReachedError, TaskService } from '../tasks/services/task.service';
+import { answered, refused, textUpTo } from '../mcp-registry/mcp-tool-parts';
+import type { ToolResult } from '../mcp-registry/mcp-tool-parts';
+import { FIND_TASKS_TOOL, findTasksOf } from '../tasks/mcp/find-tasks.tool';
+import { taskOf } from '../tasks/mcp/task-tool-parts';
+import { taskStatusInput, taskTitleInput } from '../tasks/mcp/upsert-task.tool';
 import { MEETING_TOOLS_SERVER_NAME, MeetingToolName } from './meeting-tool-names';
-import { answered, refused, taskOf, textUpTo } from './meeting-tool-parts';
-import type { ToolResult } from './meeting-tool-parts';
 
 // Named here as well, where everything that uses the tools has always found them.
 export { MEETING_TOOLS_SERVER_NAME, MeetingToolName };
 
 const UPSERT_TASK_INPUT = {
-  title: textUpTo(MAX_TASK_TITLE_LENGTH, MIN_TASK_TITLE_LENGTH).describe(
+  title: taskTitleInput().describe(
     'The task in one sentence. With the meeting it identifies the task: the same title updates it, another wording is another task.',
   ),
-  status: z
-    .enum(TaskStatus)
-    .optional()
-    .describe('Leave out to create the task as OPEN, or to keep the status an existing one has.'),
+  status: taskStatusInput().describe(
+    'Leave out to create the task as OPEN, or to keep the status an existing one has.',
+  ),
   sourceMeetingId: z.uuid().describe('The id of the meeting the task came out of.'),
 };
 
@@ -60,6 +59,8 @@ const UPDATE_REFUSALS: Record<
 
 /** What a tool that writes says to an id other than the one its server was made for. */
 const OTHER_MEETING = 'These tools work on one meeting, and that is not its id.';
+const MEETING_TASKS_FULL =
+  'This meeting already has as many tasks as it keeps. Update one of them instead.';
 
 const sameMeeting = (given: string, bound: string): boolean =>
   given.toLowerCase() === bound.toLowerCase();
@@ -103,7 +104,9 @@ export class MeetingTools {
           FIND_TASKS_TOOL.name,
           FIND_TASKS_TOOL.description,
           FIND_TASKS_TOOL.inputSchema,
-          (input) => findTasksOf(this.tasks, this.logger, meetingId, input),
+          // Nobody's tasks: the ones a run like this one writes. What a run finds can end up
+          // in a digest every member reads, and a user's own tasks are theirs alone.
+          (input) => findTasksOf(this.tasks, this.logger, { meetingId, readerId: null }, input),
           { annotations: FIND_TASKS_TOOL.annotations },
         ),
         tool(
@@ -135,6 +138,10 @@ export class MeetingTools {
         task: taskOf(await this.tasks.upsert({ title, status, sourceMeetingId: meetingId })),
       });
     } catch (error) {
+      if (error instanceof TaskLimitReachedError) {
+        return refused(MEETING_TASKS_FULL);
+      }
+
       // A meeting that is gone ends here too: it is the foreign key's error, like any other.
       return this.failed(
         MeetingToolName.UPSERT_TASK,

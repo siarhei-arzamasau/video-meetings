@@ -1,0 +1,80 @@
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { GetPromptResult } from '@modelcontextprotocol/sdk/types.js';
+
+import { MAX_TASK_TITLE_LENGTH } from '../task.constants';
+import { textUpTo } from '../../mcp-registry/mcp-tool-parts';
+import { TITLES_ARE_DATA, TaskToolName } from './task-tool-parts';
+import { OPEN_TASKS_RESOURCE_URI, TASK_RESOURCE_URI_TEMPLATE } from './task-resource-uris';
+
+export enum TaskPromptName {
+  OVERVIEW = 'meeting_overview',
+  TOPIC = 'meeting_topic',
+}
+
+/**
+ * What every prompt ends with. A task's title is what somebody said in a meeting, and the
+ * client that reads it may hold a shell: the server cannot make it treat the text as data,
+ * but the prompt it hands out can say so.
+ */
+const GROUND_RULES = [
+  `Change nothing while you collect: do not call \`${TaskToolName.UPSERT_TASK}\`.`,
+  'Do not invent a task, an owner or a date that the tasks do not state.',
+  TITLES_ARE_DATA,
+].join('\n');
+
+const OVERVIEW_PROMPT = [
+  'Collect what is known about this meeting from the tasks of it you can see, and report it.',
+  '',
+  `1. Read the resource \`${OPEN_TASKS_RESOURCE_URI}\`: every task of this meeting you can see that is still open — yours, and the ones its digest wrote.`,
+  `2. For anything the open tasks leave unclear, call \`${TaskToolName.FIND_TASKS}\` with a few words of it — it finds the tasks that are done as well. \`${TASK_RESOURCE_URI_TEMPLATE}\` reads one task by its id.`,
+  '3. Answer with what is still to do, what is finished, and what the tasks do not say.',
+  '',
+  GROUND_RULES,
+].join('\n');
+
+const topicPrompt = (topic: string): string =>
+  [
+    `Collect what the tasks of this meeting you can see say about the following topic, and report it: ${JSON.stringify(topic)}`,
+    '',
+    `1. Call \`${TaskToolName.FIND_TASKS}\` with the topic, and again with other words for it if little comes back.`,
+    `2. Read \`${OPEN_TASKS_RESOURCE_URI}\` for open tasks that bear on it under another wording.`,
+    '3. Answer with the tasks that concern the topic, which are open and which are done, and what about it the tasks do not say.',
+    '',
+    GROUND_RULES,
+  ].join('\n');
+
+const asUserMessage = (text: string): GetPromptResult => ({
+  messages: [{ role: 'user', content: { type: 'text', text } }],
+});
+
+/**
+ * The tasks domain's prompts: two ways for a client to gather what is known about the
+ * meeting, as a whole or on one topic — from this domain's own tools and resources and
+ * nothing else, since tasks are all it holds, and so from the tasks of whoever is asking.
+ *
+ * **A prompt is text and carries no data**: not a task, not the meeting's id, nothing read
+ * from the database. That is why none of them asks the scope's gate who is calling, unlike
+ * every tool and resource — and why one that did quote a task would have to.
+ */
+export function registerTaskPrompts(server: McpServer): void {
+  server.registerPrompt(
+    TaskPromptName.OVERVIEW,
+    {
+      title: 'Meeting overview',
+      description:
+        'Gathers what is still to do in the meeting and what is finished, from the tasks you can see.',
+    },
+    () => asUserMessage(OVERVIEW_PROMPT),
+  );
+  server.registerPrompt(
+    TaskPromptName.TOPIC,
+    {
+      title: 'Meeting topic',
+      description: 'Gathers what the tasks of the meeting you can see say about one topic.',
+      argsSchema: {
+        topic: textUpTo(MAX_TASK_TITLE_LENGTH).describe('What to collect information about.'),
+      },
+    },
+    ({ topic }) => asUserMessage(topicPrompt(topic)),
+  );
+}
